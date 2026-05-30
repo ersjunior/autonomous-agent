@@ -1,0 +1,86 @@
+---
+description: Visão geral completa do projeto autonomous-agent
+globs: **/*
+alwaysApply: true
+---
+
+# Autonomous Agent — Visão Geral do Projeto
+
+## O que é este projeto
+
+Sistema multi-agente de IA para atendimento autônomo de clientes em múltiplos canais.
+Nome do repositório: `autonomous-agent`
+TCC: "Do operador ao Agente: Transformando um atendente de telemarketing em um Agente de Inteligência Artificial Autônomo"
+
+## Stack tecnológica
+
+| Camada | Tecnologia |
+|--------|-----------|
+| Backend API | FastAPI (Python 3.12) + SQLAlchemy 2.0 async |
+| Agentes | LangGraph + LangChain + OpenAI GPT-4o |
+| Frontend | Next.js 15 + TypeScript + Tailwind CSS |
+| Workers | Celery + Redis |
+| Banco de dados | PostgreSQL 16 + pgvector |
+| Cache | Redis 7 |
+| STT | OpenAI Whisper |
+| TTS | ElevenLabs (eleven_multilingual_v2) |
+| Avatar | D-ID API |
+| WhatsApp | Twilio |
+| Telegram | python-telegram-bot |
+| Infra local | Docker Compose |
+| Infra cloud | Terraform (AWS + Azure + GCP) |
+
+## Estrutura de pastas (raiz do projeto)
+
+```
+autonomous-agent/
+├── .cursor/rules/          ← regras do Cursor AI
+├── agents/                 ← TODO código de IA (NUNCA em backend/)
+│   ├── channels/
+│   │   ├── telegram/       ← handler.py ✅
+│   │   ├── whatsapp/       ← handler.py + twilio_client.py ✅
+│   │   ├── voice/          ← handler.py + tts_stt.py ✅
+│   │   └── video/          ← handler.py + avatar_client.py ✅
+│   ├── orchestrator/       ← graph.py + router.py ✅
+│   ├── workers/            ← intent_agent.py + response_agent.py ✅
+│   ├── memory/             ← short_term.py + long_term.py ✅
+│   └── tools/              ← crm_tool.py + calendar_tool.py + knowledge_base.py
+├── backend/                ← FastAPI API apenas
+│   └── app/
+│       ├── api/v1/         ← auth.py + agents.py + channels.py + leads.py + campaigns.py
+│       ├── core/           ← config.py + database.py + security.py ✅
+│       ├── models/         ← user.py + agent.py + channel.py + lead.py + campaign.py ✅
+│       ├── schemas/        ← user.py ✅
+│       └── services/
+├── frontend/               ← Next.js dashboard
+│   └── src/app/
+│       ├── (auth)/         ← login/ + register/
+│       └── dashboard/      ← page.tsx + channels/ + agents/ + leads/ + campaigns/ + monitoring/
+├── worker/                 ← Celery workers
+│   └── tasks/              ← outbound_campaign.py + inbound_handler.py
+├── infra/
+│   ├── docker/             ← docker-compose.yml ✅
+│   ├── aws/terraform/
+│   ├── azure/terraform/
+│   └── gcp/terraform/
+├── docs/
+└── tests/
+```
+
+## Modos de operação do agente
+
+- **ATIVO**: agente inicia contato com leads da base carregada pelo usuário
+- **RECEPTIVO**: agente responde clientes que entram em contato
+
+## Serviços e credenciais necessárias
+
+```env
+OPENAI_API_KEY         # GPT-4o + Whisper
+TWILIO_ACCOUNT_SID     # WhatsApp + Voz
+TWILIO_AUTH_TOKEN
+TWILIO_PHONE_NUMBER
+TELEGRAM_BOT_TOKEN     # Telegram
+ELEVENLABS_API_KEY     # TTS
+ELEVENLABS_VOICE_ID    # ID da voz (default: 21m00Tcm4TlvDq8ikWAM)
+DID_API_KEY            # Avatar em vídeo
+```

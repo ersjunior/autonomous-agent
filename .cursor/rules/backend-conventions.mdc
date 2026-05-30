@@ -1,0 +1,88 @@
+---
+description: Convenções e padrões do backend FastAPI
+globs: backend/**/*
+alwaysApply: false
+---
+
+# Backend — FastAPI + SQLAlchemy
+
+## Stack
+
+- **FastAPI** com routers versionados em `/api/v1/`
+- **SQLAlchemy 2.0** com `AsyncSession` (nunca use sessão síncrona)
+- **Alembic** para migrations
+- **Pydantic v2** para schemas (use `model_config = ConfigDict(from_attributes=True)` nos schemas de resposta)
+- **python-jose** para JWT
+- **passlib[bcrypt]** para hash de senha
+
+## O que já está implementado ✅
+
+| Arquivo | Status |
+|---------|--------|
+| `app/main.py` | ✅ FastAPI + CORS + routers |
+| `app/core/config.py` | ✅ Settings com pydantic-settings |
+| `app/core/database.py` | ✅ AsyncSession + get_db dependency |
+| `app/core/security.py` | ✅ JWT + bcrypt |
+| `app/models/base.py` | ✅ DeclarativeBase |
+| `app/models/user.py` | ✅ User model |
+| `app/models/agent.py` | ✅ Agent model + AgentMode enum |
+| `app/models/channel.py` | ✅ Channel model + ChannelType enum |
+| `app/models/lead.py` | ✅ Lead model |
+| `app/models/campaign.py` | ✅ Campaign model |
+| `app/models/interaction.py` | ✅ Interaction model + pgvector embedding |
+| `app/schemas/user.py` | ✅ UserCreate, UserLogin, UserResponse, Token, TokenData |
+| `app/api/v1/auth.py` | ✅ POST /auth/register + POST /auth/login |
+
+## Padrões obrigatórios
+
+### Models SQLAlchemy
+```python
+# Sempre use Mapped e mapped_column (SQLAlchemy 2.0)
+id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+# JSONB para campos flexíveis (PostgreSQL)
+config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+# Forward references com TYPE_CHECKING para evitar imports circulares
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.models.user import User
+```
+
+### Enums compartilhados
+- `AgentMode`: `ACTIVE | RECEPTIVE` — em `models/agent.py`
+- `ChannelType`: `WHATSAPP | TELEGRAM | VOICE | VIDEO` — em `models/channel.py`
+- Ao usar `ChannelType` em `campaign.py`, use `create_type=False` no Enum para evitar conflito de nome no PostgreSQL
+
+### Endpoints FastAPI
+```python
+# Sempre use AsyncSession via Depends
+async def minha_rota(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Model).where(...))
+    return result.scalar_one_or_none()
+
+# Sempre retorne schemas Pydantic, nunca models ORM diretamente
+@router.get("/", response_model=list[UserResponse])
+```
+
+### Webhooks dos canais
+```python
+# WhatsApp (Twilio envia form-data)
+@router.post("/webhooks/whatsapp")
+async def whatsapp_webhook(Body: str = Form(""), From: str = Form(""), To: str = Form("")):
+    twiml = await handler.handle_webhook({"Body": Body, "From": From, "To": To})
+    return Response(content=twiml, media_type="application/xml")
+```
+
+## PYTHONPATH no Docker
+
+O container `backend` roda com `/app` como workdir e `/app` no PYTHONPATH.
+O volume monta `../../agents:/app/agents`, portanto `from agents.xxx import yyy` funciona.
+
+## Não fazer
+
+- Nunca crie lógica de IA ou LangGraph dentro de `backend/`
+- Nunca use `Session` síncrona — sempre `AsyncSession`
+- Nunca retorne o model ORM diretamente — sempre serialize via schema Pydantic
+- Nunca commite senha em texto — sempre use `hash_password()` de `app.core.security`

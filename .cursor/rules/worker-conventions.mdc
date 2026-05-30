@@ -1,0 +1,76 @@
+---
+description: Convenções dos workers Celery
+globs: worker/**/*
+alwaysApply: false
+---
+
+# Worker — Celery + Redis
+
+## O que é
+
+Workers assíncronos para processar tarefas em background:
+- **Modo ATIVO**: disparar mensagens para base de leads carregada pelo usuário
+- **Modo RECEPTIVO**: processar filas de mensagens recebidas
+
+## Estrutura
+
+```
+worker/
+├── celery_app.py           ← instância Celery configurada
+├── requirements.txt
+├── Dockerfile
+└── tasks/
+    ├── __init__.py
+    ├── outbound_campaign.py ← Modo ATIVO (a implementar)
+    └── inbound_handler.py  ← Modo RECEPTIVO (a implementar)
+```
+
+## Configuração Celery
+
+```python
+# celery_app.py
+from celery import Celery
+from app.core.config import settings  # importa do backend via PYTHONPATH
+
+celery = Celery(
+    "autonomous_agent",
+    broker=settings.celery_broker_url,    # redis://redis:6379/1
+    backend=settings.celery_result_backend # redis://redis:6379/2
+)
+```
+
+## Padrão de task
+
+```python
+# tasks/outbound_campaign.py
+from worker.celery_app import celery
+
+@celery.task(bind=True, max_retries=3)
+def send_campaign_message(self, lead_id: str, campaign_id: str, channel: str):
+    """Envia mensagem ativa para um lead."""
+    try:
+        # 1. Buscar lead no banco
+        # 2. Montar AgentState
+        # 3. Invocar agent_graph (atenção: tasks Celery são síncronas — use asyncio.run())
+        # 4. Enviar via canal correspondente
+        pass
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=60)
+```
+
+## Atenção: async dentro de tasks Celery
+
+Tasks Celery são síncronas. Para chamar código async:
+
+```python
+import asyncio
+from agents.orchestrator.graph import agent_graph
+
+# Dentro da task:
+result = asyncio.run(agent_graph.ainvoke(state))
+```
+
+## Não fazer
+
+- Nunca importe tasks dentro do `backend/` para executar diretamente — sempre via `.delay()` ou `.apply_async()`
+- Nunca faça I/O bloqueante sem retry — sempre use `max_retries` e `countdown`

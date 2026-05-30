@@ -1,0 +1,137 @@
+---
+description: Convenções do frontend Next.js 15
+globs: frontend/**/*
+alwaysApply: false
+---
+
+# Frontend — Next.js 15 + TypeScript + Tailwind
+
+## Stack
+
+- **Next.js 15** com App Router
+- **TypeScript** estrito
+- **Tailwind CSS v3**
+- **React 19**
+
+## Estrutura de páginas
+
+```
+frontend/src/app/
+├── (auth)/
+│   ├── login/page.tsx       ← formulário de login (TODO: funcional)
+│   └── register/page.tsx    ← formulário de registro (TODO: funcional)
+└── dashboard/
+    ├── page.tsx             ← visão geral (placeholder)
+    ├── channels/            ← configuração de canais (TODO)
+    ├── agents/              ← configuração de agentes (TODO)
+    ├── leads/               ← upload e gestão de leads (TODO)
+    ├── campaigns/           ← campanhas ativas/receptivas (TODO)
+    └── monitoring/          ← monitoramento em tempo real (TODO)
+```
+
+## API Base URL
+
+```typescript
+// Sempre use a variável de ambiente
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+
+// Endpoints disponíveis no backend
+POST   /api/v1/auth/register
+POST   /api/v1/auth/login        → retorna { access_token, token_type }
+GET    /api/v1/agents/
+POST   /api/v1/agents/
+GET    /api/v1/channels/
+POST   /api/v1/channels/
+GET    /api/v1/leads/
+POST   /api/v1/leads/
+GET    /api/v1/campaigns/
+POST   /api/v1/campaigns/
+POST   /api/v1/channels/webhooks/whatsapp
+```
+
+## Autenticação
+
+```typescript
+// JWT Bearer token — salvar no localStorage após login
+localStorage.setItem("token", data.access_token)
+
+// Enviar em toda requisição autenticada
+headers: {
+  "Authorization": `Bearer ${localStorage.getItem("token")}`,
+  "Content-Type": "application/json"
+}
+```
+
+## Tipos principais
+
+```typescript
+type ChannelType = "WHATSAPP" | "TELEGRAM" | "VOICE" | "VIDEO"
+type AgentMode = "ACTIVE" | "RECEPTIVE"
+type AgentStatus = "draft" | "active" | "paused" | "stopped"
+
+interface Agent {
+  id: string
+  name: string
+  description?: string
+  mode: AgentMode
+  status: AgentStatus
+  config: Record<string, unknown>
+  created_at: string
+}
+
+interface Channel {
+  id: string
+  type: ChannelType
+  credentials: Record<string, unknown>
+  is_active: boolean
+  created_at: string
+}
+
+interface Lead {
+  id: string
+  name: string
+  phone?: string
+  email?: string
+  extra_data: Record<string, unknown>
+  status: string
+}
+```
+
+## Credenciais por canal (formulário de configuração)
+
+```typescript
+// WhatsApp
+{ account_sid: string, auth_token: string, phone_number: string }
+
+// Telegram
+{ bot_token: string }
+
+// Voz
+{ phone_numbers: string[], provider: "twilio" }
+
+// Vídeo
+{ avatar_url: string, did_api_key: string }
+```
+
+## Padrões de componente
+
+```typescript
+// Sempre use componentes funcionais com tipagem explícita
+export default function PageName(): JSX.Element { }
+
+// Dados do servidor — use fetch com cache: "no-store" para dados em tempo real
+const res = await fetch(`${API_URL}/api/v1/agents/`, {
+  cache: "no-store",
+  headers: { Authorization: `Bearer ${token}` }
+})
+
+// Formulários — use estado controlado, nunca <form> com action
+const [email, setEmail] = useState("")
+<input value={email} onChange={e => setEmail(e.target.value)} />
+```
+
+## Não fazer
+
+- Nunca use `<form action="...">` — use handlers `onClick`/`onSubmit` com `preventDefault`
+- Nunca hardcode a URL da API — sempre `process.env.NEXT_PUBLIC_API_URL`
+- Nunca chame a API do OpenAI/Twilio/D-ID diretamente do frontend — sempre via backend

@@ -1,0 +1,133 @@
+---
+description: Docker Compose, variáveis de ambiente e infra
+globs: infra/**/*,docker-compose*,.env*,Dockerfile*
+alwaysApply: false
+---
+
+# Infra — Docker Compose + Terraform
+
+## Serviços do Docker Compose
+
+| Serviço | Imagem | Porta | Healthcheck |
+|---------|--------|-------|-------------|
+| `postgres` | `pgvector/pgvector:pg16` | 5432 | `pg_isready` |
+| `redis` | `redis:7-alpine` | 6379 | `redis-cli ping` |
+| `backend` | build `./backend` | 8000 | via depends_on |
+| `frontend` | build `./frontend` | 3000 | — |
+| `worker` | build `./worker` | — | — |
+
+## Volumes montados no Docker
+
+```yaml
+# backend — código Python do backend
+- ../../backend:/app
+
+# worker — código do worker + agents compartilhados
+- ../../worker:/app
+- ../../agents:/app/agents    # ← agents na raiz do projeto
+
+# frontend
+- ../../frontend:/app
+- /app/node_modules           # não sobrescrever node_modules
+- /app/.next                  # não sobrescrever build cache
+```
+
+## PYTHONPATH obrigatório
+
+Adicionar em TODOS os serviços Python (backend e worker):
+
+```yaml
+environment:
+  PYTHONPATH: /app
+```
+
+Isso permite `from agents.orchestrator.graph import agent_graph` funcionar.
+
+## Variáveis de ambiente (.env)
+
+```env
+# App
+SECRET_KEY=change-me-in-production
+DEBUG=false
+
+# Banco de dados
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=autonomous_agent
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/autonomous_agent
+
+# Redis
+REDIS_PORT=6379
+REDIS_URL=redis://redis:6379/0
+CELERY_BROKER_URL=redis://redis:6379/1
+CELERY_RESULT_BACKEND=redis://redis:6379/2
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o
+
+# Twilio
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=+1...
+
+# Telegram
+TELEGRAM_BOT_TOKEN=...
+
+# ElevenLabs
+ELEVENLABS_API_KEY=...
+ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
+
+# D-ID
+DID_API_KEY=...
+
+# Frontend
+NEXT_PUBLIC_API_URL=http://localhost:8000
+FRONTEND_PORT=3000
+BACKEND_PORT=8000
+```
+
+## DATABASE_URL — atenção ao driver
+
+```
+# Síncrono (Alembic migrations)
+postgresql://user:pass@host:5432/db
+
+# Assíncrono (FastAPI runtime — database.py converte automaticamente)
+postgresql+asyncpg://user:pass@host:5432/db
+```
+
+O `database.py` já faz a conversão automática — não mude a variável de ambiente.
+
+## Comandos úteis (Makefile)
+
+```bash
+make up          # docker compose up -d
+make down        # docker compose down
+make logs        # docker compose logs -f
+make migrate     # alembic upgrade head
+make shell       # bash no container backend
+```
+
+## Estrutura Terraform (a implementar)
+
+```
+infra/
+├── aws/terraform/
+│   ├── main.tf       # ECS Fargate + RDS + ElastiCache
+│   ├── variables.tf
+│   └── outputs.tf
+├── azure/terraform/
+│   ├── main.tf       # AKS + Azure Database + Azure Cache
+│   └── variables.tf
+└── gcp/terraform/
+    ├── main.tf       # GKE + Cloud SQL + Memorystore
+    └── variables.tf
+```
+
+## Não fazer
+
+- Nunca commite o `.env` — apenas `.env.example`
+- Nunca use `localhost` dentro do Docker — use o nome do serviço (`postgres`, `redis`)
+- Nunca exponha portas do banco de dados em produção
