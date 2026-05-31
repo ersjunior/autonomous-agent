@@ -1,3 +1,0 @@
-# .github
-
-Configurações do GitHub (workflows, templates).
