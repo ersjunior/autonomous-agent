@@ -22,7 +22,7 @@ Fluxo resumido: mensagens entram via webhook ou campanha → Worker ou Backend d
 
 - [Docker](https://docs.docker.com/get-docker/) e Docker Compose v2
 - [Python 3.12](https://www.python.org/downloads/) (desenvolvimento local opcional)
-- [Node.js 20](https://nodejs.org/) (desenvolvimento local do frontend opcional)
+- [Node.js 22](https://nodejs.org/) (desenvolvimento local do frontend opcional)
 
 ## Instalação
 
