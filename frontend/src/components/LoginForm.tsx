@@ -7,11 +7,14 @@ import { Alert } from "@/components/ui/Alert";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export default function RegisterPage() {
+function resolveEmail(username: string): string {
+  return username.includes("@") ? username : `${username}@admin.com`;
+}
+
+export default function LoginForm() {
   const router = useRouter();
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("admin");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -21,19 +24,24 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/v1/auth/register`, {
+      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full_name: fullName, email, password }),
+        body: JSON.stringify({
+          email: resolveEmail(username.trim()),
+          password,
+        }),
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        setError(data?.detail || "Erro ao criar conta.");
+        setError(data?.detail || "Usuário ou senha incorretos.");
         return;
       }
 
-      router.push("/");
+      const data = await res.json();
+      localStorage.setItem("access_token", data.access_token);
+      router.push("/dashboard");
     } catch {
       setError("Erro de conexão. Tente novamente.");
     } finally {
@@ -43,40 +51,28 @@ export default function RegisterPage() {
 
   return (
     <AuthShell
-      title="Criar conta"
-      subtitle="Cadastre-se para acessar o dashboard."
-      footer={<AuthFooterLink text="Já tem conta?" linkText="Faça login" href="/" />}
+      title="Autonomous Agent"
+      subtitle="Entre para gerenciar seus agentes de IA."
+      footer={
+        <AuthFooterLink text="Não tem conta?" linkText="Cadastre-se" href="/register" />
+      }
     >
       {error && <Alert>{error}</Alert>}
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <div>
-          <label htmlFor="fullName" className="mb-2 block text-sm font-medium text-foreground">
-            Nome completo
+          <label htmlFor="username" className="mb-2 block text-sm font-medium text-foreground">
+            Usuário
           </label>
           <input
-            id="fullName"
+            id="username"
             type="text"
             required
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
+            autoComplete="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
             className="input-field"
-            placeholder="Seu nome"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="email" className="mb-2 block text-sm font-medium text-foreground">
-            Email
-          </label>
-          <input
-            id="email"
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="input-field"
-            placeholder="seu@email.com"
+            placeholder="admin"
           />
         </div>
 
@@ -88,16 +84,16 @@ export default function RegisterPage() {
             id="password"
             type="password"
             required
-            minLength={8}
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="input-field"
-            placeholder="Mínimo 8 caracteres"
+            placeholder="••••••••"
           />
         </div>
 
         <button type="submit" disabled={loading} className="btn-primary w-full">
-          {loading ? "Cadastrando..." : "Cadastrar"}
+          {loading ? "Entrando..." : "Entrar"}
         </button>
       </form>
     </AuthShell>

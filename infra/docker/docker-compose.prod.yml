@@ -1,33 +1,37 @@
+# Overrides para produção — use: make prod-up
+# Ajuste DEBUG=false e SECRET_KEY no .env antes de subir.
+
 services:
   postgres:
-    extends:
-      file: docker-compose.yml
-      service: postgres
+    ports: !reset []
 
   redis:
-    extends:
-      file: docker-compose.yml
-      service: redis
+    ports: !reset []
 
   backend:
-    extends:
-      file: docker-compose.yml
-      service: backend
     restart: always
-    volumes: []
+    volumes: !reset []
+    environment:
+      DEBUG: ${DEBUG:-false}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 
   frontend:
-    extends:
-      file: docker-compose.yml
-      service: frontend
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      target: runner
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     restart: always
-    volumes: []
+    volumes: !reset []
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    command: node server.js
 
   worker:
-    extends:
-      file: docker-compose.yml
-      service: worker
     restart: always
-    volumes: []
-    command: celery -A celery_app worker --loglevel=info --concurrency=4
+    volumes: !reset []
+    environment:
+      DEBUG: ${DEBUG:-false}
+    command: celery -A worker.celery_app worker --loglevel=info --concurrency=4

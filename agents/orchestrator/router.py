@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from agents.events import publish_event_async
-
-if TYPE_CHECKING:
-    from agents.orchestrator.graph import AgentState
+from agents.orchestrator.state import AgentState
 
 VALID_CHANNELS = frozenset({"telegram", "whatsapp", "voice", "video"})
 

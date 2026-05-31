@@ -1,6 +1,7 @@
 """Conversation orchestration graph."""
 
-from agents.orchestrator.graph import AgentState, agent_graph, create_graph
+from agents.orchestrator.graph import agent_graph, create_graph
+from agents.orchestrator.state import AgentState
 from agents.orchestrator.router import (
     build_initial_state,
     get_response,

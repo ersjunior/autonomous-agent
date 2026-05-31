@@ -2,6 +2,9 @@
 
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 interface Lead {
   id: string;
@@ -58,7 +61,7 @@ export default function LeadsPage() {
   async function loadLeads() {
     const token = localStorage.getItem("access_token");
     if (!token) {
-      window.location.href = "/login";
+      window.location.href = "/";
       return;
     }
 
@@ -147,51 +150,44 @@ export default function LeadsPage() {
   }
 
   return (
-    <main className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Leads</h1>
-          <p className="mt-1 text-gray-600">Gerencie sua base de contatos.</p>
-        </div>
-        <div className="flex gap-3">
-          <label className="cursor-pointer rounded-md border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 hover:bg-gray-50">
-            Importar CSV
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv"
-              onChange={handleCsvUpload}
-              className="hidden"
-            />
-          </label>
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="rounded-md bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
-          >
-            {showForm ? "Cancelar" : "Novo Lead"}
-          </button>
-        </div>
-      </div>
+    <>
+      <PageHeader
+        title="Leads"
+        description="Gerencie sua base de contatos e importações."
+        actions={
+          <>
+            <label className="btn-secondary cursor-pointer">
+              Importar CSV
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                onChange={handleCsvUpload}
+                className="hidden"
+              />
+            </label>
+            <button type="button" onClick={() => setShowForm(!showForm)} className="btn-primary">
+              {showForm ? "Cancelar" : "Novo lead"}
+            </button>
+          </>
+        }
+      />
 
-      {error && (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Alert>{error}</Alert>}
 
       {uploadProgress && (
-        <div className="mb-4 rounded-lg bg-white p-4 shadow">
-          <div className="mb-2 flex justify-between text-sm text-gray-600">
+        <div className="glass-card mb-6 p-5">
+          <div className="mb-2 flex justify-between text-sm text-muted-foreground">
             <span>
               Importando {uploadProgress.current} de {uploadProgress.total}
             </span>
             {uploadProgress.errors > 0 && (
-              <span className="text-red-600">{uploadProgress.errors} erro(s)</span>
+              <span className="text-destructive">{uploadProgress.errors} erro(s)</span>
             )}
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-gray-200">
+          <div className="h-2 overflow-hidden rounded-full bg-muted">
             <div
-              className="h-full bg-blue-600 transition-all"
+              className="h-full rounded-full bg-primary transition-all"
               style={{
                 width: `${(uploadProgress.current / uploadProgress.total) * 100}%`,
               }}
@@ -201,51 +197,29 @@ export default function LeadsPage() {
       )}
 
       {showForm && (
-        <div className="mb-8 rounded-lg bg-white p-6 shadow">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">Novo lead</h2>
+        <div className="glass-card mb-8 p-6">
+          <h2 className="mb-5 text-lg font-semibold text-foreground">Novo lead</h2>
           <form onSubmit={handleManualSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="name" className="mb-1 block text-sm font-medium text-gray-700">
-                Nome
-              </label>
-              <input
-                id="name"
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label htmlFor="phone" className="mb-1 block text-sm font-medium text-gray-700">
-                Telefone
-              </label>
-              <input
-                id="phone"
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label htmlFor="email" className="mb-1 block text-sm font-medium text-gray-700">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="rounded-md bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
+            {[
+              { id: "name", label: "Nome", type: "text", required: true, value: name, set: setName },
+              { id: "phone", label: "Telefone", type: "tel", required: false, value: phone, set: setPhone },
+              { id: "email", label: "Email", type: "email", required: false, value: email, set: setEmail },
+            ].map((field) => (
+              <div key={field.id}>
+                <label htmlFor={field.id} className="mb-2 block text-sm font-medium text-foreground">
+                  {field.label}
+                </label>
+                <input
+                  id={field.id}
+                  type={field.type}
+                  required={field.required}
+                  value={field.value}
+                  onChange={(e) => field.set(e.target.value)}
+                  className="input-field"
+                />
+              </div>
+            ))}
+            <button type="submit" disabled={submitting} className="btn-primary">
               {submitting ? "Salvando..." : "Salvar lead"}
             </button>
           </form>
@@ -253,44 +227,40 @@ export default function LeadsPage() {
       )}
 
       {loading ? (
-        <p className="text-gray-500">Carregando leads...</p>
+        <p className="text-muted-foreground">Carregando leads...</p>
       ) : leads.length === 0 ? (
-        <p className="text-gray-500">Nenhum lead cadastrado.</p>
+        <div className="glass-card p-8 text-center text-muted-foreground">
+          Nenhum lead cadastrado.
+        </div>
       ) : (
-        <div className="overflow-hidden rounded-lg bg-white shadow">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="glass-card overflow-hidden">
+          <table className="min-w-full divide-y divide-border">
+            <thead className="bg-muted/50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Nome
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Telefone
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Email
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Status
-                </th>
+                {["Nome", "Telefone", "Email", "Status"].map((col) => (
+                  <th
+                    key={col}
+                    className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                  >
+                    {col}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody className="divide-y divide-border">
               {leads.map((lead) => (
-                <tr key={lead.id}>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                <tr key={lead.id} className="transition hover:bg-muted/30">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
                     {lead.name}
                   </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                     {lead.phone || "—"}
                   </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                     {lead.email || "—"}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm">
-                    <span className="inline-flex rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800">
-                      {lead.status}
-                    </span>
+                    <Badge>{lead.status}</Badge>
                   </td>
                 </tr>
               ))}
@@ -298,6 +268,6 @@ export default function LeadsPage() {
           </table>
         </div>
       )}
-    </main>
+    </>
   );
 }

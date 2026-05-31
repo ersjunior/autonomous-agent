@@ -2,6 +2,9 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 type ChannelType = "WHATSAPP" | "TELEGRAM" | "VOICE" | "VIDEO";
 
@@ -69,7 +72,7 @@ export default function ChannelsPage() {
   async function loadChannels() {
     const token = localStorage.getItem("access_token");
     if (!token) {
-      window.location.href = "/login";
+      window.location.href = "/";
       return;
     }
 
@@ -131,39 +134,32 @@ export default function ChannelsPage() {
   }
 
   return (
-    <main className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Canais</h1>
-          <p className="mt-1 text-gray-600">Configure os canais de comunicação.</p>
-        </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="rounded-md bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
-        >
-          {showForm ? "Cancelar" : "Adicionar Canal"}
-        </button>
-      </div>
+    <>
+      <PageHeader
+        title="Canais"
+        description="Configure WhatsApp, Telegram, voz e vídeo."
+        actions={
+          <button type="button" onClick={() => setShowForm(!showForm)} className="btn-primary">
+            {showForm ? "Cancelar" : "Adicionar canal"}
+          </button>
+        }
+      />
 
-      {error && (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Alert>{error}</Alert>}
 
       {showForm && (
-        <div className="mb-8 rounded-lg bg-white p-6 shadow">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">Novo canal</h2>
+        <div className="glass-card mb-8 p-6">
+          <h2 className="mb-5 text-lg font-semibold text-foreground">Novo canal</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="channelType" className="mb-1 block text-sm font-medium text-gray-700">
+              <label htmlFor="channelType" className="mb-2 block text-sm font-medium text-foreground">
                 Tipo
               </label>
               <select
                 id="channelType"
                 value={channelType}
                 onChange={(e) => handleTypeChange(e.target.value as ChannelType)}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="input-field"
               >
                 {CHANNEL_TYPES.map((type) => (
                   <option key={type} value={type}>
@@ -175,10 +171,7 @@ export default function ChannelsPage() {
 
             {CHANNEL_FIELD_CONFIG[channelType].map((field) => (
               <div key={field.name}>
-                <label
-                  htmlFor={field.name}
-                  className="mb-1 block text-sm font-medium text-gray-700"
-                >
+                <label htmlFor={field.name} className="mb-2 block text-sm font-medium text-foreground">
                   {field.label}
                 </label>
                 <input
@@ -188,16 +181,12 @@ export default function ChannelsPage() {
                   value={credentials[field.name] || ""}
                   onChange={(e) => handleFieldChange(field.name, e.target.value)}
                   placeholder={field.placeholder}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="input-field"
                 />
               </div>
             ))}
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="rounded-md bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
+            <button type="submit" disabled={submitting} className="btn-primary">
               {submitting ? "Salvando..." : "Salvar canal"}
             </button>
           </form>
@@ -205,43 +194,38 @@ export default function ChannelsPage() {
       )}
 
       {loading ? (
-        <p className="text-gray-500">Carregando canais...</p>
+        <p className="text-muted-foreground">Carregando canais...</p>
       ) : channels.length === 0 ? (
-        <p className="text-gray-500">Nenhum canal cadastrado.</p>
+        <div className="glass-card p-8 text-center text-muted-foreground">
+          Nenhum canal cadastrado.
+        </div>
       ) : (
-        <div className="overflow-hidden rounded-lg bg-white shadow">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="glass-card overflow-hidden">
+          <table className="min-w-full divide-y divide-border">
+            <thead className="bg-muted/50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Tipo
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Criado em
-                </th>
+                {["Tipo", "Status", "Criado em"].map((col) => (
+                  <th
+                    key={col}
+                    className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                  >
+                    {col}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody className="divide-y divide-border">
               {channels.map((channel) => (
-                <tr key={channel.id}>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                <tr key={channel.id} className="transition hover:bg-muted/30">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
                     {channel.type}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm">
-                    <span
-                      className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${
-                        channel.is_active
-                          ? "bg-green-100 text-green-800"
-                          : "bg-gray-100 text-gray-800"
-                      }`}
-                    >
+                    <Badge variant={channel.is_active ? "success" : "muted"}>
                       {channel.is_active ? "Ativo" : "Inativo"}
-                    </span>
+                    </Badge>
                   </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                     {new Date(channel.created_at).toLocaleDateString("pt-BR")}
                   </td>
                 </tr>
@@ -250,6 +234,6 @@ export default function ChannelsPage() {
           </table>
         </div>
       )}
-    </main>
+    </>
   );
 }

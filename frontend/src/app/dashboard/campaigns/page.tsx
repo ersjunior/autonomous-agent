@@ -2,6 +2,9 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 type ChannelType = "WHATSAPP" | "TELEGRAM" | "VOICE" | "VIDEO";
 
@@ -36,7 +39,7 @@ export default function CampaignsPage() {
   async function loadData() {
     const token = localStorage.getItem("access_token");
     if (!token) {
-      window.location.href = "/login";
+      window.location.href = "/";
       return;
     }
 
@@ -104,39 +107,34 @@ export default function CampaignsPage() {
   }
 
   return (
-    <main className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Campanhas</h1>
-          <p className="mt-1 text-gray-600">Gerencie campanhas ativas e receptivas.</p>
-        </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          disabled={agents.length === 0}
-          className="rounded-md bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {showForm ? "Cancelar" : "Nova Campanha"}
-        </button>
-      </div>
+    <>
+      <PageHeader
+        title="Campanhas"
+        description="Gerencie campanhas ativas e receptivas."
+        actions={
+          <button
+            type="button"
+            onClick={() => setShowForm(!showForm)}
+            disabled={agents.length === 0}
+            className="btn-primary"
+          >
+            {showForm ? "Cancelar" : "Nova campanha"}
+          </button>
+        }
+      />
 
       {agents.length === 0 && !loading && (
-        <div className="mb-4 rounded-md border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
-          Cadastre um agente antes de criar uma campanha.
-        </div>
+        <Alert variant="warning">Cadastre um agente antes de criar uma campanha.</Alert>
       )}
 
-      {error && (
-        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Alert>{error}</Alert>}
 
       {showForm && agents.length > 0 && (
-        <div className="mb-8 rounded-lg bg-white p-6 shadow">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">Nova campanha</h2>
+        <div className="glass-card mb-8 p-6">
+          <h2 className="mb-5 text-lg font-semibold text-foreground">Nova campanha</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="name" className="mb-1 block text-sm font-medium text-gray-700">
+              <label htmlFor="name" className="mb-2 block text-sm font-medium text-foreground">
                 Nome
               </label>
               <input
@@ -145,12 +143,12 @@ export default function CampaignsPage() {
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="input-field"
               />
             </div>
 
             <div>
-              <label htmlFor="agentId" className="mb-1 block text-sm font-medium text-gray-700">
+              <label htmlFor="agentId" className="mb-2 block text-sm font-medium text-foreground">
                 Agente
               </label>
               <select
@@ -158,7 +156,7 @@ export default function CampaignsPage() {
                 required
                 value={agentId}
                 onChange={(e) => setAgentId(e.target.value)}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="input-field"
               >
                 {agents.map((agent) => (
                   <option key={agent.id} value={agent.id}>
@@ -169,14 +167,14 @@ export default function CampaignsPage() {
             </div>
 
             <div>
-              <label htmlFor="channelType" className="mb-1 block text-sm font-medium text-gray-700">
+              <label htmlFor="channelType" className="mb-2 block text-sm font-medium text-foreground">
                 Canal
               </label>
               <select
                 id="channelType"
                 value={channelType}
                 onChange={(e) => setChannelType(e.target.value as ChannelType)}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="input-field"
               >
                 {CHANNEL_TYPES.map((type) => (
                   <option key={type} value={type}>
@@ -186,11 +184,7 @@ export default function CampaignsPage() {
               </select>
             </div>
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="rounded-md bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
+            <button type="submit" disabled={submitting} className="btn-primary">
               {submitting ? "Salvando..." : "Salvar campanha"}
             </button>
           </form>
@@ -198,49 +192,42 @@ export default function CampaignsPage() {
       )}
 
       {loading ? (
-        <p className="text-gray-500">Carregando campanhas...</p>
+        <p className="text-muted-foreground">Carregando campanhas...</p>
       ) : campaigns.length === 0 ? (
-        <p className="text-gray-500">Nenhuma campanha cadastrada.</p>
+        <div className="glass-card p-8 text-center text-muted-foreground">
+          Nenhuma campanha cadastrada.
+        </div>
       ) : (
-        <div className="overflow-hidden rounded-lg bg-white shadow">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="glass-card overflow-hidden">
+          <table className="min-w-full divide-y divide-border">
+            <thead className="bg-muted/50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Nome
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Agente
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Canal
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                  Leads
-                </th>
+                {["Nome", "Agente", "Canal", "Status", "Leads"].map((col) => (
+                  <th
+                    key={col}
+                    className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                  >
+                    {col}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
+            <tbody className="divide-y divide-border">
               {campaigns.map((campaign) => (
-                <tr key={campaign.id}>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                <tr key={campaign.id} className="transition hover:bg-muted/30">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
                     {campaign.name}
                   </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                     {getAgentName(campaign.agent_id)}
                   </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-foreground">
                     {campaign.channel_type}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm">
-                    <span className="inline-flex rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800">
-                      {campaign.status}
-                    </span>
+                    <Badge>{campaign.status}</Badge>
                   </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                  <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                     {campaign.leads_count}
                   </td>
                 </tr>
@@ -249,6 +236,6 @@ export default function CampaignsPage() {
           </table>
         </div>
       )}
-    </main>
+    </>
   );
 }

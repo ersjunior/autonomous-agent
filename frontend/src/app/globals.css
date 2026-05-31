@@ -1,3 +1,96 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 224 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 47% 11%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 262 83% 58%;
+    --primary: 262 83% 58%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 262 30% 96%;
+    --accent-foreground: 262 83% 40%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 45%;
+    --warning: 38 92% 50%;
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 224 47% 11%;
+    --sidebar-muted: 220 9% 46%;
+    --sidebar-active: 262 30% 96%;
+  }
+
+  .dark {
+    --background: 224 47% 6%;
+    --foreground: 210 40% 98%;
+    --card: 224 47% 9%;
+    --card-foreground: 210 40% 98%;
+    --muted: 224 30% 12%;
+    --muted-foreground: 215 20% 65%;
+    --border: 224 30% 16%;
+    --input: 224 30% 16%;
+    --ring: 263 70% 65%;
+    --primary: 263 70% 65%;
+    --primary-foreground: 224 47% 6%;
+    --accent: 262 30% 14%;
+    --accent-foreground: 263 70% 75%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 60% 45%;
+    --warning: 38 80% 50%;
+    --sidebar: 224 47% 7%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-muted: 215 20% 55%;
+    --sidebar-active: 262 30% 14%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(at 0% 0%, hsl(var(--primary) / 0.08) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, hsl(var(--primary) / 0.05) 0px, transparent 50%);
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(at 0% 0%, hsl(var(--primary) / 0.12) 0px, transparent 45%),
+      radial-gradient(at 100% 0%, hsl(263 70% 30% / 0.08) 0px, transparent 40%);
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply rounded-2xl border border-border/60 bg-card/80 shadow-sm backdrop-blur-sm;
+  }
+
+  .input-field {
+    @apply w-full rounded-xl border border-input bg-background/50 px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-sidebar-muted transition hover:bg-accent hover:text-accent-foreground;
+  }
+
+  .nav-link-active {
+    @apply bg-accent text-accent-foreground shadow-sm;
+  }
+}

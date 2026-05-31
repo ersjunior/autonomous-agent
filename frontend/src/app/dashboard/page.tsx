@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
+import { Alert } from "@/components/ui/Alert";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 interface Metrics {
   agents: number;
@@ -25,7 +27,7 @@ export default function DashboardPage() {
     async function loadMetrics() {
       const token = localStorage.getItem("access_token");
       if (!token) {
-        window.location.href = "/login";
+        window.location.href = "/";
         return;
       }
 
@@ -67,39 +69,43 @@ export default function DashboardPage() {
   }, []);
 
   const cards = [
-    { label: "Agentes", value: metrics.agents, href: "/dashboard/agents" },
-    { label: "Canais ativos", value: metrics.activeChannels, href: "/dashboard/channels" },
-    { label: "Leads cadastrados", value: metrics.leads, href: "/dashboard/leads" },
-    { label: "Campanhas ativas", value: metrics.activeCampaigns, href: "/dashboard/campaigns" },
+    { label: "Agentes", value: metrics.agents, href: "/dashboard/agents", accent: "from-violet-500/20 to-violet-500/5" },
+    { label: "Canais ativos", value: metrics.activeChannels, href: "/dashboard/channels", accent: "from-emerald-500/20 to-emerald-500/5" },
+    { label: "Leads cadastrados", value: metrics.leads, href: "/dashboard/leads", accent: "from-sky-500/20 to-sky-500/5" },
+    { label: "Campanhas ativas", value: metrics.activeCampaigns, href: "/dashboard/campaigns", accent: "from-amber-500/20 to-amber-500/5" },
   ];
 
   return (
-    <main className="p-8">
-      <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-      <p className="mt-2 text-gray-600">Visão geral do sistema multi-agente.</p>
+    <>
+      <PageHeader
+        title="Dashboard"
+        description="Visão geral do seu ecossistema multi-agente."
+      />
 
-      {error && (
-        <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <Alert>{error}</Alert>}
 
       {loading ? (
-        <p className="mt-8 text-gray-500">Carregando métricas...</p>
+        <p className="text-muted-foreground">Carregando métricas...</p>
       ) : (
-        <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
           {cards.map((card) => (
             <Link
               key={card.label}
               href={card.href}
-              className="rounded-lg bg-white p-6 shadow transition hover:shadow-md"
+              className="glass-card group p-6 transition hover:-translate-y-0.5 hover:shadow-glow"
             >
-              <p className="text-sm font-medium text-gray-500">{card.label}</p>
-              <p className="mt-2 text-3xl font-bold text-gray-900">{card.value}</p>
+              <div className={`mb-4 h-1 w-12 rounded-full bg-gradient-to-r ${card.accent}`} />
+              <p className="text-sm font-medium text-muted-foreground">{card.label}</p>
+              <p className="mt-3 text-4xl font-semibold tracking-tight text-foreground">
+                {card.value}
+              </p>
+              <p className="mt-4 text-xs text-primary opacity-0 transition group-hover:opacity-100">
+                Ver detalhes →
+              </p>
             </Link>
           ))}
         </div>
       )}
-    </main>
+    </>
   );
 }

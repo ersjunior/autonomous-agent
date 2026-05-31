@@ -1,12 +1,12 @@
 """LangGraph orchestrator for customer service conversations."""
 
-from typing import TypedDict
-
 from langgraph.graph import END, START, StateGraph
 
 from agents.events import publish_event_async
 from agents.memory.long_term import LongTermMemory
 from agents.memory.short_term import ShortTermMemory
+from agents.orchestrator.router import route_after_escalation_check
+from agents.orchestrator.state import AgentState
 from agents.workers.intent_agent import identify_intent as run_identify_intent
 from agents.workers.response_agent import generate_response as run_generate_response
 
@@ -14,21 +14,6 @@ ESCALATION_CONFIDENCE_THRESHOLD = 0.5
 
 _short_term_memory = ShortTermMemory()
 _long_term_memory = LongTermMemory()
-
-
-class AgentState(TypedDict):
-    message: str
-    channel: str
-    user_id: str
-    intent: str
-    confidence: float
-    entities: dict
-    response: str
-    should_escalate: bool
-    conversation_history: list[dict]
-
-
-from agents.orchestrator.router import route_after_escalation_check
 
 
 async def identify_intent(state: AgentState) -> AgentState:

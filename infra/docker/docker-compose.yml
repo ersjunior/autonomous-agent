@@ -1,3 +1,28 @@
+name: autonomous_agent
+
+x-app-env: &app-env
+  env_file:
+    - path: ../../.env
+      required: false
+  environment:
+    PYTHONPATH: /workspace:/workspace/backend:/workspace/worker
+    DEBUG: ${DEBUG:-true}
+    SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+    DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-autonomous_agent}
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    CELERY_RESULT_BACKEND: redis://redis:6379/2
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+    TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+    TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+    TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+    ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
+    DID_API_KEY: ${DID_API_KEY:-}
+    FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -7,9 +32,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-autonomous_agent}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-25432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
@@ -20,7 +46,7 @@ services:
     image: redis:7-alpine
     container_name: autonomous-agent-redis
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-16379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -34,12 +60,7 @@ services:
       context: ../..
       dockerfile: backend/Dockerfile
     container_name: autonomous-agent-backend
-    environment:
-      PYTHONPATH: /workspace:/workspace/backend
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-autonomous_agent}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    <<: *app-env
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -50,6 +71,7 @@ services:
     volumes:
       - ../../backend:/workspace/backend
       - ../../agents:/workspace/agents
+      - ../../worker:/workspace/worker
     working_dir: /workspace/backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
@@ -57,9 +79,12 @@ services:
     build:
       context: ../../frontend
       dockerfile: Dockerfile
+      target: dev
     container_name: autonomous-agent-frontend
     environment:
+      NODE_ENV: development
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      WATCHPACK_POLLING: "true"
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
@@ -67,19 +92,14 @@ services:
     volumes:
       - ../../frontend:/app
       - /app/node_modules
-      - /app/.next
+    command: npm run dev -- -H 0.0.0.0
 
   worker:
     build:
       context: ../..
       dockerfile: backend/Dockerfile
     container_name: autonomous-agent-worker
-    environment:
-      PYTHONPATH: /workspace:/workspace/backend
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-autonomous_agent}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
-      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    <<: *app-env
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,33 +1,7 @@
+# Overrides opcionais para desenvolvimento local.
+# O docker-compose.yml já inclui hot-reload e volumes montados.
+# Use: make up (equivale a este perfil)
+
 services:
-  postgres:
-    extends:
-      file: docker-compose.yml
-      service: postgres
-
-  redis:
-    extends:
-      file: docker-compose.yml
-      service: redis
-
-  backend:
-    extends:
-      file: docker-compose.yml
-      service: backend
-    volumes:
-      - ../../backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-  frontend:
-    extends:
-      file: docker-compose.yml
-      service: frontend
-    volumes:
-      - ../../frontend:/app
-      - /app/node_modules
-    command: npm run dev
-
   worker:
-    extends:
-      file: docker-compose.yml
-      service: worker
-    command: celery -A celery_app worker --loglevel=debug
+    command: celery -A worker.celery_app worker --loglevel=debug

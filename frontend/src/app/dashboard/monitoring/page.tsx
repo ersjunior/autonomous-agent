@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { API_URL } from "@/lib/api";
+import { Badge } from "@/components/ui/Badge";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 interface AgentEvent {
   type: string;
@@ -16,16 +18,16 @@ interface AgentEvent {
 
 const EVENT_LABELS: Record<string, string> = {
   message_received: "Mensagem recebida",
-  intent_detected: "Intencao detectada",
+  intent_detected: "Intenção detectada",
   response_sent: "Resposta enviada",
   escalated: "Escalada",
 };
 
-const EVENT_COLORS: Record<string, string> = {
-  message_received: "bg-blue-100 text-blue-800",
-  intent_detected: "bg-yellow-100 text-yellow-800",
-  response_sent: "bg-green-100 text-green-800",
-  escalated: "bg-red-100 text-red-800",
+const EVENT_VARIANTS: Record<string, "default" | "warning" | "success" | "muted"> = {
+  message_received: "default",
+  intent_detected: "warning",
+  response_sent: "success",
+  escalated: "muted",
 };
 
 export default function MonitoringPage() {
@@ -57,83 +59,73 @@ export default function MonitoringPage() {
   }, []);
 
   return (
-    <main className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Monitoramento</h1>
-          <p className="mt-1 text-gray-600">
-            Feed em tempo real de eventos do agente.
-          </p>
-        </div>
-        <span
-          className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
-            connected
-              ? "bg-green-100 text-green-800"
-              : "bg-gray-100 text-gray-600"
-          }`}
-        >
-          <span
-            className={`h-2 w-2 rounded-full ${
-              connected ? "bg-green-500" : "bg-gray-400"
-            }`}
-          />
-          {connected ? "Conectado" : "Desconectado"}
-        </span>
-      </div>
+    <>
+      <PageHeader
+        title="Monitoramento"
+        description="Feed em tempo real de eventos do agente."
+        actions={
+          <Badge variant={connected ? "success" : "muted"}>
+            <span className="flex items-center gap-2">
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  connected ? "bg-success animate-pulse" : "bg-muted-foreground"
+                }`}
+              />
+              {connected ? "Conectado" : "Desconectado"}
+            </span>
+          </Badge>
+        }
+      />
 
       {events.length === 0 ? (
-        <p className="text-gray-500">
+        <div className="glass-card p-8 text-center text-muted-foreground">
           Aguardando eventos... Envie uma mensagem pelo WhatsApp ou Telegram.
-        </p>
+        </div>
       ) : (
         <div className="space-y-3">
           {events.map((event, index) => (
-            <div
-              key={`${event.timestamp}-${index}`}
-              className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm"
-            >
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span
-                  className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${
-                    EVENT_COLORS[event.type] ?? "bg-gray-100 text-gray-800"
-                  }`}
-                >
+            <div key={`${event.timestamp}-${index}`} className="glass-card p-5">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Badge variant={EVENT_VARIANTS[event.type] ?? "muted"}>
                   {EVENT_LABELS[event.type] ?? event.type}
-                </span>
+                </Badge>
                 {event.channel && (
-                  <span className="text-xs uppercase text-gray-500">
+                  <span className="text-xs uppercase text-muted-foreground">
                     {event.channel}
                   </span>
                 )}
-                <span className="ml-auto text-xs text-gray-400">
+                <span className="ml-auto text-xs text-muted-foreground">
                   {new Date(event.timestamp).toLocaleString("pt-BR")}
                 </span>
               </div>
 
               {event.user_id && (
-                <p className="text-xs text-gray-500">Usuario: {event.user_id}</p>
+                <p className="text-xs text-muted-foreground">Usuário: {event.user_id}</p>
               )}
               {event.message && (
-                <p className="mt-1 text-sm text-gray-700">
-                  <span className="font-medium">Mensagem:</span> {event.message}
+                <p className="mt-2 text-sm text-foreground">
+                  <span className="font-medium text-muted-foreground">Mensagem:</span>{" "}
+                  {event.message}
                 </p>
               )}
               {event.intent && (
-                <p className="mt-1 text-sm text-gray-700">
-                  <span className="font-medium">Intencao:</span> {event.intent}
+                <p className="mt-2 text-sm text-foreground">
+                  <span className="font-medium text-muted-foreground">Intenção:</span>{" "}
+                  {event.intent}
                   {event.confidence !== undefined &&
                     ` (${(event.confidence * 100).toFixed(0)}%)`}
                 </p>
               )}
               {event.response && (
-                <p className="mt-1 text-sm text-gray-700">
-                  <span className="font-medium">Resposta:</span> {event.response}
+                <p className="mt-2 text-sm text-foreground">
+                  <span className="font-medium text-muted-foreground">Resposta:</span>{" "}
+                  {event.response}
                 </p>
               )}
             </div>
           ))}
         </div>
       )}
-    </main>
+    </>
   );
 }
