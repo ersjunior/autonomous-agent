@@ -1,3 +1,80 @@
-"""Message routing between agents and channels."""
+"""Central dispatcher — routes messages from channels to the LangGraph orchestrator."""
 
-# TODO: implement router logic
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from agents.events import publish_event_async
+
+if TYPE_CHECKING:
+    from agents.orchestrator.graph import AgentState
+
+VALID_CHANNELS = frozenset({"telegram", "whatsapp", "voice", "video"})
+
+
+def build_initial_state(message: str, channel: str, user_id: str) -> AgentState:
+    """Build a complete AgentState for graph invocation."""
+    normalized_channel = channel.lower()
+    if normalized_channel not in VALID_CHANNELS:
+        raise ValueError(f"Unsupported channel: {channel}")
+
+    return {
+        "message": message,
+        "channel": normalized_channel,
+        "user_id": user_id,
+        "intent": "",
+        "confidence": 0.0,
+        "entities": {},
+        "response": "",
+        "should_escalate": False,
+        "conversation_history": [],
+    }
+
+
+def route_after_escalation_check(state: AgentState) -> str:
+    """Conditional edge: escalate to human or generate an automated response."""
+    if state.get("should_escalate"):
+        return "escalate"
+    return "generate_response"
+
+
+async def route_message(
+    message: str,
+    channel: str,
+    user_id: str,
+    *,
+    notify_received: bool = False,
+) -> AgentState:
+    """Run a message through the agent graph and return the final state."""
+    from agents.orchestrator.graph import agent_graph
+
+    normalized_channel = channel.lower()
+    if notify_received:
+        await publish_event_async(
+            "message_received",
+            {
+                "channel": normalized_channel,
+                "user_id": user_id,
+                "message": message,
+            },
+        )
+
+    state = build_initial_state(message, normalized_channel, user_id)
+    return await agent_graph.ainvoke(state)
+
+
+async def get_response(
+    message: str,
+    channel: str,
+    user_id: str,
+    *,
+    notify_received: bool = False,
+) -> str:
+    """Convenience wrapper — returns only the response text."""
+    result = await route_message(
+        message,
+        channel,
+        user_id,
+        notify_received=notify_received,
+    )
+    return result.get("response", "")

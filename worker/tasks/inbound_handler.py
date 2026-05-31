@@ -2,35 +2,12 @@
 
 import asyncio
 
-from agents.events import publish_event_async
-from agents.orchestrator.graph import AgentState, agent_graph
+from agents.orchestrator.router import get_response
 from worker.celery_app import celery
 
 
 async def _process_inbound_message(message: str, channel: str, user_id: str) -> str:
-    await publish_event_async(
-        "message_received",
-        {
-            "channel": channel,
-            "user_id": user_id,
-            "message": message,
-        },
-    )
-
-    state: AgentState = {
-        "message": message,
-        "channel": channel.lower(),
-        "user_id": user_id,
-        "intent": "",
-        "confidence": 0.0,
-        "entities": {},
-        "response": "",
-        "should_escalate": False,
-        "conversation_history": [],
-    }
-
-    result = await agent_graph.ainvoke(state)
-    return result.get("response", "")
+    return await get_response(message, channel, user_id, notify_received=True)
 
 
 @celery.task(bind=True, max_retries=3)

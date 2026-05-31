@@ -2,7 +2,7 @@
 
 import xml.sax.saxutils
 
-from agents.orchestrator.graph import AgentState, agent_graph
+from agents.orchestrator.router import route_message
 
 
 class WhatsAppHandler:
@@ -13,19 +13,7 @@ class WhatsAppHandler:
         if not body or not from_number:
             return "<Response></Response>"
 
-        initial_state: AgentState = {
-            "message": body,
-            "channel": "whatsapp",
-            "user_id": from_number,
-            "intent": "",
-            "confidence": 0.0,
-            "entities": {},
-            "response": "",
-            "should_escalate": False,
-            "conversation_history": [],
-        }
-
-        result = await agent_graph.ainvoke(initial_state)
+        result = await route_message(body, "whatsapp", from_number)
         response_text = result.get("response", "")
         escaped = xml.sax.saxutils.escape(response_text)
         return f"<Response><Message>{escaped}</Message></Response>"

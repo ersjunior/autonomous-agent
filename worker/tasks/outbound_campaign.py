@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from agents.channels.telegram.client import send_telegram_message
 from agents.channels.whatsapp.twilio_client import send_whatsapp_message
-from agents.orchestrator.graph import AgentState, agent_graph
+from agents.orchestrator.router import route_message
 from app.core.database import AsyncSessionLocal
 from app.models.campaign import Campaign
 from app.models.lead import Lead
@@ -50,19 +50,7 @@ async def _send_campaign_message(lead_id: str, campaign_id: str, channel: str) -
         f"Olá {lead.name}, tudo bem? Sou o assistente virtual da {campaign.name}.",
     )
 
-    state: AgentState = {
-        "message": initial_message,
-        "channel": channel_lower,
-        "user_id": user_id,
-        "intent": "",
-        "confidence": 0.0,
-        "entities": {},
-        "response": "",
-        "should_escalate": False,
-        "conversation_history": [],
-    }
-
-    result = await agent_graph.ainvoke(state)
+    result = await route_message(initial_message, channel_lower, user_id)
     response = result.get("response", "")
 
     if channel_lower == "whatsapp":

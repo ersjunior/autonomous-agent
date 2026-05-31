@@ -28,6 +28,9 @@ class AgentState(TypedDict):
     conversation_history: list[dict]
 
 
+from agents.orchestrator.router import route_after_escalation_check
+
+
 async def identify_intent(state: AgentState) -> AgentState:
     memory = _short_term_memory
     history = await memory.get_history(state["user_id"])
@@ -109,12 +112,6 @@ async def send_response(state: AgentState) -> AgentState:
     return {"conversation_history": history}
 
 
-def _route_after_escalation_check(state: AgentState) -> str:
-    if state.get("should_escalate"):
-        return "escalate"
-    return "generate_response"
-
-
 def create_graph():
     builder = StateGraph(AgentState)
 
@@ -128,7 +125,7 @@ def create_graph():
     builder.add_edge("identify_intent", "check_escalation")
     builder.add_conditional_edges(
         "check_escalation",
-        _route_after_escalation_check,
+        route_after_escalation_check,
         {
             "escalate": "escalate",
             "generate_response": "generate_response",

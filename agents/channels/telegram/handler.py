@@ -3,7 +3,7 @@
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-from agents.orchestrator.graph import AgentState, agent_graph
+from agents.orchestrator.router import route_message
 
 
 class TelegramHandler:
@@ -21,19 +21,11 @@ class TelegramHandler:
         if not update.message or not update.message.text or not update.effective_user:
             return
 
-        initial_state: AgentState = {
-            "message": update.message.text,
-            "channel": "telegram",
-            "user_id": str(update.effective_user.id),
-            "intent": "",
-            "confidence": 0.0,
-            "entities": {},
-            "response": "",
-            "should_escalate": False,
-            "conversation_history": [],
-        }
-
-        result = await agent_graph.ainvoke(initial_state)
+        result = await route_message(
+            update.message.text,
+            "telegram",
+            str(update.effective_user.id),
+        )
         response_text = result.get("response", "")
         if response_text:
             await update.message.reply_text(response_text)
