@@ -238,6 +238,26 @@ infra/docker/
 └── postgres/init.sql          # extensão pgvector no init
 ```
 
+## CI/CD
+
+| Workflow | Gatilho | Requerido |
+|---|---|---|
+| `ci.yml` | Push em `main`/`develop` | Automático |
+| `docker-publish.yml` | Tag `v*` | Requer secrets |
+
+### Publicação de imagens Docker (opcional)
+
+Para habilitar a publicação automática no Docker Hub ao criar uma release:
+
+1. Crie uma conta em [hub.docker.com](https://hub.docker.com)
+2. Gere um token em **Account Settings → Security → New Access Token**
+3. Adicione em **Settings → Secrets → Actions** do repositório:
+   - `DOCKER_USERNAME` — seu usuário Docker Hub
+   - `DOCKER_TOKEN` — o token gerado
+
+> Sem esses secrets, o workflow exibe um aviso informativo e
+> o deploy local via `make up` continua funcionando normalmente.
+
 ## Desenvolvido como TCC
 
 Este projeto foi desenvolvido como Trabalho de Conclusão de Curso (TCC) intitulado **"Do operador ao Agente: Transformando um atendente de telemarketing em um Agente de Inteligência Artificial Autônomo"**, apresentado ao **ICMC** (Instituto de Ciências Matemáticas e de Computação) da **USP** (Universidade de São Paulo).

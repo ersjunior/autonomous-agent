@@ -6,8 +6,27 @@ on:
       - "v*"
 
 jobs:
-  build-and-push:
+  check-secrets:
     runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check Docker Hub secrets
+        id: check
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+        run: |
+          if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_TOKEN" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-push:
+    needs: check-secrets
+    runs-on: ubuntu-latest
+    if: needs.check-secrets.outputs.configured == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -44,3 +63,21 @@ jobs:
           context: ./worker
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/autonomous-agent-worker:${{ steps.tag.outputs.TAG }}
+
+  notify-missing-secrets:
+    needs: check-secrets
+    runs-on: ubuntu-latest
+    if: needs.check-secrets.outputs.configured != 'true'
+    steps:
+      - name: Inform about missing Docker Hub secrets
+        run: |
+          echo "⚠️  Docker Hub secrets não configurados."
+          echo ""
+          echo "Para publicar imagens Docker, configure os seguintes secrets"
+          echo "em github.com/${{ github.repository }}/settings/secrets/actions:"
+          echo ""
+          echo "  DOCKER_USERNAME  → seu usuário do Docker Hub"
+          echo "  DOCKER_TOKEN     → token em hub.docker.com > Account Settings > Security"
+          echo ""
+          echo "O deploy local via Docker Compose continua funcionando normalmente."
+          echo "Ver: infra/docker/docker-compose.yml"
