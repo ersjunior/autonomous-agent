@@ -1,0 +1,65 @@
+"""REST API for Coqui XTTS-v2 text-to-speech (Portuguese)."""
+
+import os
+import tempfile
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
+from TTS.api import TTS
+
+app = FastAPI(title="coqui-tts", version="1.0.0")
+
+MODEL_NAME = os.getenv(
+    "COQUI_MODEL",
+    "tts_models/multilingual/multi-dataset/xtts_v2",
+)
+DEFAULT_SPEAKER = os.getenv("COQUI_VOICE_SAMPLE", "")
+
+_tts: TTS | None = None
+
+
+def get_tts() -> TTS:
+    global _tts
+    if _tts is None:
+        _tts = TTS(MODEL_NAME)
+    return _tts
+
+
+class TTSRequest(BaseModel):
+    text: str
+    language: str = Field(default="pt")
+    speaker_wav: str = ""
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok", "model": MODEL_NAME}
+
+
+@app.post("/tts")
+async def synthesize(request: TTSRequest) -> Response:
+    speaker_path = request.speaker_wav or DEFAULT_SPEAKER
+    if not speaker_path or not Path(speaker_path).is_file():
+        raise HTTPException(
+            status_code=400,
+            detail="speaker_wav is required (path to reference .wav for voice cloning)",
+        )
+
+    tts = get_tts()
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        out_path = tmp.name
+
+    try:
+        tts.tts_to_file(
+            text=request.text,
+            file_path=out_path,
+            speaker_wav=speaker_path,
+            language=request.language,
+        )
+        audio_bytes = Path(out_path).read_bytes()
+        return Response(content=audio_bytes, media_type="audio/wav")
+    finally:
+        if os.path.exists(out_path):
+            os.unlink(out_path)

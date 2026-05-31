@@ -4,13 +4,10 @@ import uuid
 from datetime import datetime, timezone
 
 import asyncpg
-from openai import AsyncOpenAI
 from pgvector.asyncpg import register_vector
 
+from agents.provider_factory import ProviderFactory
 from app.core.config import settings
-
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIMENSIONS = 1536
 
 
 def _asyncpg_database_url(url: str) -> str:
@@ -40,13 +37,8 @@ class LongTermMemory:
         return self._pool
 
     async def _embed(self, text: str) -> list[float]:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.embeddings.create(
-            model=EMBEDDING_MODEL,
-            input=text,
-            dimensions=EMBEDDING_DIMENSIONS,
-        )
-        return response.data[0].embedding
+        llm = ProviderFactory.get_llm()
+        return await llm.embed(text)
 
     async def save_interaction(
         self,

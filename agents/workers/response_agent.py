@@ -2,10 +2,7 @@
 
 import logging
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-
-from app.core.config import settings
+from agents.provider_factory import ProviderFactory
 
 logger = logging.getLogger(__name__)
 
@@ -15,15 +12,15 @@ Use o contexto da intenção e das entidades extraídas para personalizar a resp
 Não invente informações que não estejam no histórico ou no contexto fornecido."""
 
 
-def _history_to_messages(history: list[dict]) -> list[HumanMessage | AIMessage]:
-    messages: list[HumanMessage | AIMessage] = []
+def _history_to_messages(history: list[dict]) -> list[dict]:
+    messages: list[dict] = []
     for item in history:
         role = item.get("role", "")
         content = item.get("content", "")
         if role in ("user", "human", "customer"):
-            messages.append(HumanMessage(content=content))
+            messages.append({"role": "user", "content": content})
         elif role in ("assistant", "ai", "agent"):
-            messages.append(AIMessage(content=content))
+            messages.append({"role": "assistant", "content": content})
     return messages
 
 
@@ -33,11 +30,7 @@ async def generate_response(
     history: list[dict],
     channel: str,
 ) -> str:
-    llm = ChatOpenAI(
-        model=settings.openai_model,
-        api_key=settings.openai_api_key,
-        temperature=0.7,
-    )
+    llm = ProviderFactory.get_llm()
 
     context = (
         f"Canal: {channel}\n"
@@ -45,13 +38,13 @@ async def generate_response(
         f"Entidades: {entities}"
     )
 
-    messages: list[SystemMessage | HumanMessage | AIMessage] = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        SystemMessage(content=context),
+    messages: list[dict] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": context},
         *_history_to_messages(history),
     ]
 
-    result = await llm.ainvoke(messages)
-    if not isinstance(result.content, str):
-        logger.warning("Unexpected content type: %s", type(result.content))
-    return result.content if isinstance(result.content, str) else str(result.content)
+    result = await llm.complete(messages, temperature=0.7)
+    if not isinstance(result, str):
+        logger.warning("Unexpected content type: %s", type(result))
+    return result if isinstance(result, str) else str(result)

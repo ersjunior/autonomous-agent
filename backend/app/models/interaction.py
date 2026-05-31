@@ -10,9 +10,8 @@ from sqlalchemy import DateTime, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.config import settings
 from app.models.base import Base
-
-EMBEDDING_DIMENSIONS = 1536
 
 
 class Interaction(Base):
@@ -26,7 +25,7 @@ class Interaction(Base):
     response: Mapped[str] = mapped_column(Text, nullable=False)
     intent: Mapped[str] = mapped_column(String(100), nullable=False)
     embedding: Mapped[list[float]] = mapped_column(
-        Vector(EMBEDDING_DIMENSIONS), nullable=False
+        Vector(settings.embedding_dimensions), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

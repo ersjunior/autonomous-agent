@@ -14,6 +14,7 @@ x-app-env: &app-env
     CELERY_RESULT_BACKEND: redis://redis:6379/2
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+    EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
     TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
     TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
     TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
@@ -22,6 +23,17 @@ x-app-env: &app-env
     ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
     DID_API_KEY: ${DID_API_KEY:-}
     FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+    LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+    STT_PROVIDER: ${STT_PROVIDER:-openai}
+    TTS_PROVIDER: ${TTS_PROVIDER:-elevenlabs}
+    AVATAR_PROVIDER: ${AVATAR_PROVIDER:-did}
+    OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+    OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
+    WHISPER_BASE_URL: ${WHISPER_BASE_URL:-http://faster-whisper:8001}
+    WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+    COQUI_BASE_URL: ${COQUI_BASE_URL:-http://coqui-tts:8002}
+    COQUI_VOICE_SAMPLE: ${COQUI_VOICE_SAMPLE:-}
+    SADTALKER_BASE_URL: ${SADTALKER_BASE_URL:-http://sadtalker:8003}
 
 services:
   postgres:
@@ -114,6 +126,50 @@ services:
     working_dir: /workspace/backend
     command: celery -A worker.celery_app worker --loglevel=info
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: autonomous-agent-ollama
+    profiles:
+      - opensource
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  faster-whisper:
+    build:
+      context: ./faster-whisper
+      dockerfile: Dockerfile
+    container_name: autonomous-agent-faster-whisper
+    profiles:
+      - opensource
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+    ports:
+      - "${WHISPER_PORT:-8001}:8001"
+    restart: unless-stopped
+
+  coqui-tts:
+    build:
+      context: ./coqui-tts
+      dockerfile: Dockerfile
+    container_name: autonomous-agent-coqui-tts
+    profiles:
+      - opensource
+    environment:
+      COQUI_MODEL: ${COQUI_MODEL:-tts_models/multilingual/multi-dataset/xtts_v2}
+      COQUI_VOICE_SAMPLE: ${COQUI_VOICE_SAMPLE:-/voices/reference.wav}
+    ports:
+      - "${COQUI_PORT:-8002}:8002"
+    volumes:
+      - coqui_voices:/voices
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
+  ollama_data:
+  coqui_voices:

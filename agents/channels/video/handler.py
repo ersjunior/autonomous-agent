@@ -1,7 +1,7 @@
 """Video channel handler."""
 
-from agents.channels.video.avatar_client import DIDClient
 from agents.orchestrator.router import route_message
+from agents.provider_factory import ProviderFactory
 
 
 class VideoHandler:
@@ -11,5 +11,6 @@ class VideoHandler:
         result = await route_message(message, "video", user_id)
         response_text = result.get("response", "")
 
-        talk = await DIDClient().create_talk(response_text, avatar_id)
+        avatar = ProviderFactory.get_avatar()
+        talk = await avatar.create_video(response_text, avatar_id)
         return talk["id"]

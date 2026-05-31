@@ -2,11 +2,9 @@
 
 from typing import Literal
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from app.core.config import settings
+from agents.provider_factory import ProviderFactory
 
 IntentType = Literal[
     "greeting",
@@ -33,12 +31,7 @@ class IntentResult(BaseModel):
 
 
 async def identify_intent(message: str, history: list[dict]) -> IntentResult:
-    llm = ChatOpenAI(
-        model=settings.openai_model,
-        api_key=settings.openai_api_key,
-        temperature=0,
-    )
-    structured_llm = llm.with_structured_output(IntentResult)
+    llm = ProviderFactory.get_llm()
 
     history_text = "\n".join(
         f"{item.get('role', 'unknown')}: {item.get('content', '')}" for item in history
@@ -47,10 +40,16 @@ async def identify_intent(message: str, history: list[dict]) -> IntentResult:
     if history_text:
         user_content = f"Histórico:\n{history_text}\n\nMensagem atual:\n{message}"
 
-    result = await structured_llm.ainvoke(
-        [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=user_content),
-        ]
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+    result = await llm.complete(
+        messages,
+        temperature=0,
+        structured_output_schema=IntentResult,
     )
+    if not isinstance(result, IntentResult):
+        raise TypeError(f"Expected IntentResult, got {type(result)}")
     return result
