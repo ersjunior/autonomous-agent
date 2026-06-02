@@ -22,6 +22,9 @@ build/
 .env.production
 .env.*.local
 
+# Amostras de voz Coqui (não commitar áudios de referência)
+infra/docker/coqui-tts/voices/*.wav
+
 # OS
 .DS_Store
 Thumbs.db

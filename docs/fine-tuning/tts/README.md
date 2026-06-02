@@ -6,12 +6,18 @@ O provider `coqui` usa uma amostra WAV de referência (`speaker_wav`) para clona
 
 1. Grave 10–30 segundos de fala clara, sem ruído de fundo.
 2. Exporte como WAV mono, 22050 Hz ou 24000 Hz.
-3. Monte no volume Docker `coqui_voices` como `/voices/reference.wav`.
+3. Salve o arquivo em `infra/docker/coqui-tts/voices/reference.wav` na raiz do projeto.
+
+A pasta `infra/docker/coqui-tts/voices/` é montada no container como bind mount somente
+leitura em `/voices` (os arquivos `*.wav` são ignorados pelo Git). Basta colocar o WAV
+na pasta antes de subir o serviço — não é necessário `docker cp`:
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml --profile opensource up -d coqui-tts
-# Copie seu arquivo para o volume (exemplo)
-docker cp minha_voz.wav autonomous-agent-coqui-tts:/voices/reference.wav
+# Coloque o arquivo na pasta montada
+cp minha_voz.wav infra/docker/coqui-tts/voices/reference.wav
+
+# Suba o serviço (ou use: make opensource-up)
+docker compose --env-file .env.local -f infra/docker/docker-compose.yml --profile opensource up -d coqui-tts
 ```
 
 Configure:

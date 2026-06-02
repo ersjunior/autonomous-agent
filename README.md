@@ -32,7 +32,31 @@ A camada de IA usa o padrão **ProviderFactory** (`agents/provider_factory.py`):
 | TTS | `TTS_PROVIDER` | `elevenlabs` | `coqui` |
 | Avatar | `AVATAR_PROVIDER` | `did` | `sadtalker` |
 
-Para subir os serviços open source junto com a stack DEV:
+### Stack 100% local (open source)
+
+A forma recomendada de rodar tudo local é via `.env.local` (já configurado com `LLM_PROVIDER=ollama`, `STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui` e `EMBEDDING_DIMENSIONS=768`) e os targets `opensource-*` do Makefile:
+
+```bash
+make setup-opensource   # sobe a stack, baixa os modelos do Ollama e aplica as migrations
+```
+
+Equivale a, em sequência: `make opensource-up` → aguardar serviços → `make pull-models` → `make opensource-migrate`.
+
+Targets disponíveis:
+
+```bash
+make opensource-up        # sobe a stack com profile opensource (usa .env.local)
+make opensource-down      # para a stack opensource
+make opensource-logs      # logs em tempo real
+make pull-models          # baixa llama3.1 + nomic-embed-text no container Ollama
+make opensource-migrate   # alembic upgrade head dentro do backend (usa .env.local)
+```
+
+> O Coqui XTTS-v2 exige um WAV de referência para clonagem de voz. Coloque o arquivo em
+> `infra/docker/coqui-tts/voices/reference.wav` — essa pasta é montada no container como
+> bind mount somente leitura (`/voices`). Os `.wav` dessa pasta são ignorados pelo Git.
+
+Alternativa manual (sobre a stack DEV, usando `.env`):
 
 ```bash
 docker compose --env-file .env \
@@ -41,7 +65,7 @@ docker compose --env-file .env \
   --profile opensource up -d --build
 ```
 
-Ao trocar de OpenAI para Ollama, ajuste também `EMBEDDING_DIMENSIONS=768` e rode `make migrate` — a migration `alter_interactions_embedding_dimensions` adapta a coluna pgvector automaticamente.
+Ao trocar de OpenAI para Ollama, ajuste também `EMBEDDING_DIMENSIONS=768` (já definido no `.env.local`) e rode `make opensource-migrate` — a migration `alter_interactions_embedding_dimensions` adapta a coluna pgvector automaticamente.
 
 Documentação de fine-tuning: [`docs/fine-tuning/`](docs/fine-tuning/).
 
@@ -186,7 +210,7 @@ Na primeira subida, o backend cria automaticamente um usuário admin padrão:
 | `WHISPER_MODEL` | Modelo Whisper | `large-v3` |
 | `WHISPER_PORT` | Porta exposta no host | `8001` |
 | `COQUI_BASE_URL` | URL do Coqui TTS | `http://coqui-tts:8002` |
-| `COQUI_VOICE_SAMPLE` | WAV de referência para clonagem de voz | — |
+| `COQUI_VOICE_SAMPLE` | Caminho do WAV de referência para clonagem de voz (dentro do container, ex.: `/voices/reference.wav`) | — |
 | `COQUI_PORT` | Porta exposta no host | `8002` |
 | `SADTALKER_BASE_URL` | URL do SadTalker | `http://sadtalker:8003` |
 
@@ -273,6 +297,17 @@ make prod-down       # Para containers PRD
 make prod-logs       # Logs da stack PRD
 ```
 
+### Stack open source (100% local)
+
+```bash
+make setup-opensource    # Sobe + baixa modelos Ollama + migrations (one-shot)
+make opensource-up       # Sobe a stack opensource (usa .env.local)
+make opensource-down     # Para a stack opensource
+make opensource-logs     # Logs da stack opensource
+make pull-models         # Baixa llama3.1 + nomic-embed-text no Ollama
+make opensource-migrate  # Alembic upgrade head (usa .env.local)
+```
+
 ## Docker — perfis dev e prod
 
 | Aspecto | DEV (`make up`) | PRD (`make prod-up`) |
@@ -292,6 +327,7 @@ infra/docker/
 ├── docker-compose.prod.yml  # override PRD
 ├── faster-whisper/          # STT local (profile opensource)
 ├── coqui-tts/               # TTS local (profile opensource)
+│   └── voices/              # WAV de referência (bind mount /voices, *.wav ignorado no Git)
 └── postgres/init.sql        # extensão pgvector no init
 ```
 

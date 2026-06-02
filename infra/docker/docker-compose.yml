@@ -165,11 +165,10 @@ services:
     ports:
       - "${COQUI_PORT:-8002}:8002"
     volumes:
-      - coqui_voices:/voices
+      - ../../infra/docker/coqui-tts/voices:/voices:ro
     restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
   ollama_data:
-  coqui_voices:
