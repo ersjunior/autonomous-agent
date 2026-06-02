@@ -12,17 +12,27 @@ alwaysApply: false
 |---------|--------|
 | `agents/orchestrator/graph.py` | ✅ StateGraph completo + memória + eventos Redis |
 | `agents/orchestrator/router.py` | ✅ Dispatcher central + roteamento condicional |
-| `agents/workers/intent_agent.py` | ✅ GPT-4o structured output |
-| `agents/workers/response_agent.py` | ✅ GPT-4o com histórico |
+| `agents/workers/intent_agent.py` | ✅ Structured output via ProviderFactory |
+| `agents/workers/response_agent.py` | ✅ LLM via ProviderFactory |
 | `agents/events.py` | ✅ Pub/sub Redis (`agent_events`) |
 | `agents/channels/telegram/handler.py` | ✅ python-telegram-bot |
 | `agents/channels/telegram/client.py` | ✅ Outbound Telegram |
 | `agents/channels/whatsapp/handler.py` | ✅ TwiML response |
 | `agents/channels/whatsapp/twilio_client.py` | ✅ Outbound messages |
 | `agents/channels/voice/handler.py` | ✅ STT → Agente → TTS |
-| `agents/channels/voice/tts_stt.py` | ✅ Whisper + ElevenLabs |
-| `agents/channels/video/handler.py` | ✅ D-ID talk_id return |
-| `agents/channels/video/avatar_client.py` | ✅ D-ID API client |
+| `agents/channels/voice/tts_stt.py` | ✅ ProviderFactory STT/TTS |
+| `agents/channels/video/handler.py` | ✅ Avatar via ProviderFactory |
+| `agents/channels/video/avatar_client.py` | ✅ D-ID API client (legado) |
+| `agents/provider_factory.py` | ✅ Factory LLM/STT/TTS/Avatar via env |
+| `agents/providers/base.py` | ✅ Interfaces abstratas |
+| `agents/providers/llm/openai_provider.py` | ✅ GPT-4o + embeddings OpenAI |
+| `agents/providers/llm/ollama_provider.py` | ✅ Ollama chat + nomic-embed-text |
+| `agents/providers/stt/openai_provider.py` | ✅ Whisper API |
+| `agents/providers/stt/faster_whisper_provider.py` | ✅ faster-whisper local |
+| `agents/providers/tts/elevenlabs_provider.py` | ✅ ElevenLabs TTS |
+| `agents/providers/tts/coqui_provider.py` | ✅ Coqui XTTS-v2 |
+| `agents/providers/avatar/did_provider.py` | ✅ D-ID avatar |
+| `agents/providers/avatar/sadtalker_provider.py` | ✅ SadTalker avatar |
 | `agents/memory/short_term.py` | ✅ Redis TTL 3600s — integrado no grafo |
 | `agents/memory/long_term.py` | ✅ PostgreSQL + pgvector — integrado no grafo |
 | `worker/tasks/outbound_campaign.py` | ✅ Modo ATIVO — campanhas WhatsApp/Telegram |
@@ -49,7 +59,7 @@ class AgentState(TypedDict):
 
 ```
 START
-  └→ identify_intent      (intent_agent.py — GPT-4o structured output)
+  └→ identify_intent      (intent_agent.py — LLM structured output via ProviderFactory)
        └→ check_escalation (verifica intent=="escalate" ou confidence < 0.5)
             ├→ escalate         (se should_escalate=True)
             └→ generate_response (se should_escalate=False — response_agent.py)
@@ -223,6 +233,38 @@ Integração no `graph.py` (já implementada):
 - `identify_intent` carrega `conversation_history` do Redis antes de classificar
 - `send_response` persiste histórico no Redis e interação no PostgreSQL
 
+## ProviderFactory — seleção de provedor
+
+Arquivo: `agents/provider_factory.py`
+
+```python
+from agents.provider_factory import ProviderFactory
+
+llm = ProviderFactory.get_llm()
+text = await llm.complete(messages, temperature=0.7)
+embedding = await llm.embed("texto para busca semântica")
+
+stt = ProviderFactory.get_stt()
+transcript = await stt.transcribe(audio_bytes, language="pt")
+
+tts = ProviderFactory.get_tts()
+audio = await tts.synthesize("Olá!", voice_id=None)
+
+avatar = ProviderFactory.get_avatar()
+job = await avatar.create_video(text, avatar_id="...")
+```
+
+Variáveis de ambiente (ver `app.core.config.settings`):
+
+| Variável | Valores |
+|----------|---------|
+| `LLM_PROVIDER` | `openai` \| `ollama` |
+| `STT_PROVIDER` | `openai` \| `faster_whisper` |
+| `TTS_PROVIDER` | `elevenlabs` \| `coqui` |
+| `AVATAR_PROVIDER` | `did` \| `sadtalker` |
+
+Workers (`intent_agent`, `response_agent`), memória (`long_term.embed`) e canais (`voice/tts_stt`, `video/handler`) usam sempre `ProviderFactory` — nunca importar provedores concretos diretamente nos handlers.
+
 ## Não fazer
 
 - Nunca monte `AgentState` inline nos handlers — use `route_message()` ou `build_initial_state()`
@@ -232,3 +274,4 @@ Integração no `graph.py` (já implementada):
 - Nunca coloque lógica de canal (TwiML, Telegram API) dentro dos workers
 - Nunca importe `backend/` dentro de `agents/` — exceto `app.core.config.settings`
 - Nunca publique eventos diretamente no WebSocket — sempre via `publish_event*` no Redis
+- Nunca instancie provedores concretos nos workers/canais — use `ProviderFactory`

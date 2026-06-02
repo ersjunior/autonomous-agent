@@ -1,6 +1,6 @@
 ---
-description: Docker Compose, variáveis de ambiente e infra
-globs: infra/**/*,docker-compose*,.env*,Dockerfile*
+description: Infra — Docker Compose + Terraform
+globs: infra/**/*
 alwaysApply: false
 ---
 
@@ -8,28 +8,37 @@ alwaysApply: false
 
 ## Serviços do Docker Compose
 
-| Serviço | Imagem | Porta | Healthcheck |
-|---------|--------|-------|-------------|
-| `postgres` | `pgvector/pgvector:pg16` | 5432 | `pg_isready` |
-| `redis` | `redis:7-alpine` | 6379 | `redis-cli ping` |
-| `backend` | build `./backend` | 8000 | via depends_on |
-| `frontend` | build `./frontend` | 3000 | — |
-| `worker` | build `./worker` | — | — |
+| Serviço | Imagem / build | Porta | Profile | Healthcheck |
+|---------|----------------|-------|---------|-------------|
+| `postgres` | `pgvector/pgvector:pg16` | 25432→5432 | — | `pg_isready` |
+| `redis` | `redis:7-alpine` | 16379→6379 | — | `redis-cli ping` |
+| `backend` | build `backend/Dockerfile` | 8000 | — | via depends_on |
+| `frontend` | build `frontend/Dockerfile` | 3000 | — | — |
+| `worker` | build `backend/Dockerfile` | — | — | — |
+| `ollama` | `ollama/ollama:latest` | 11434 | `opensource` | — |
+| `faster-whisper` | build `infra/docker/faster-whisper` | 8001 | `opensource` | — |
+| `coqui-tts` | build `infra/docker/coqui-tts` | 8002 | `opensource` | — |
+
+Subir serviços open source:
+
+```bash
+docker compose --env-file .env \
+  -f infra/docker/docker-compose.yml \
+  -f infra/docker/docker-compose.dev.yml \
+  --profile opensource up -d --build
+```
 
 ## Volumes montados no Docker
 
 ```yaml
-# backend — código Python do backend
-- ../../backend:/app
-
-# worker — código do worker + agents compartilhados
-- ../../worker:/app
-- ../../agents:/app/agents    # ← agents na raiz do projeto
+# backend e worker — monorepo montado em /workspace
+- ../../backend:/workspace/backend
+- ../../agents:/workspace/agents
+- ../../worker:/workspace/worker
 
 # frontend
 - ../../frontend:/app
 - /app/node_modules           # não sobrescrever node_modules
-- /app/.next                  # não sobrescrever build cache
 ```
 
 ## PYTHONPATH obrigatório
@@ -38,55 +47,54 @@ Adicionar em TODOS os serviços Python (backend e worker):
 
 ```yaml
 environment:
-  PYTHONPATH: /app
+  PYTHONPATH: /workspace:/workspace/backend:/workspace/worker
 ```
 
-Isso permite `from agents.orchestrator.graph import agent_graph` funcionar.
+Isso permite `from agents.orchestrator.graph import agent_graph` e `from app.core.config import settings` funcionarem.
 
 ## Variáveis de ambiente (.env)
+
+Ver `.env.example` na raiz. Principais grupos:
 
 ```env
 # App
 SECRET_KEY=change-me-in-production
-DEBUG=false
+DEBUG=true
 
-# Banco de dados
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=autonomous_agent
-POSTGRES_PORT=5432
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/autonomous_agent
+# Banco de dados (host local fora do Docker)
+POSTGRES_PORT=25432
+DATABASE_URL=postgresql://postgres:postgres@localhost:25432/autonomous_agent
 
-# Redis
-REDIS_PORT=6379
-REDIS_URL=redis://redis:6379/0
-CELERY_BROKER_URL=redis://redis:6379/1
-CELERY_RESULT_BACKEND=redis://redis:6379/2
+# Redis (host local fora do Docker)
+REDIS_PORT=16379
+REDIS_URL=redis://localhost:16379/0
 
-# OpenAI
+# Provedores de IA
+LLM_PROVIDER=openai          # openai | ollama
+STT_PROVIDER=openai          # openai | faster_whisper
+TTS_PROVIDER=elevenlabs      # elevenlabs | coqui
+AVATAR_PROVIDER=did          # did | sadtalker
+EMBEDDING_DIMENSIONS=1536    # 768 com LLM_PROVIDER=ollama
+
+# OpenAI (se LLM/STT provider=openai)
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o
 
-# Twilio
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=...
-TWILIO_PHONE_NUMBER=+1...
+# Ollama (se LLM_PROVIDER=ollama)
+OLLAMA_BASE_URL=http://ollama:11434
+OLLAMA_MODEL=llama3.1
 
-# Telegram
-TELEGRAM_BOT_TOKEN=...
+# faster-whisper (se STT_PROVIDER=faster_whisper)
+WHISPER_BASE_URL=http://faster-whisper:8001
+WHISPER_MODEL=large-v3
 
-# ElevenLabs
-ELEVENLABS_API_KEY=...
-ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
+# Coqui (se TTS_PROVIDER=coqui)
+COQUI_BASE_URL=http://coqui-tts:8002
 
-# D-ID
-DID_API_KEY=...
-
-# Frontend
-NEXT_PUBLIC_API_URL=http://localhost:8000
-FRONTEND_PORT=3000
-BACKEND_PORT=8000
+# Twilio, Telegram, ElevenLabs, D-ID — ver .env.example
 ```
+
+Dentro dos containers, `DATABASE_URL` e URLs de serviço usam hostnames Docker (`postgres`, `redis`, `ollama`, etc.) — definidos no `docker-compose.yml`, não no `.env` do host.
 
 ## DATABASE_URL — atenção ao driver
 
@@ -100,15 +108,31 @@ postgresql+asyncpg://user:pass@host:5432/db
 
 O `database.py` já faz a conversão automática — não mude a variável de ambiente.
 
+## Embeddings pgvector
+
+- Model `Interaction.embedding` usa `Vector(settings.embedding_dimensions)`
+- Migration `a7b8c9d0e1f2` altera dimensão só quando difere do banco (evita reindex desnecessário)
+- Ao trocar `EMBEDDING_DIMENSIONS`, rode `make migrate`
+
 ## Comandos úteis (Makefile)
 
 ```bash
-make up          # docker compose up -d
+make up          # docker compose up -d (DEV)
 make down        # docker compose down
 make logs        # docker compose logs -f
 make migrate     # alembic upgrade head
-make shell       # bash no container backend
+make shell-backend  # bash no container backend
+make prod-up     # stack PRD
 ```
+
+## CI/CD (GitHub Actions)
+
+| Workflow | Gatilho | Secrets |
+|----------|---------|---------|
+| `ci.yml` | push/PR em `main`/`develop` | nenhum |
+| `docker-publish.yml` | tag `v*` | `DOCKER_USERNAME`, `DOCKER_TOKEN` (opcional) |
+
+Sem secrets Docker Hub, `docker-publish.yml` exibe aviso e não falha.
 
 ## Estrutura Terraform (a implementar)
 
@@ -129,5 +153,5 @@ infra/
 ## Não fazer
 
 - Nunca commite o `.env` — apenas `.env.example`
-- Nunca use `localhost` dentro do Docker — use o nome do serviço (`postgres`, `redis`)
+- Nunca use `localhost` dentro do Docker — use o nome do serviço (`postgres`, `redis`, `ollama`)
 - Nunca exponha portas do banco de dados em produção

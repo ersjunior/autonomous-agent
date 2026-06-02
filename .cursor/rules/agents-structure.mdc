@@ -13,6 +13,8 @@ Todo código de agentes, orquestração LangGraph, workers LLM, canais de mensag
 | Tipo | Pasta |
 |------|-------|
 | Grafo LangGraph / roteamento | `agents/orchestrator/` |
+| Provedores LLM/STT/TTS/Avatar | `agents/providers/<tipo>/` |
+| Factory de provedores | `agents/provider_factory.py` |
 | Workers (intent, response, escalation) | `agents/workers/` |
 | Handlers WhatsApp, Telegram, voz, vídeo | `agents/channels/<canal>/` |
 | Memória (curto/longo prazo) | `agents/memory/` |
@@ -23,6 +25,7 @@ Todo código de agentes, orquestração LangGraph, workers LLM, canais de mensag
 ```python
 # Dentro de agents/ — use o pacote agents
 from agents.orchestrator.graph import agent_graph
+from agents.provider_factory import ProviderFactory
 from agents.workers.intent_agent import identify_intent
 
 # Configuração compartilhada — importe do backend

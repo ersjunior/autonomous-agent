@@ -20,7 +20,7 @@ alwaysApply: false
 | Arquivo | Status |
 |---------|--------|
 | `app/main.py` | ✅ FastAPI + CORS + routers |
-| `app/core/config.py` | ✅ Settings com pydantic-settings |
+| `app/core/config.py` | ✅ Settings com pydantic-settings + provider selection |
 | `app/core/database.py` | ✅ AsyncSession + get_db dependency |
 | `app/core/security.py` | ✅ JWT + bcrypt |
 | `app/models/base.py` | ✅ DeclarativeBase |
@@ -29,7 +29,7 @@ alwaysApply: false
 | `app/models/channel.py` | ✅ Channel model + ChannelType enum |
 | `app/models/lead.py` | ✅ Lead model |
 | `app/models/campaign.py` | ✅ Campaign model |
-| `app/models/interaction.py` | ✅ Interaction model + pgvector embedding |
+| `app/models/interaction.py` | ✅ Interaction model + pgvector (`embedding_dimensions` dinâmico) |
 | `app/schemas/user.py` | ✅ UserCreate, UserLogin, UserResponse, Token, TokenData |
 | `app/api/v1/auth.py` | ✅ POST /auth/register + POST /auth/login |
 
@@ -75,10 +75,25 @@ async def whatsapp_webhook(Body: str = Form(""), From: str = Form(""), To: str =
     return Response(content=twiml, media_type="application/xml")
 ```
 
+## Config — provedores e embeddings
+
+`app/core/config.py` expõe:
+
+- `llm_provider`, `stt_provider`, `tts_provider`, `avatar_provider` — seleção comercial vs OSS
+- `embedding_dimensions` — dimensão pgvector (`1536` OpenAI, `768` Ollama)
+- URLs dos serviços locais: `ollama_base_url`, `whisper_base_url`, `coqui_base_url`, `sadtalker_base_url`
+
+Migration `a7b8c9d0e1f2_alter_interactions_embedding_dimensions` adapta a coluna `interactions.embedding` quando `EMBEDDING_DIMENSIONS` muda.
+
 ## PYTHONPATH no Docker
 
-O container `backend` roda com `/app` como workdir e `/app` no PYTHONPATH.
-O volume monta `../../agents:/app/agents`, portanto `from agents.xxx import yyy` funciona.
+O container `backend`/`worker` roda com `working_dir: /workspace/backend` e:
+
+```
+PYTHONPATH=/workspace:/workspace/backend:/workspace/worker
+```
+
+Volumes montam `../../agents:/workspace/agents`, portanto `from agents.xxx import yyy` funciona.
 
 ## Não fazer
 

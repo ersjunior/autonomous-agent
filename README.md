@@ -2,7 +2,7 @@
 
 [![Licença: MIT](https://img.shields.io/badge/Licença-MIT-blue.svg)](LICENSE)
 
-Sistema multi-agente de inteligência artificial para atendimento autônomo de clientes em múltiplos canais (WhatsApp, Telegram, voz e vídeo). O agente opera em modo **ativo** (campanhas outbound para leads) ou **receptivo** (resposta a mensagens recebidas), orquestrado com LangGraph e GPT-4o.
+Sistema multi-agente de inteligência artificial para atendimento autônomo de clientes em múltiplos canais (WhatsApp, Telegram, voz e vídeo). O agente opera em modo **ativo** (campanhas outbound para leads) ou **receptivo** (resposta a mensagens recebidas), orquestrado com LangGraph e provedores configuráveis de LLM, STT, TTS e avatar (OpenAI/ElevenLabs/D-ID ou stack open source via Ollama, faster-whisper e Coqui).
 
 ## Arquitetura
 
@@ -15,8 +15,35 @@ O projeto é composto pelos seguintes serviços:
 | **Worker** | Celery — processamento assíncrono de mensagens inbound e campanhas outbound |
 | **PostgreSQL** | Banco relacional com extensão pgvector para memória de longo prazo |
 | **Redis** | Cache de conversas (TTL), broker Celery, pub/sub de eventos em tempo real |
+| **Ollama** *(opcional)* | LLM e embeddings locais (`profile: opensource`) |
+| **faster-whisper** *(opcional)* | STT local (`profile: opensource`) |
+| **Coqui TTS** *(opcional)* | TTS local XTTS-v2 (`profile: opensource`) |
 
 Fluxo resumido: mensagens entram via webhook ou campanha → Worker ou Backend delega ao grafo LangGraph em `agents/` → intent + resposta → envio pelo canal → eventos publicados no Redis → dashboard consome via WebSocket.
+
+## Provedores de IA
+
+A camada de IA usa o padrão **ProviderFactory** (`agents/provider_factory.py`): a implementação concreta é escolhida via variáveis de ambiente, sem alterar o grafo LangGraph.
+
+| Camada | Variável | Comercial (padrão) | Open source |
+|--------|----------|-------------------|-------------|
+| LLM + embeddings | `LLM_PROVIDER` | `openai` (GPT-4o) | `ollama` (llama3.1) |
+| STT | `STT_PROVIDER` | `openai` (Whisper) | `faster_whisper` |
+| TTS | `TTS_PROVIDER` | `elevenlabs` | `coqui` |
+| Avatar | `AVATAR_PROVIDER` | `did` | `sadtalker` |
+
+Para subir os serviços open source junto com a stack DEV:
+
+```bash
+docker compose --env-file .env \
+  -f infra/docker/docker-compose.yml \
+  -f infra/docker/docker-compose.dev.yml \
+  --profile opensource up -d --build
+```
+
+Ao trocar de OpenAI para Ollama, ajuste também `EMBEDDING_DIMENSIONS=768` e rode `make migrate` — a migration `alter_interactions_embedding_dimensions` adapta a coluna pgvector automaticamente.
+
+Documentação de fine-tuning: [`docs/fine-tuning/`](docs/fine-tuning/).
 
 ## Pré-requisitos
 
@@ -124,19 +151,44 @@ Na primeira subida, o backend cria automaticamente um usuário admin padrão:
 | `CELERY_BROKER_URL` | Broker Celery (Redis) | Sim |
 | `CELERY_RESULT_BACKEND` | Backend de resultados Celery | Sim |
 
-### Integrações
+### Provedores de IA
+
+| Variável | Descrição | Padrão |
+|----------|-----------|--------|
+| `LLM_PROVIDER` | `openai` ou `ollama` | `openai` |
+| `STT_PROVIDER` | `openai` ou `faster_whisper` | `openai` |
+| `TTS_PROVIDER` | `elevenlabs` ou `coqui` | `elevenlabs` |
+| `AVATAR_PROVIDER` | `did` ou `sadtalker` | `did` |
+| `EMBEDDING_DIMENSIONS` | Dimensão do vetor pgvector (`1536` OpenAI, `768` Ollama) | `1536` |
+
+### Integrações — comercial
 
 | Variável | Descrição | Obrigatória |
 |----------|-----------|:-----------:|
-| `OPENAI_API_KEY` | API OpenAI (GPT-4o + Whisper) | Sim |
-| `OPENAI_MODEL` | Modelo LLM (padrão: `gpt-4o`) | Sim |
+| `OPENAI_API_KEY` | API OpenAI (GPT-4o + Whisper) | Se `LLM_PROVIDER=openai` ou `STT_PROVIDER=openai` |
+| `OPENAI_MODEL` | Modelo LLM (padrão: `gpt-4o`) | Se `LLM_PROVIDER=openai` |
 | `TWILIO_ACCOUNT_SID` | Twilio — WhatsApp e voz | Canal WhatsApp/Voz |
 | `TWILIO_AUTH_TOKEN` | Token Twilio | Canal WhatsApp/Voz |
 | `TWILIO_PHONE_NUMBER` | Número Twilio | Canal WhatsApp/Voz |
 | `TELEGRAM_BOT_TOKEN` | Bot Telegram | Canal Telegram |
-| `ELEVENLABS_API_KEY` | TTS ElevenLabs | Canal Voz |
-| `ELEVENLABS_VOICE_ID` | ID da voz ElevenLabs | Canal Voz |
-| `DID_API_KEY` | D-ID avatar em vídeo | Canal Vídeo |
+| `ELEVENLABS_API_KEY` | TTS ElevenLabs | Se `TTS_PROVIDER=elevenlabs` |
+| `ELEVENLABS_VOICE_ID` | ID da voz ElevenLabs | Se `TTS_PROVIDER=elevenlabs` |
+| `DID_API_KEY` | D-ID avatar em vídeo | Se `AVATAR_PROVIDER=did` |
+
+### Integrações — open source
+
+| Variável | Descrição | Padrão |
+|----------|-----------|--------|
+| `OLLAMA_BASE_URL` | URL do Ollama | `http://ollama:11434` |
+| `OLLAMA_MODEL` | Modelo Ollama | `llama3.1` |
+| `OLLAMA_PORT` | Porta exposta no host | `11434` |
+| `WHISPER_BASE_URL` | URL do faster-whisper | `http://faster-whisper:8001` |
+| `WHISPER_MODEL` | Modelo Whisper | `large-v3` |
+| `WHISPER_PORT` | Porta exposta no host | `8001` |
+| `COQUI_BASE_URL` | URL do Coqui TTS | `http://coqui-tts:8002` |
+| `COQUI_VOICE_SAMPLE` | WAV de referência para clonagem de voz | — |
+| `COQUI_PORT` | Porta exposta no host | `8002` |
+| `SADTALKER_BASE_URL` | URL do SadTalker | `http://sadtalker:8003` |
 
 ### Frontend
 
@@ -176,9 +228,11 @@ autonomous-agent/
 ├── agents/              # IA — LangGraph, workers LLM, canais, memória, tools
 │   ├── channels/        # WhatsApp, Telegram, voz, vídeo
 │   ├── orchestrator/    # Grafo LangGraph + router + state
+│   ├── providers/       # LLM, STT, TTS, Avatar (OpenAI, Ollama, Coqui, etc.)
 │   ├── workers/         # Intent e response agents
 │   ├── memory/          # Redis (curto prazo) + pgvector (longo prazo)
 │   ├── tools/           # CRM, calendário, base de conhecimento
+│   ├── provider_factory.py  # Seleção de provedor via env
 │   └── events.py        # Pub/sub Redis para monitoramento
 ├── backend/             # API FastAPI
 │   └── app/
@@ -191,9 +245,10 @@ autonomous-agent/
 │       ├── app/         # App Router (login, dashboard)
 │       └── components/  # UI, layout, providers (tema claro/escuro)
 ├── worker/              # Celery — campanhas e mensagens inbound
-├── infra/docker/        # docker-compose.yml + overrides dev/prod
+├── infra/docker/        # docker-compose.yml + overrides dev/prod + serviços OSS
 ├── tests/               # Testes automatizados
 └── docs/                # Documentação adicional
+    └── fine-tuning/     # Guias LLM, STT e TTS
 ```
 
 ## Comandos úteis (Makefile)
@@ -234,9 +289,13 @@ Arquivos Compose:
 infra/docker/
 ├── docker-compose.yml       # base (serviços + defaults DEV)
 ├── docker-compose.dev.yml   # override DEV (worker debug)
-├── docker-compose.prod.yml    # override PRD
-└── postgres/init.sql          # extensão pgvector no init
+├── docker-compose.prod.yml  # override PRD
+├── faster-whisper/          # STT local (profile opensource)
+├── coqui-tts/               # TTS local (profile opensource)
+└── postgres/init.sql        # extensão pgvector no init
 ```
+
+Serviços com `profiles: [opensource]` (Ollama, faster-whisper, Coqui) só sobem quando o profile `--profile opensource` é passado ao Compose.
 
 ## CI/CD
 
