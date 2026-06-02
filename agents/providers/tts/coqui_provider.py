@@ -7,7 +7,11 @@ from app.core.config import settings
 
 
 class CoquiTTSProvider(TTSProvider):
-    """Text-to-speech via local Coqui XTTS-v2 REST service."""
+    """Text-to-speech via local Coqui XTTS-v2 REST service.
+
+    O serviço transcodifica o áudio para MP3 (audio/mpeg) antes de responder,
+    mantendo o mesmo contrato de saída do provider ElevenLabs.
+    """
 
     def __init__(self) -> None:
         self._client = httpx.AsyncClient(

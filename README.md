@@ -77,6 +77,15 @@ Documentação de fine-tuning: [`docs/fine-tuning/`](docs/fine-tuning/).
 
 ## Instalação
 
+O projeto pode rodar de **duas formas**, e você escolhe sem editar código — apenas variáveis de ambiente:
+
+| Caminho | Quando usar | Requer chaves pagas? |
+|---------|-------------|:--------------------:|
+| **Comercial** (OpenAI + ElevenLabs + D-ID) | Melhor qualidade, setup rápido | Sim (`OPENAI_API_KEY`, etc.) |
+| **100% local / open source** (Ollama + faster-whisper + Coqui) | Sem custo de API, dados não saem da máquina | Não |
+
+Siga o passo **2A** (comercial) **ou** **2B** (local). Os demais passos são comuns.
+
 ### 1. Clonar o repositório
 
 ```bash
@@ -84,40 +93,56 @@ git clone https://github.com/seu-usuario/autonomous-agent.git
 cd autonomous-agent
 ```
 
-### 2. Copiar variáveis de ambiente
+### 2A. Caminho comercial (OpenAI / ElevenLabs / D-ID)
 
 ```bash
 cp .env.example .env
 ```
 
-### 3. Configurar ambiente (DEV ou PRD)
-
-Edite o `.env` na raiz do projeto. As chaves mais importantes para alternar entre desenvolvimento e produção:
+Edite o `.env` e preencha as credenciais dos serviços que vai usar. Chaves principais:
 
 | Variável | Desenvolvimento | Produção |
 |----------|-----------------|----------|
 | `DEBUG` | `true` | `false` |
 | `SECRET_KEY` | qualquer valor para testes | chave forte e aleatória (mín. 32 caracteres) |
+| `OPENAI_API_KEY` | obrigatória (LLM + STT) | obrigatória |
 
-Preencha também as credenciais dos serviços que você vai utilizar (OpenAI, Twilio, etc.).
-
-**Importante:** dentro dos containers Docker, `DATABASE_URL` e `REDIS_URL` usam os hostnames `postgres` e `redis` (definidos automaticamente no Compose). Os valores `localhost` no `.env` servem para acesso **fora** do Docker (migrations locais, DBeaver, etc.).
-
-### 4. Subir os containers
-
-**Desenvolvimento** (hot-reload, volumes montados):
+Suba a stack:
 
 ```bash
-make up
+make up        # DEV (hot-reload, volumes montados)
+# ou
+make prod-up   # PRD (imagens baked, DB/Redis sem portas expostas)
 ```
 
-**Produção** (imagens baked, sem reload, DB/Redis sem portas expostas):
+Depois aplique as migrations:
 
 ```bash
-make prod-up
+make migrate
 ```
 
-Equivalente manual:
+### 2B. Caminho 100% local (open source)
+
+Não precisa de nenhuma chave paga. O repositório já inclui um `.env.local` pronto
+(`LLM_PROVIDER=ollama`, `STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui`,
+`EMBEDDING_DIMENSIONS=768`). Um único comando sobe a stack, baixa os modelos do Ollama e aplica as migrations:
+
+```bash
+make setup-opensource
+```
+
+> O TTS local (Coqui XTTS-v2) exige um WAV de referência para clonagem de voz. Antes de
+> rodar, coloque o arquivo em `infra/docker/coqui-tts/voices/reference.wav` (a pasta é
+> montada no container como `/voices`, somente leitura; os `.wav` são ignorados pelo Git).
+
+Targets relacionados: `make opensource-up`, `make opensource-down`, `make opensource-logs`,
+`make pull-models`, `make opensource-migrate` (detalhes em [Comandos úteis](#comandos-úteis-makefile)).
+
+### 3. Notas comuns de ambiente
+
+**Importante:** dentro dos containers Docker, `DATABASE_URL` e `REDIS_URL` usam os hostnames `postgres` e `redis` (definidos automaticamente no Compose). Os valores `localhost` no `.env`/`.env.local` servem para acesso **fora** do Docker (migrations locais, DBeaver, etc.).
+
+Equivalente manual ao `make up`/`make prod-up`:
 
 ```bash
 # DEV
@@ -127,13 +152,7 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.prod.yml up -d --build
 ```
 
-### 5. Aplicar migrations
-
-```bash
-make migrate
-```
-
-### 6. Acessar a aplicação
+### 4. Acessar a aplicação
 
 | Recurso | URL |
 |---------|-----|

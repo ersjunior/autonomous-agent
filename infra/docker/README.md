@@ -42,6 +42,11 @@ make opensource-down     # para a stack
 
 O serviço `coqui-tts` monta `coqui-tts/voices/` como bind mount somente leitura em `/voices`.
 Coloque o `reference.wav` nessa pasta antes de subir (os `.wav` são ignorados pelo Git).
+O `coqui-tts` transcodifica a saída para MP3 (`audio/mpeg`) via ffmpeg, igual ao ElevenLabs.
+
+Os três serviços OSS (`ollama`, `faster-whisper`, `coqui-tts`) têm `healthcheck` definido,
+e `opensource-up` sobe com `--wait` — o `setup-opensource` só baixa modelos e migra depois
+que todos reportam *healthy* (sem `sleep` cego).
 
 ## Portas padrão (DEV)
 

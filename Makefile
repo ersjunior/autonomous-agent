@@ -11,7 +11,7 @@ up:
 COMPOSE_OPENSOURCE := docker compose --env-file .env.local -f $(COMPOSE_BASE) --profile opensource
 
 opensource-up:
-	$(COMPOSE_OPENSOURCE) up -d --build
+	$(COMPOSE_OPENSOURCE) up -d --build --wait
 
 opensource-down:
 	$(COMPOSE_OPENSOURCE) down
@@ -27,8 +27,7 @@ opensource-migrate:
 	$(COMPOSE_OPENSOURCE) exec backend alembic upgrade head
 
 setup-opensource: opensource-up
-	@echo "Aguardando serviços iniciarem (30s)..."
-	@sleep 30
+	@echo "Serviços saudáveis (healthchecks OK). Baixando modelos do Ollama..."
 	@$(MAKE) pull-models
 	@$(MAKE) opensource-migrate
 	@echo "✅ Stack opensource pronta!"

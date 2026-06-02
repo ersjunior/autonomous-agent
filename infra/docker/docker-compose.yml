@@ -136,6 +136,12 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   faster-whisper:
     build:
@@ -151,6 +157,12 @@ services:
     ports:
       - "${WHISPER_PORT:-8001}:8001"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   coqui-tts:
     build:
@@ -167,6 +179,12 @@ services:
     volumes:
       - ../../infra/docker/coqui-tts/voices:/voices:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
 
 volumes:
   postgres_data:

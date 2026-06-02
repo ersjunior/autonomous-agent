@@ -30,11 +30,15 @@ COQUI_VOICE_SAMPLE=/voices/reference.wav
 
 ## Teste da API
 
+O endpoint `/tts` sintetiza em WAV internamente e transcodifica para **MP3**
+(`audio/mpeg`) via ffmpeg antes de responder — mesmo formato do provider ElevenLabs,
+compatível com o `<Play>` do Twilio.
+
 ```bash
 curl -X POST http://localhost:8002/tts \
   -H "Content-Type: application/json" \
   -d '{"text":"Olá, sou o assistente virtual.","language":"pt","speaker_wav":"/voices/reference.wav"}' \
-  --output resposta.wav
+  --output resposta.mp3
 ```
 
 ## Fine-tuning / múltiplas vozes

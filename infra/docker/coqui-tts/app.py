@@ -1,6 +1,7 @@
 """REST API for Coqui XTTS-v2 text-to-speech (Portuguese)."""
 
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -25,6 +26,20 @@ def get_tts() -> TTS:
     if _tts is None:
         _tts = TTS(MODEL_NAME)
     return _tts
+
+
+def _wav_to_mp3(wav_path: str) -> bytes:
+    """Transcode a WAV file to MP3 bytes using the bundled ffmpeg."""
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-i", wav_path, "-codec:a", "libmp3lame", "-q:a", "4", "-f", "mp3", "pipe:1"],
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"ffmpeg failed to transcode audio: {proc.stderr.decode(errors='ignore')[:500]}",
+        )
+    return proc.stdout
 
 
 class TTSRequest(BaseModel):
@@ -58,8 +73,10 @@ async def synthesize(request: TTSRequest) -> Response:
             speaker_wav=speaker_path,
             language=request.language,
         )
-        audio_bytes = Path(out_path).read_bytes()
-        return Response(content=audio_bytes, media_type="audio/wav")
+        # Twilio <Play> e os demais consumidores esperam MP3; ElevenLabs já
+        # devolve MP3, então padronizamos a saída do Coqui aqui.
+        audio_bytes = _wav_to_mp3(out_path)
+        return Response(content=audio_bytes, media_type="audio/mpeg")
     finally:
         if os.path.exists(out_path):
             os.unlink(out_path)
