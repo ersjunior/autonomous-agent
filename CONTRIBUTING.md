@@ -6,9 +6,10 @@ Obrigado por contribuir com o **autonomous-agent**!
 
 1. Faça fork do repositório
 2. Crie uma branch: `git checkout -b feature/minha-feature`
-3. Configure o ambiente local: `cp .env.example .env` e `make up`
-4. Implemente suas alterações com testes quando aplicável
-5. Abra um Pull Request descrevendo o contexto e o plano de testes
+3. Configure o ambiente local: `cp .env.example .env` e `make setup` (primeira vez) ou `make up`
+4. Use sempre `make up` / `make setup` — o Makefile injeta `--env-file .env`; evite `docker compose -f infra/docker/docker-compose.yml up` sem o env-file da raiz
+5. Implemente suas alterações com testes quando aplicável
+6. Abra um Pull Request descrevendo o contexto e o plano de testes
 
 ## Padrões
 

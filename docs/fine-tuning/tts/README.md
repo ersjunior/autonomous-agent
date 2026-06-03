@@ -16,8 +16,11 @@ na pasta antes de subir o serviço — não é necessário `docker cp`:
 # Coloque o arquivo na pasta montada
 cp minha_voz.wav infra/docker/coqui-tts/voices/reference.wav
 
-# Suba o serviço (ou use: make opensource-up)
-docker compose --env-file .env.local -f infra/docker/docker-compose.yml --profile opensource up -d coqui-tts
+# Suba a stack (Coqui sobe junto por padrão) — use make up ou make setup na 1ª vez
+make up
+
+# Alternativa: fluxo isolado com .env.local
+# make opensource-up
 ```
 
 Configure:
@@ -35,7 +38,8 @@ O endpoint `/tts` sintetiza em WAV internamente e transcodifica para **MP3**
 compatível com o `<Play>` do Twilio.
 
 ```bash
-curl -X POST http://localhost:8002/tts \
+# Use a porta publicada no host (COQUI_PORT no .env; padrão 8002, ou ex. 18002 se remapeada)
+curl -X POST http://localhost:${COQUI_PORT:-8002}/tts \
   -H "Content-Type: application/json" \
   -d '{"text":"Olá, sou o assistente virtual.","language":"pt","speaker_wav":"/voices/reference.wav"}' \
   --output resposta.mp3

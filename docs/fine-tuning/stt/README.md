@@ -27,7 +27,7 @@ STT_PROVIDER=faster_whisper
 WHISPER_MODEL=seu-modelo-finetuned
 ```
 
-O container `faster-whisper` lê `WHISPER_MODEL` em `infra/docker/faster-whisper/app.py`.
+O container `faster-whisper` sobe por padrão com `make up` e lê `WHISPER_MODEL` em `infra/docker/faster-whisper/app.py`. A porta no host é `WHISPER_PORT` (padrão `8001`; remapeie no `.env` se houver conflito).
 
 ## Referências
 

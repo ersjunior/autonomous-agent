@@ -114,6 +114,11 @@ make setup
 > montada no container como `/voices`, somente leitura; os `.wav` são ignorados pelo Git).
 
 Os serviços Ollama, faster-whisper e Coqui sobem automaticamente junto com `make up`.
+O backend executa `alembic upgrade head` no startup (schema via migrations); `make setup`
+também chama `make migrate` para garantir o banco no `head` após o primeiro pull dos modelos.
+
+Se as portas **8001** ou **8002** do host estiverem ocupadas por outros projetos, ajuste no
+`.env`: `WHISPER_PORT=18001` e `COQUI_PORT=18002` (as URLs internas entre containers não mudam).
 
 ### 2B. Caminho comercial (opcional: OpenAI / ElevenLabs / D-ID)
 
@@ -143,12 +148,12 @@ Chaves principais:
 Suba a stack:
 
 ```bash
-make up        # DEV (hot-reload, volumes montados)
+make up        # DEV (hot-reload, volumes montados; migrations no startup do backend)
 # ou
 make prod-up   # PRD (imagens baked, DB/Redis sem portas expostas)
 ```
 
-Depois aplique as migrations:
+Se precisar reaplicar migrations manualmente (ex.: após trocar `EMBEDDING_DIMENSIONS`):
 
 ```bash
 make migrate
@@ -157,6 +162,8 @@ make migrate
 ### 3. Notas comuns de ambiente
 
 **Importante:** dentro dos containers Docker, `DATABASE_URL` e `REDIS_URL` usam os hostnames `postgres` e `redis` (definidos automaticamente no Compose). Os valores `localhost` no `.env`/`.env.local` servem para acesso **fora** do Docker (migrations locais, DBeaver, etc.).
+
+**Compose e `.env`:** prefira `make up` / `make setup`. Se usar `docker compose` direto, **sempre** passe `--env-file .env` — sem isso o Compose não lê o `.env` da raiz e pode falhar ao publicar portas `8001`/`8002` já ocupadas no host.
 
 Equivalente manual ao `make up`/`make prod-up`:
 
@@ -244,10 +251,13 @@ Na primeira subida, o backend cria automaticamente um usuário admin padrão:
 | `OLLAMA_KEEP_ALIVE` | Tempo que o modelo fica carregado em memória (`24h`, `-1` = infinito, `0` = descarrega já) | `24h` |
 | `WHISPER_BASE_URL` | URL do faster-whisper | `http://faster-whisper:8001` |
 | `WHISPER_MODEL` | Modelo Whisper | `large-v3` |
-| `WHISPER_PORT` | Porta exposta no host | `8001` |
+| `WHISPER_PORT` | Porta exposta no host (remapeie se `8001` estiver ocupada, ex.: `18001`) | `8001` |
+| `WHISPER_DEVICE` | Dispositivo faster-whisper (`cpu` / `cuda`) | `cpu` |
+| `WHISPER_COMPUTE_TYPE` | Tipo de compute (`int8`, `float16`, …) | `int8` |
 | `COQUI_BASE_URL` | URL do Coqui TTS | `http://coqui-tts:8002` |
-| `COQUI_VOICE_SAMPLE` | Caminho do WAV de referência para clonagem de voz (dentro do container, ex.: `/voices/reference.wav`) | — |
-| `COQUI_PORT` | Porta exposta no host | `8002` |
+| `COQUI_MODEL` | Modelo Coqui XTTS-v2 | `tts_models/multilingual/multi-dataset/xtts_v2` |
+| `COQUI_VOICE_SAMPLE` | Caminho do WAV de referência (dentro do container) | `/voices/reference.wav` |
+| `COQUI_PORT` | Porta exposta no host (remapeie se `8002` estiver ocupada, ex.: `18002`) | `8002` |
 | `SADTALKER_BASE_URL` | URL do SadTalker | `http://sadtalker:8003` |
 
 ### Frontend
@@ -329,6 +339,7 @@ make lint            # ruff check
 > Use `make setup` na primeira subida: equivale ao antigo `setup-opensource`, mas para o
 > fluxo padrão (`.env` + stack DEV). Ele sobe os serviços, aguarda o Ollama, baixa os
 > modelos (`llama3.1` + `nomic-embed-text`), aquece o modelo e aplica as migrations.
+> O backend também migra automaticamente no startup (`alembic upgrade head`).
 
 ### Produção
 
@@ -372,7 +383,7 @@ infra/docker/
 └── postgres/init.sql        # extensão pgvector no init
 ```
 
-Os serviços de IA local (Ollama, faster-whisper, Coqui) agora sobem **sempre** junto com a stack — são o modo padrão do projeto. Os targets `opensource-*` do Makefile (com `--profile opensource` e `.env.local`) continuam disponíveis para rodá-los de forma isolada.
+Os serviços de IA local (Ollama, faster-whisper, Coqui) sobem **sempre** junto com a stack — são o modo padrão do projeto. Os targets `opensource-*` do Makefile (com `.env.local`) continuam disponíveis para um fluxo isolado alternativo.
 
 ## CI/CD
 

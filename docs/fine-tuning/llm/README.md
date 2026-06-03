@@ -142,10 +142,17 @@ ollama create customer-support -f Modelfile
 ollama run customer-support "Olá, preciso de ajuda com meu pedido"
 ```
 
-No Docker Compose deste projeto, com profile `opensource`:
+No Docker Compose deste projeto, o serviço `ollama` sobe por padrão com `make up` (ou `make setup` na primeira vez):
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml --profile opensource up -d ollama
+make up   # ou make setup na 1ª subida
+docker exec -it autonomous-agent-ollama ollama create customer-support -f /path/Modelfile
+```
+
+Equivalente manual (sempre com `--env-file .env`):
+
+```bash
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d ollama
 docker exec -it autonomous-agent-ollama ollama create customer-support -f /path/Modelfile
 ```
 
