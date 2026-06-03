@@ -14,7 +14,7 @@ x-app-env: &app-env
     CELERY_RESULT_BACKEND: redis://redis:6379/2
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
-    EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
+    EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
     TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
     TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
     TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
@@ -23,9 +23,9 @@ x-app-env: &app-env
     ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
     DID_API_KEY: ${DID_API_KEY:-}
     FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-    LLM_PROVIDER: ${LLM_PROVIDER:-openai}
-    STT_PROVIDER: ${STT_PROVIDER:-openai}
-    TTS_PROVIDER: ${TTS_PROVIDER:-elevenlabs}
+    LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+    STT_PROVIDER: ${STT_PROVIDER:-faster_whisper}
+    TTS_PROVIDER: ${TTS_PROVIDER:-coqui}
     AVATAR_PROVIDER: ${AVATAR_PROVIDER:-did}
     OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
     OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
@@ -80,6 +80,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ollama:
+        condition: service_started
+      faster-whisper:
+        condition: service_started
+      coqui-tts:
+        condition: service_started
     volumes:
       - ../../backend:/workspace/backend
       - ../../agents:/workspace/agents
@@ -119,6 +125,12 @@ services:
         condition: service_healthy
       backend:
         condition: service_started
+      ollama:
+        condition: service_started
+      faster-whisper:
+        condition: service_started
+      coqui-tts:
+        condition: service_started
     volumes:
       - ../../backend:/workspace/backend
       - ../../agents:/workspace/agents
@@ -129,8 +141,6 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: autonomous-agent-ollama
-    profiles:
-      - opensource
     environment:
       # Mantém o modelo carregado em memória entre requisições (evita reload por inatividade).
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
@@ -151,8 +161,6 @@ services:
       context: ./faster-whisper
       dockerfile: Dockerfile
     container_name: autonomous-agent-faster-whisper
-    profiles:
-      - opensource
     environment:
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
@@ -172,8 +180,6 @@ services:
       context: ./coqui-tts
       dockerfile: Dockerfile
     container_name: autonomous-agent-coqui-tts
-    profiles:
-      - opensource
     environment:
       COQUI_MODEL: ${COQUI_MODEL:-tts_models/multilingual/multi-dataset/xtts_v2}
       COQUI_VOICE_SAMPLE: ${COQUI_VOICE_SAMPLE:-/voices/reference.wav}

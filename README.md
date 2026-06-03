@@ -15,9 +15,9 @@ O projeto é composto pelos seguintes serviços:
 | **Worker** | Celery — processamento assíncrono de mensagens inbound e campanhas outbound |
 | **PostgreSQL** | Banco relacional com extensão pgvector para memória de longo prazo |
 | **Redis** | Cache de conversas (TTL), broker Celery, pub/sub de eventos em tempo real |
-| **Ollama** *(opcional)* | LLM e embeddings locais (`profile: opensource`) |
-| **faster-whisper** *(opcional)* | STT local (`profile: opensource`) |
-| **Coqui TTS** *(opcional)* | TTS local XTTS-v2 (`profile: opensource`) |
+| **Ollama** *(padrão)* | LLM e embeddings locais (sobe sempre) |
+| **faster-whisper** *(padrão)* | STT local (sobe sempre) |
+| **Coqui TTS** *(padrão)* | TTS local XTTS-v2 (sobe sempre) |
 
 Fluxo resumido: mensagens entram via webhook ou campanha → Worker ou Backend delega ao grafo LangGraph em `agents/` → intent + resposta → envio pelo canal → eventos publicados no Redis → dashboard consome via WebSocket.
 
@@ -25,47 +25,47 @@ Fluxo resumido: mensagens entram via webhook ou campanha → Worker ou Backend d
 
 A camada de IA usa o padrão **ProviderFactory** (`agents/provider_factory.py`): a implementação concreta é escolhida via variáveis de ambiente, sem alterar o grafo LangGraph.
 
-| Camada | Variável | Comercial (padrão) | Open source |
-|--------|----------|-------------------|-------------|
-| LLM + embeddings | `LLM_PROVIDER` | `openai` (GPT-4o) | `ollama` (llama3.1) |
-| STT | `STT_PROVIDER` | `openai` (Whisper) | `faster_whisper` |
-| TTS | `TTS_PROVIDER` | `elevenlabs` | `coqui` |
-| Avatar | `AVATAR_PROVIDER` | `did` | `sadtalker` |
+Por padrão o projeto roda **100% open source** — LLM, STT e TTS locais, sem nenhuma chave paga (coluna marcada com ★).
 
-### Stack 100% local (open source)
+| Camada | Variável | Open source | Comercial |
+|--------|----------|-------------|-----------|
+| LLM + embeddings | `LLM_PROVIDER` | ★ `ollama` (llama3.1) | `openai` (GPT-4o) |
+| STT | `STT_PROVIDER` | ★ `faster_whisper` | `openai` (Whisper) |
+| TTS | `TTS_PROVIDER` | ★ `coqui` | `elevenlabs` |
+| Avatar | `AVATAR_PROVIDER` | `sadtalker` | ★ `did` |
 
-A forma recomendada de rodar tudo local é via `.env.local` (já configurado com `LLM_PROVIDER=ollama`, `STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui` e `EMBEDDING_DIMENSIONS=768`) e os targets `opensource-*` do Makefile:
+> ★ = valor padrão. O avatar em vídeo continua usando `did` por padrão (defina `AVATAR_PROVIDER=sadtalker` para a alternativa local).
+
+### Stack 100% local (open source) — padrão
+
+A stack open source (Ollama + faster-whisper + Coqui) é o **modo padrão**: os serviços
+sobem sempre com `make up`, e o `.env.example` já vem com `LLM_PROVIDER=ollama`,
+`STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui` e `EMBEDDING_DIMENSIONS=768`. O comando
+de primeira inicialização recomendado é:
 
 ```bash
-make setup-opensource   # sobe a stack, baixa os modelos do Ollama e aplica as migrations
+make setup   # sobe a stack, baixa os modelos do Ollama e aplica as migrations
 ```
 
-Equivale a, em sequência: `make opensource-up` → aguardar serviços → `make pull-models` → `make opensource-migrate`.
+Equivale a, em sequência: `make up` → aguardar o Ollama → `make pull-models` → `make warm-ollama` → `make migrate`.
 
-Targets disponíveis:
+> O Coqui XTTS-v2 exige um WAV de referência para clonagem de voz. Coloque o arquivo em
+> `infra/docker/coqui-tts/voices/reference.wav` — essa pasta é montada no container como
+> bind mount somente leitura (`/voices`). Os `.wav` dessa pasta são ignorados pelo Git.
+
+Os targets `opensource-*` continuam disponíveis para rodar a stack open source de forma
+isolada com um `.env.local` dedicado:
 
 ```bash
-make opensource-up        # sobe a stack com profile opensource (usa .env.local)
+make setup-opensource     # one-shot com .env.local (sobe + modelos + migrations)
+make opensource-up        # sobe a stack (usa .env.local)
 make opensource-down      # para a stack opensource
 make opensource-logs      # logs em tempo real
 make pull-models          # baixa llama3.1 + nomic-embed-text no container Ollama
 make opensource-migrate   # alembic upgrade head dentro do backend (usa .env.local)
 ```
 
-> O Coqui XTTS-v2 exige um WAV de referência para clonagem de voz. Coloque o arquivo em
-> `infra/docker/coqui-tts/voices/reference.wav` — essa pasta é montada no container como
-> bind mount somente leitura (`/voices`). Os `.wav` dessa pasta são ignorados pelo Git.
-
-Alternativa manual (sobre a stack DEV, usando `.env`):
-
-```bash
-docker compose --env-file .env \
-  -f infra/docker/docker-compose.yml \
-  -f infra/docker/docker-compose.dev.yml \
-  --profile opensource up -d --build
-```
-
-Ao trocar de OpenAI para Ollama, ajuste também `EMBEDDING_DIMENSIONS=768` (já definido no `.env.local`) e rode `make opensource-migrate` — a migration `alter_interactions_embedding_dimensions` adapta a coluna pgvector automaticamente.
+Para usar OpenAI/ElevenLabs, troque os providers no `.env` (ver [Caminho B](#2b-caminho-comercial-opcional-openai--elevenlabs--d-id)) e ajuste `EMBEDDING_DIMENSIONS=1536` antes de rodar `make migrate` — a migration `alter_interactions_embedding_dimensions` adapta a coluna pgvector automaticamente.
 
 Documentação de fine-tuning: [`docs/fine-tuning/`](docs/fine-tuning/).
 
@@ -81,10 +81,10 @@ O projeto pode rodar de **duas formas**, e você escolhe sem editar código — 
 
 | Caminho | Quando usar | Requer chaves pagas? |
 |---------|-------------|:--------------------:|
+| **100% local / open source** (Ollama + faster-whisper + Coqui) — **padrão** | Sem custo de API, dados não saem da máquina | Não |
 | **Comercial** (OpenAI + ElevenLabs + D-ID) | Melhor qualidade, setup rápido | Sim (`OPENAI_API_KEY`, etc.) |
-| **100% local / open source** (Ollama + faster-whisper + Coqui) | Sem custo de API, dados não saem da máquina | Não |
 
-Siga o passo **2A** (comercial) **ou** **2B** (local). Os demais passos são comuns.
+Siga o passo **2A** (open source, padrão) **ou** **2B** (comercial). Os demais passos são comuns.
 
 ### 1. Clonar o repositório
 
@@ -93,19 +93,52 @@ git clone https://github.com/seu-usuario/autonomous-agent.git
 cd autonomous-agent
 ```
 
-### 2A. Caminho comercial (OpenAI / ElevenLabs / D-ID)
+### 2A. Caminho 100% local (open source) — padrão
+
+Não precisa de nenhuma chave paga. O `.env.example` já vem configurado para a stack open
+source (`LLM_PROVIDER=ollama`, `STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui`,
+`EMBEDDING_DIMENSIONS=768`):
 
 ```bash
 cp .env.example .env
 ```
 
-Edite o `.env` e preencha as credenciais dos serviços que vai usar. Chaves principais:
+Um único comando sobe a stack, baixa os modelos do Ollama e aplica as migrations:
+
+```bash
+make setup
+```
+
+> O TTS local (Coqui XTTS-v2) exige um WAV de referência para clonagem de voz. Antes de
+> rodar, coloque o arquivo em `infra/docker/coqui-tts/voices/reference.wav` (a pasta é
+> montada no container como `/voices`, somente leitura; os `.wav` são ignorados pelo Git).
+
+Os serviços Ollama, faster-whisper e Coqui sobem automaticamente junto com `make up`.
+
+### 2B. Caminho comercial (opcional: OpenAI / ElevenLabs / D-ID)
+
+```bash
+cp .env.example .env
+```
+
+Edite o `.env`, troque os providers para os comerciais e preencha as credenciais dos
+serviços que vai usar:
+
+```env
+LLM_PROVIDER=openai
+STT_PROVIDER=openai
+TTS_PROVIDER=elevenlabs
+EMBEDDING_DIMENSIONS=1536
+OPENAI_API_KEY=sk-...
+```
+
+Chaves principais:
 
 | Variável | Desenvolvimento | Produção |
 |----------|-----------------|----------|
 | `DEBUG` | `true` | `false` |
 | `SECRET_KEY` | qualquer valor para testes | chave forte e aleatória (mín. 32 caracteres) |
-| `OPENAI_API_KEY` | obrigatória (LLM + STT) | obrigatória |
+| `OPENAI_API_KEY` | obrigatória se `LLM_PROVIDER=openai` | obrigatória se `LLM_PROVIDER=openai` |
 
 Suba a stack:
 
@@ -120,23 +153,6 @@ Depois aplique as migrations:
 ```bash
 make migrate
 ```
-
-### 2B. Caminho 100% local (open source)
-
-Não precisa de nenhuma chave paga. O repositório já inclui um `.env.local` pronto
-(`LLM_PROVIDER=ollama`, `STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui`,
-`EMBEDDING_DIMENSIONS=768`). Um único comando sobe a stack, baixa os modelos do Ollama e aplica as migrations:
-
-```bash
-make setup-opensource
-```
-
-> O TTS local (Coqui XTTS-v2) exige um WAV de referência para clonagem de voz. Antes de
-> rodar, coloque o arquivo em `infra/docker/coqui-tts/voices/reference.wav` (a pasta é
-> montada no container como `/voices`, somente leitura; os `.wav` são ignorados pelo Git).
-
-Targets relacionados: `make opensource-up`, `make opensource-down`, `make opensource-logs`,
-`make pull-models`, `make opensource-migrate` (detalhes em [Comandos úteis](#comandos-úteis-makefile)).
 
 ### 3. Notas comuns de ambiente
 
@@ -198,18 +214,18 @@ Na primeira subida, o backend cria automaticamente um usuário admin padrão:
 
 | Variável | Descrição | Padrão |
 |----------|-----------|--------|
-| `LLM_PROVIDER` | `openai` ou `ollama` | `openai` |
-| `STT_PROVIDER` | `openai` ou `faster_whisper` | `openai` |
-| `TTS_PROVIDER` | `elevenlabs` ou `coqui` | `elevenlabs` |
+| `LLM_PROVIDER` | `openai` ou `ollama` | `ollama` |
+| `STT_PROVIDER` | `openai` ou `faster_whisper` | `faster_whisper` |
+| `TTS_PROVIDER` | `elevenlabs` ou `coqui` | `coqui` |
 | `AVATAR_PROVIDER` | `did` ou `sadtalker` | `did` |
-| `EMBEDDING_DIMENSIONS` | Dimensão do vetor pgvector (`1536` OpenAI, `768` Ollama) | `1536` |
+| `EMBEDDING_DIMENSIONS` | Dimensão do vetor pgvector (`1536` OpenAI, `768` Ollama) | `768` |
 
 ### Integrações — comercial
 
 | Variável | Descrição | Obrigatória |
 |----------|-----------|:-----------:|
-| `OPENAI_API_KEY` | API OpenAI (GPT-4o + Whisper) | Se `LLM_PROVIDER=openai` ou `STT_PROVIDER=openai` |
-| `OPENAI_MODEL` | Modelo LLM (padrão: `gpt-4o`) | Se `LLM_PROVIDER=openai` |
+| `OPENAI_API_KEY` | API OpenAI (GPT-4o + Whisper) | Opcional — só se `LLM_PROVIDER=openai` ou `STT_PROVIDER=openai` |
+| `OPENAI_MODEL` | Modelo LLM (padrão: `gpt-4o`) | Opcional — só se `LLM_PROVIDER=openai` |
 | `TWILIO_ACCOUNT_SID` | Twilio — WhatsApp e voz | Canal WhatsApp/Voz |
 | `TWILIO_AUTH_TOKEN` | Token Twilio | Canal WhatsApp/Voz |
 | `TWILIO_PHONE_NUMBER` | Número Twilio | Canal WhatsApp/Voz |
@@ -300,6 +316,7 @@ autonomous-agent/
 ### Desenvolvimento
 
 ```bash
+make setup           # ⭐ Primeira inicialização: sobe + baixa modelos Ollama + migrations
 make up              # Sobe stack DEV (build + hot-reload)
 make down            # Para containers DEV
 make logs            # Logs em tempo real
@@ -308,6 +325,10 @@ make shell-backend   # Shell bash no container backend
 make test            # pytest
 make lint            # ruff check
 ```
+
+> Use `make setup` na primeira subida: equivale ao antigo `setup-opensource`, mas para o
+> fluxo padrão (`.env` + stack DEV). Ele sobe os serviços, aguarda o Ollama, baixa os
+> modelos (`llama3.1` + `nomic-embed-text`), aquece o modelo e aplica as migrations.
 
 ### Produção
 
@@ -345,13 +366,13 @@ infra/docker/
 ├── docker-compose.yml       # base (serviços + defaults DEV)
 ├── docker-compose.dev.yml   # override DEV (worker debug)
 ├── docker-compose.prod.yml  # override PRD
-├── faster-whisper/          # STT local (profile opensource)
-├── coqui-tts/               # TTS local (profile opensource)
+├── faster-whisper/          # STT local (sobe sempre)
+├── coqui-tts/               # TTS local (sobe sempre)
 │   └── voices/              # WAV de referência (bind mount /voices, *.wav ignorado no Git)
 └── postgres/init.sql        # extensão pgvector no init
 ```
 
-Serviços com `profiles: [opensource]` (Ollama, faster-whisper, Coqui) só sobem quando o profile `--profile opensource` é passado ao Compose.
+Os serviços de IA local (Ollama, faster-whisper, Coqui) agora sobem **sempre** junto com a stack — são o modo padrão do projeto. Os targets `opensource-*` do Makefile (com `--profile opensource` e `.env.local`) continuam disponíveis para rodá-los de forma isolada.
 
 ## CI/CD
 

@@ -3,7 +3,7 @@ COMPOSE_DEV := docker compose --env-file .env -f $(COMPOSE_BASE) -f infra/docker
 COMPOSE_PROD := docker compose --env-file .env -f $(COMPOSE_BASE) -f infra/docker/docker-compose.prod.yml
 COMPOSE := $(COMPOSE_DEV)
 
-.PHONY: up down logs migrate shell-backend test lint prod-up prod-down prod-logs opensource-up opensource-down opensource-logs opensource-migrate wait-ollama pull-models warm-ollama setup-opensource
+.PHONY: up down logs migrate shell-backend test lint prod-up prod-down prod-logs opensource-up opensource-down opensource-logs opensource-migrate wait-ollama pull-models warm-ollama setup-opensource setup
 
 up:
 	$(COMPOSE) up -d --build
@@ -48,6 +48,14 @@ setup-opensource: opensource-up
 	@$(MAKE) warm-ollama
 	@$(MAKE) opensource-migrate
 	@echo "✅ Stack opensource pronta!"
+
+setup: up
+	@$(MAKE) wait-ollama
+	@echo "Baixando modelos do Ollama..."
+	@$(MAKE) pull-models
+	@$(MAKE) warm-ollama
+	@$(MAKE) migrate
+	@echo "✅ Stack pronta!"
 
 down:
 	$(COMPOSE) down
