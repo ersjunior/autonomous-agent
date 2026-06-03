@@ -225,6 +225,7 @@ Na primeira subida, o backend cria automaticamente um usuário admin padrão:
 | `OLLAMA_BASE_URL` | URL do Ollama | `http://ollama:11434` |
 | `OLLAMA_MODEL` | Modelo Ollama | `llama3.1` |
 | `OLLAMA_PORT` | Porta exposta no host | `11434` |
+| `OLLAMA_KEEP_ALIVE` | Tempo que o modelo fica carregado em memória (`24h`, `-1` = infinito, `0` = descarrega já) | `24h` |
 | `WHISPER_BASE_URL` | URL do faster-whisper | `http://faster-whisper:8001` |
 | `WHISPER_MODEL` | Modelo Whisper | `large-v3` |
 | `WHISPER_PORT` | Porta exposta no host | `8001` |

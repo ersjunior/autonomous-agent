@@ -44,9 +44,17 @@ O serviço `coqui-tts` monta `coqui-tts/voices/` como bind mount somente leitura
 Coloque o `reference.wav` nessa pasta antes de subir (os `.wav` são ignorados pelo Git).
 O `coqui-tts` transcodifica a saída para MP3 (`audio/mpeg`) via ffmpeg, igual ao ElevenLabs.
 
-Os três serviços OSS (`ollama`, `faster-whisper`, `coqui-tts`) têm `healthcheck` definido,
-e `opensource-up` sobe com `--wait` — o `setup-opensource` só baixa modelos e migra depois
-que todos reportam *healthy* (sem `sleep` cego).
+Os três serviços OSS (`ollama`, `faster-whisper`, `coqui-tts`) têm `healthcheck` definido.
+O `setup-opensource` não usa `sleep` cego: o target `wait-ollama` faz polling de
+`docker exec autonomous-agent-ollama ollama list` até o servidor responder (até 5 min),
+e só então baixa os modelos e aplica as migrations — robusto em máquinas lentas ou com HDD.
+
+Para o Ollama não atrasar a primeira resposta:
+
+- `OLLAMA_KEEP_ALIVE` (padrão `24h`) mantém o modelo carregado em memória entre
+  requisições, evitando o reload por inatividade (default do Ollama é 5 min).
+- `warm-ollama` faz um disparo de inferência logo após o `pull-models`, pré-carregando
+  o modelo — assim a primeira chamada real do agente já vem quente (sem cold start).
 
 ## Portas padrão (DEV)
 
