@@ -28,7 +28,7 @@ TCC: "Do operador ao Agente: Transformando um atendente de telemarketing em um A
 | Avatar | D-ID API **ou** SadTalker |
 | WhatsApp | Twilio |
 | Telegram | python-telegram-bot |
-| Infra local | Docker Compose (+ profile `opensource`) |
+| Infra local | Docker Compose (stack open source sobe por padrão) |
 | Infra cloud | Terraform (AWS + Azure + GCP) |
 
 ## Estrutura de pastas (raiz do projeto)
@@ -77,14 +77,14 @@ Seleção via variáveis de ambiente — implementações em `agents/providers/`
 
 | Variável | Valores | Padrão |
 |----------|---------|--------|
-| `LLM_PROVIDER` | `openai` \| `ollama` | `openai` |
-| `STT_PROVIDER` | `openai` \| `faster_whisper` | `openai` |
-| `TTS_PROVIDER` | `elevenlabs` \| `coqui` | `elevenlabs` |
+| `LLM_PROVIDER` | `openai` \| `ollama` | `ollama` |
+| `STT_PROVIDER` | `openai` \| `faster_whisper` | `faster_whisper` |
+| `TTS_PROVIDER` | `elevenlabs` \| `coqui` | `coqui` |
 | `AVATAR_PROVIDER` | `did` \| `sadtalker` | `did` |
-| `EMBEDDING_DIMENSIONS` | `1536` (OpenAI) \| `768` (Ollama) | `1536` |
+| `EMBEDDING_DIMENSIONS` | `1536` (OpenAI) \| `768` (Ollama) | `768` |
 
-Serviços Docker com `profiles: [opensource]`: `ollama`, `faster-whisper`, `coqui-tts`.
-Subir com: `docker compose --profile opensource up -d`.
+A stack open source (`ollama`, `faster-whisper`, `coqui-tts`) é o **modo padrão** e sobe sempre — sem `profiles`.
+Subir com: `make up` (ou `make setup` na 1ª vez). Os serviços comerciais (OpenAI/ElevenLabs/D-ID) são opcionais.
 
 ## Modos de operação do agente
 

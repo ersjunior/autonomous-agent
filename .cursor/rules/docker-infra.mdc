@@ -8,25 +8,34 @@ alwaysApply: false
 
 ## Serviços do Docker Compose
 
-| Serviço | Imagem / build | Porta | Profile | Healthcheck |
-|---------|----------------|-------|---------|-------------|
-| `postgres` | `pgvector/pgvector:pg16` | 25432→5432 | — | `pg_isready` |
-| `redis` | `redis:7-alpine` | 16379→6379 | — | `redis-cli ping` |
-| `backend` | build `backend/Dockerfile` | 8000 | — | via depends_on |
-| `frontend` | build `frontend/Dockerfile` | 3000 | — | — |
-| `worker` | build `backend/Dockerfile` | — | — | — |
-| `ollama` | `ollama/ollama:latest` | 11434 | `opensource` | — |
-| `faster-whisper` | build `infra/docker/faster-whisper` | 8001 | `opensource` | — |
-| `coqui-tts` | build `infra/docker/coqui-tts` | 8002 | `opensource` | — |
+| Serviço | Imagem / build | Porta (host→container) | Healthcheck |
+|---------|----------------|------------------------|-------------|
+| `postgres` | `pgvector/pgvector:pg16` | 25432→5432 | `pg_isready` |
+| `redis` | `redis:7-alpine` | 16379→6379 | `redis-cli ping` |
+| `backend` | build `backend/Dockerfile` | 8000 | via depends_on |
+| `frontend` | build `frontend/Dockerfile` | 3000 | — |
+| `worker` | build `backend/Dockerfile` | — | — |
+| `ollama` | `ollama/ollama:latest` | 11434 | `ollama list` |
+| `faster-whisper` | build `infra/docker/faster-whisper` | `WHISPER_PORT`→8001 | `/health` |
+| `coqui-tts` | build `infra/docker/coqui-tts` | `COQUI_PORT`→8002 | `/health` |
 
-Subir serviços open source:
+A stack open source (`ollama`, `faster-whisper`, `coqui-tts`) é o **modo padrão** e sobe sempre — não há mais `profiles: [opensource]` no compose base. As portas de host de Whisper/Coqui são parametrizáveis (`WHISPER_PORT`/`COQUI_PORT`) para evitar conflito com outros serviços locais; a porta interna do container continua 8001/8002 (e as URLs internas `http://faster-whisper:8001` / `http://coqui-tts:8002` não mudam).
+
+Subir a stack (sempre com `--env-file .env`, ou use `make up` / `make setup`):
 
 ```bash
 docker compose --env-file .env \
   -f infra/docker/docker-compose.yml \
   -f infra/docker/docker-compose.dev.yml \
-  --profile opensource up -d --build
+  up -d --build
 ```
+
+> Atenção: `docker compose -f infra/docker/docker-compose.yml ...` **sem** `--env-file .env`
+> não lê o `.env` da raiz (o Compose procura o `.env` no diretório do arquivo compose).
+> Prefira `make up`, que já injeta `--env-file .env` e o override de dev.
+
+Os targets `opensource-*` do Makefile (com `--profile opensource` e `.env.local`) continuam
+disponíveis para rodar a stack OSS de forma isolada.
 
 ## Volumes montados no Docker
 
@@ -69,14 +78,14 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:25432/autonomous_agent
 REDIS_PORT=16379
 REDIS_URL=redis://localhost:16379/0
 
-# Provedores de IA
-LLM_PROVIDER=openai          # openai | ollama
-STT_PROVIDER=openai          # openai | faster_whisper
-TTS_PROVIDER=elevenlabs      # elevenlabs | coqui
+# Provedores de IA — padrão é a stack open source (sem chaves pagas)
+LLM_PROVIDER=ollama          # ollama (padrão) | openai
+STT_PROVIDER=faster_whisper  # faster_whisper (padrão) | openai
+TTS_PROVIDER=coqui           # coqui (padrão) | elevenlabs
 AVATAR_PROVIDER=did          # did | sadtalker
-EMBEDDING_DIMENSIONS=1536    # 768 com LLM_PROVIDER=ollama
+EMBEDDING_DIMENSIONS=768     # 768 com Ollama (padrão) | 1536 com OpenAI
 
-# OpenAI (se LLM/STT provider=openai)
+# OpenAI — OPCIONAL (só se LLM_PROVIDER=openai ou STT_PROVIDER=openai)
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o
 
@@ -108,16 +117,24 @@ postgresql+asyncpg://user:pass@host:5432/db
 
 O `database.py` já faz a conversão automática — não mude a variável de ambiente.
 
+## Schema / migrations no startup
+
+- O backend (`app/main.py` lifespan) cria a extensão `vector` e roda `alembic upgrade head`
+  automaticamente no startup (via `command.upgrade`), depois faz o seed do admin. As
+  migrations são a **fonte única do schema** — não use mais `Base.metadata.create_all`.
+- `make migrate` (`alembic upgrade head`) continua disponível e é idempotente (no-op quando já no head).
+
 ## Embeddings pgvector
 
 - Model `Interaction.embedding` usa `Vector(settings.embedding_dimensions)`
 - Migration `a7b8c9d0e1f2` altera dimensão só quando difere do banco (evita reindex desnecessário)
-- Ao trocar `EMBEDDING_DIMENSIONS`, rode `make migrate`
+- Ao trocar `EMBEDDING_DIMENSIONS`, reinicie o backend (ou rode `make migrate`)
 
 ## Comandos úteis (Makefile)
 
 ```bash
-make up          # docker compose up -d (DEV)
+make setup       # 1ª inicialização: up + baixa modelos Ollama + warm-up + migrate
+make up          # docker compose up -d (DEV) — já injeta --env-file .env
 make down        # docker compose down
 make logs        # docker compose logs -f
 make migrate     # alembic upgrade head

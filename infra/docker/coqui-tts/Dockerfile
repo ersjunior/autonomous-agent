@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+# Coqui TTS (0.22.x) só publica wheels para Python 3.9–3.11; não há distribuição para 3.12.
+FROM python:3.11-slim
 
 WORKDIR /app
 
