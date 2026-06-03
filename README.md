@@ -74,6 +74,35 @@ Documentação de fine-tuning: [`docs/fine-tuning/`](docs/fine-tuning/).
 - [Docker](https://docs.docker.com/get-docker/) e Docker Compose v2
 - [Python 3.12](https://www.python.org/downloads/) (desenvolvimento local opcional)
 - [Node.js 20+](https://nodejs.org/) (desenvolvimento local do frontend opcional)
+- **GNU Make** — usado pelos comandos `make up`, `make setup`, `make migrate`, etc. (vem pré-instalado no Linux e macOS)
+
+### Windows: instalar o `make`
+
+No Windows, o PowerShell **não** traz o comando `make`. Este projeto centraliza a stack Docker no **Makefile** da raiz: em vez de decorar o `docker compose` longo (com `--env-file .env` e os overrides), você roda atalhos como `make setup` ou `make up`, que já passam os parâmetros corretos.
+
+| Ferramenta | O que é | Para que serve aqui |
+|------------|---------|---------------------|
+| **[Chocolatey](https://chocolatey.org/)** | Gerenciador de pacotes para Windows (equivalente ao `apt` no Linux ou `brew` no macOS). Instala programas via linha de comando com `choco install`. | Facilita instalar o GNU Make e outras ferramentas CLI sem baixar instaladores manualmente. |
+| **GNU Make** | Utilitário que lê o `Makefile` e executa os *targets* definidos (`up`, `setup`, `migrate`, …). | Roda os fluxos documentados deste repositório (`make setup` na primeira subida, `make up` depois). |
+
+Abra o **PowerShell como administrador** e execute:
+
+```powershell
+# Instalar Chocolatey (se não tiver)
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+# Instalar o make
+choco install make -y
+```
+
+Feche e reabra o terminal, vá até a pasta do projeto e teste:
+
+```powershell
+make --version
+make setup   # primeira inicialização
+```
+
+> Se preferir não usar Chocolatey, instale o [Make for Windows](https://gnuwin32.sourceforge.net/packages/make.htm) ou use o Make do **Git Bash** / **WSL** — o importante é ter o comando `make` disponível no PATH.
 
 ## Instalação
 
