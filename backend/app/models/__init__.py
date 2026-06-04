@@ -1,6 +1,8 @@
 """SQLAlchemy ORM models."""
 
 from app.models.agent import Agent, AgentMode
+from app.models.agent_activation import AgentActivation
+from app.models.agent_channel_settings import AgentChannelSettings
 from app.models.app_setting import AppSetting
 from app.models.base import Base
 from app.models.campaign import Campaign, CampaignChannel
@@ -13,6 +15,8 @@ from app.models.user import User
 
 __all__ = [
     "Agent",
+    "AgentActivation",
+    "AgentChannelSettings",
     "AgentMode",
     "AppSetting",
     "Base",

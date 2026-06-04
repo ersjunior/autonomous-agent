@@ -242,11 +242,12 @@ async def get_effective_settings(session: AsyncSession) -> dict[str, Any]:
     return effective
 
 
-def _validate_change(key: str, value: Any) -> str | None:
-    if key not in EDITABLE_KEYS:
+def _serialize_managed_value(key: str, value: Any) -> str | None:
+    """Validate and serialize a managed key (including read-only keys for internal writes)."""
+    if key not in MANAGED_KEYS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Setting '{key}' is not editable",
+            detail=f"Unknown setting key: {key}",
         )
     schema = SCHEMA_BY_KEY[key]
     if value is None:
@@ -291,6 +292,64 @@ def _validate_change(key: str, value: Any) -> str | None:
         return str_value
 
     return str_value if str_value else None
+
+
+def _validate_change(key: str, value: Any) -> str | None:
+    if key not in EDITABLE_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Setting '{key}' is not editable",
+        )
+    return _serialize_managed_value(key, value)
+
+
+async def set_setting_internal(
+    session: AsyncSession,
+    key: str,
+    value: Any,
+) -> int:
+    """
+    Persist one managed setting without the public edit whitelist (system flows only).
+
+    Upserts app_settings, applies to the settings singleton, commits, and bumps Redis
+    settings_version so workers reload.
+    """
+    schema = SCHEMA_BY_KEY[key]
+    serialized = _serialize_managed_value(key, value)
+
+    result = await session.execute(
+        select(AppSetting).where(
+            AppSetting.scope == GLOBAL_SCOPE,
+            AppSetting.user_id.is_(None),
+            AppSetting.key == key,
+        )
+    )
+    row = result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+
+    if row is None:
+        row = AppSetting(
+            scope=GLOBAL_SCOPE,
+            user_id=None,
+            key=key,
+            is_secret=schema.is_secret,
+        )
+        session.add(row)
+
+    row.value = serialized
+    row.is_secret = schema.is_secret
+    row.updated_at = now
+    coerced = _coerce_value(key, serialized) if serialized is not None else None
+    _apply_to_settings(key, coerced)
+
+    await session.commit()
+    version = _publish_invalidation()
+    logger.info("Internal setting %s updated (redis version=%s)", key, version)
+
+    from app.services.settings_sync import mark_local_version
+
+    mark_local_version(version)
+    return version
 
 
 def _should_skip_secret_update(key: str, new_value: Any, current_db: str | None) -> bool:

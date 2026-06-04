@@ -27,10 +27,17 @@ async def _marcar_nao_atendidos_async() -> int:
                 LeadInteraction.data_acionamento.isnot(None),
                 LeadInteraction.data_acionamento < cutoff,
                 or_(
-                    LeadInteraction.data_ultimo_contato == LeadInteraction.data_acionamento,
+                    LeadInteraction.data_ultimo_contato.is_(None),
+                    LeadInteraction.data_ultima_tentativa.is_(None),
+                    LeadInteraction.data_ultimo_contato
+                    <= LeadInteraction.data_ultima_tentativa,
                     and_(
-                        LeadInteraction.data_ultimo_contato.is_(None),
-                        LeadInteraction.data_acionamento.isnot(None),
+                        LeadInteraction.data_ultima_tentativa.is_(None),
+                        or_(
+                            LeadInteraction.data_ultimo_contato
+                            == LeadInteraction.data_acionamento,
+                            LeadInteraction.data_ultimo_contato.is_(None),
+                        ),
                     ),
                 ),
             )

@@ -27,6 +27,7 @@ O dashboard Next.js cobre campanhas **ativas** (outbound multi-canal), importaç
 
 | Documento | Descrição |
 |-----------|-----------|
+| [Motor de acionamento](#motor-de-acionamento) (neste README) | Camadas A–D, defaults, scheduler, scripts `validate_layer_*` |
 | [docs/ROTEIRO_APRESENTACAO.md](docs/ROTEIRO_APRESENTACAO.md) | Roteiro de demonstração para a banca (~15–20 min), com foco em IA aplicada |
 | [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) | Checklist de verificação antes da apresentação (comandos e troubleshooting) |
 | [infra/docker/sadtalker/README.md](infra/docker/sadtalker/README.md) | Notas do serviço SadTalker (GPU, build, API `/generate`) |
@@ -193,6 +194,53 @@ flowchart TD
 - **Inbound** — `track_inbound_lead_interaction()` atualiza status conforme intenção (`convertido` / `recusou` / `em_andamento`).
 - **Devolutiva** — Excel diário por base (`devolutiva.py` + Celery Beat); download sob demanda no dashboard.
 - **Métricas** — agregação por campanha/base no dashboard (`metrics.py`).
+
+---
+
+## Motor de acionamento
+
+Motor outbound para campanhas com agente **ACTIVE**: parâmetros por agente+canal, janela de horário, cadência de tentativas e concorrência com slots no Redis. API em `/api/v1/activation` e `/api/v1/agents/{id}/channel-settings`; UI em `/dashboard/activation`.
+
+| Camada | Responsabilidade | Implementação principal |
+|--------|------------------|-------------------------|
+| **A** | Parâmetros por `(agente, canal)`: concorrência, cadência, horário; liga/desliga por campanha+canal | `activation_defaults.py`, `AgentChannelSettings`, `AgentActivation` |
+| **B** | Janela `horario_inicio`–`horario_fim` no fuso **America/Sao_Paulo** (`ACTIVATION_TIMEZONE`); scheduler só enfileira dentro da janela | `activation_window.py`, Celery Beat `process_active_activations` (a cada 5 min, UTC) |
+| **C** | Cadência: rate limit voz/vídeo por hora; 2ª mensagem WhatsApp/Telegram após N min; encerramento após N tentativas sem resposta | `activation_cadence.py`, `activation_scheduler.py` |
+| **D** | Concorrência: slots atômicos no Redis (Lua), fila de prioridade (ZSET) para leads pulados por falta de slot | `activation_slots.py`, integração no scheduler + `outbound_campaign.py` |
+
+### Defaults do sistema (por canal)
+
+Valores padrão em `backend/app/core/activation_defaults.py` (editáveis por agente não-sistema na UI/API):
+
+| Parâmetro | Voz / Vídeo | WhatsApp / Telegram |
+|-----------|-------------|---------------------|
+| Concorrência simultânea | `chamadas_simultaneas` = **1** | `chats_simultaneos` = **5** |
+| Campanhas simultâneas (mesmo agente+canal) | `campanhas_simultaneas` = **1** | `campanhas_simultaneas` = **1** |
+| Cadência | `tentativas_por_hora` = **6** | `tentativas_sem_resposta` = **2**, `minutos_segunda_mensagem` = **20** |
+| Janela de horário | `horario_inicio` / `horario_fim` = **09:00** – **20:00** | idem |
+
+**Camada D (comportamento):** voz/vídeo ocupam slot por chamada (~`CALL_SLOT_TTL_SECONDS`, default 300s) sem callback Twilio; messaging libera slot ao status terminal ou inatividade (`ACTIVE_CONVERSATION_TIMEOUT_HOURS`), com TTL de segurança `CHAT_SLOT_TTL_SECONDS`. Leads pulados entram na fila de prioridade e são atendidos antes de pendentes novos.
+
+### Ciclo do scheduler (Beat)
+
+```mermaid
+flowchart LR
+  subgraph beat [Celery Beat a cada 5 min]
+    A[Listar AgentActivation is_running]
+    B{Dentro da janela SP?}
+    C[Camada C: follow-up / fechamento / quota horária]
+    D[Camada D: slots livres + fila prioridade]
+    E[Enfileirar send_campaign_message / followup]
+  end
+  A --> B
+  B -->|Não| SKIP[Pula até próximo ciclo]
+  B -->|Sim| C --> D --> E
+  E --> W[Worker outbound_campaign]
+```
+
+Ordem de candidatos por ciclo: **(1)** fila de prioridade Redis → **(2)** follow-ups elegíveis → **(3)** leads pendentes (1ª mensagem), respeitando `campanhas_simultaneas` e limites de slot.
+
+Variáveis de ambiente (seção `# Motor de acionamento` em `.env.example`): `ACTIVATION_TIMEZONE`, `CALL_SLOT_TTL_SECONDS`, `CHAT_SLOT_TTL_SECONDS`, `ACTIVE_CONVERSATION_TIMEOUT_HOURS`, `STATUS_TIMEOUT_HOURS`.
 
 ---
 
@@ -499,6 +547,10 @@ STT_PROVIDER=faster_whisper
 TTS_PROVIDER=coqui
 AVATAR_PROVIDER=sadtalker
 EMBEDDING_DIMENSIONS=768
+# Motor de acionamento (ver seção dedicada no README e bloco completo em .env.example)
+ACTIVATION_TIMEZONE=America/Sao_Paulo
+CALL_SLOT_TTL_SECONDS=300
+CHAT_SLOT_TTL_SECONDS=86400
 ACTIVE_CONVERSATION_TIMEOUT_HOURS=24
 STATUS_TIMEOUT_HOURS=48
 ```
@@ -518,7 +570,23 @@ STATUS_TIMEOUT_HOURS=48
 
 ## Scripts de validação e demonstração
 
-Rodar **dentro do container** `autonomous-agent-backend` (ou worker com mesmo `PYTHONPATH`):
+Rodar **dentro do container** `autonomous-agent-backend` (ou worker com mesmo `PYTHONPATH`).
+
+Scripts do **motor de acionamento** (regressão e demonstração das camadas A–D), em `backend/scripts/`:
+
+| Script | Camada |
+|--------|--------|
+| `validate_layer_a_activation.py` | A — parâmetros, settings por canal, start/stop |
+| `validate_layer_b_activation.py` | B — janela de horário + scheduler |
+| `validate_layer_c_activation.py` | C — cadência, follow-up, quota horária |
+| `validate_layer_d_activation.py` | D — slots Redis, fila de prioridade, campanhas simultâneas |
+
+```bash
+docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_layer_a_activation.py
+docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_layer_b_activation.py
+docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_layer_c_activation.py
+docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_layer_d_activation.py
+```
 
 ### RAG — `backend/scripts/validate_rag.py`
 
@@ -622,7 +690,7 @@ Fine-tuning: [`docs/fine-tuning/`](docs/fine-tuning/).
 
 ## Referência rápida — variáveis de ambiente
 
-Ver `.env.example`: `DATABASE_URL`, Redis/Celery, providers, URLs dos microsserviços, Twilio/Telegram, `PUBLIC_BASE_URL`, `EMBEDDING_DIMENSIONS`, `ACTIVE_CONVERSATION_TIMEOUT_HOURS`, `STATUS_TIMEOUT_HOURS`, portas do host.
+Ver `.env.example`: `DATABASE_URL`, Redis/Celery, providers, URLs dos microsserviços, Twilio/Telegram, `PUBLIC_BASE_URL`, `EMBEDDING_DIMENSIONS`, seção **Motor de acionamento** (`ACTIVATION_TIMEZONE`, `CALL_SLOT_TTL_SECONDS`, `CHAT_SLOT_TTL_SECONDS`, `ACTIVE_CONVERSATION_TIMEOUT_HOURS`, `STATUS_TIMEOUT_HOURS`), portas do host.
 
 ---
 

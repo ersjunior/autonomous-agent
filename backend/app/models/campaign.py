@@ -14,6 +14,7 @@ from app.models.base import Base
 
 if TYPE_CHECKING:
     from app.models.agent import Agent
+    from app.models.agent_activation import AgentActivation
     from app.models.lead_base import LeadBase
     from app.models.lead_interaction import LeadInteraction
     from app.models.user import User
@@ -69,6 +70,10 @@ class Campaign(Base):
         cascade="all, delete-orphan",
     )
     lead_interactions: Mapped[list[LeadInteraction]] = relationship(
+        back_populates="campaign",
+        cascade="all, delete-orphan",
+    )
+    activations: Mapped[list["AgentActivation"]] = relationship(
         back_populates="campaign",
         cascade="all, delete-orphan",
     )

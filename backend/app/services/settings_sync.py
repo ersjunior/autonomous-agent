@@ -2,7 +2,8 @@
 Hot-reload sync for provider settings across backend and Celery worker.
 
 - Backend: call ``ensure_settings_fresh_async`` before serving settings or using providers.
-- Worker: call ``ensure_settings_fresh_sync`` at the start of inbound/outbound tasks and graph.
+- Worker: call ``ensure_settings_fresh_async`` inside the task coroutine (same ``asyncio.run``),
+  not ``ensure_settings_fresh_sync`` before it (avoids nested loops / stale asyncpg connections).
 - ``update_settings`` increments Redis key ``settings_version`` and publishes ``settings_invalidate``.
 - Processes compare the Redis version; on change (or every ``TTL_SECONDS`` fallback), reload from DB.
 """

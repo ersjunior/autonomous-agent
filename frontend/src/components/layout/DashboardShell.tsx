@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/channels", label: "Canais", icon: "channels" },
   { href: "/dashboard/leads", label: "Leads", icon: "users" },
   { href: "/dashboard/campaigns", label: "Campanhas", icon: "megaphone" },
+  { href: "/dashboard/activation", label: "Acionamento", icon: "activation" },
   { href: "/dashboard/metrics", label: "Métricas", icon: "chart" },
   { href: "/dashboard/monitoring", label: "Monitoramento", icon: "activity" },
   { href: "/dashboard/settings", label: "Configurações", icon: "settings" },
@@ -56,6 +57,20 @@ function NavIcon({ name }: { name: (typeof NAV_ITEMS)[number]["icon"] }) {
         <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="m3 11 18-5v12L3 14v-3z" />
           <path d="M11 12v8a2 2 0 0 0 4 0v-1" />
+        </svg>
+      );
+    case "activation":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M12 2v4" />
+          <path d="M12 18v4" />
+          <path d="m4.93 4.93 2.83 2.83" />
+          <path d="m16.24 16.24 2.83 2.83" />
+          <path d="M2 12h4" />
+          <path d="M18 12h4" />
+          <path d="m4.93 19.07 2.83-2.83" />
+          <path d="m16.24 7.76 2.83-2.83" />
+          <circle cx="12" cy="12" r="3" />
         </svg>
       );
     case "chart":

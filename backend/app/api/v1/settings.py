@@ -30,6 +30,7 @@ from app.services.avatar_video import gerar_video_avatar
 from app.services.settings_service import (
     build_settings_response_payload,
     get_effective_settings,
+    set_setting_internal,
     update_settings,
 )
 from app.services.settings_sync import ensure_settings_fresh_async
@@ -230,7 +231,7 @@ async def upload_avatar_image(
     raw = await file.read()
     dest, size, width, height = save_avatar_image(raw, filename, content_type)
 
-    await update_settings(db, {"avatar_default_image": dest.name})
+    await set_setting_internal(db, "avatar_default_image", dest.name)
 
     logger.info(
         "Avatar image uploaded by %s: %s (%s bytes)",

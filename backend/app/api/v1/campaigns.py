@@ -23,6 +23,7 @@ from app.schemas.campaign import (
     CampaignUpdate,
 )
 from app.schemas.metrics import MetricsResponse
+from app.services.activation_service import set_all_campaign_activations_running
 from app.services.metrics import get_campaign_metrics
 from worker.tasks.outbound_campaign import send_campaign_message
 
@@ -57,7 +58,10 @@ async def _get_campaign(
 ) -> Campaign:
     result = await db.execute(
         select(Campaign)
-        .options(selectinload(Campaign.campaign_channels))
+        .options(
+            selectinload(Campaign.campaign_channels),
+            selectinload(Campaign.agent),
+        )
         .where(Campaign.id == campaign_id)
     )
     campaign = result.scalar_one_or_none()
@@ -215,6 +219,7 @@ async def start_campaign(
         send_campaign_message.delay(str(lead.id), str(campaign.id))
         dispatched += 1
 
+    await set_all_campaign_activations_running(db, campaign, is_running=True)
     campaign.status = "active"
     campaign.leads_count = dispatched
     await db.commit()

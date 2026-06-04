@@ -79,12 +79,21 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "http://localhost:3000"
 
+    # Motor de acionamento — fuso para janela de horário (camada B+)
+    activation_timezone: str = "America/Sao_Paulo"
+
     # Lead interaction status sweep (worker): acionado sem resposta → nao_atendido
     status_timeout_hours: int = 48
 
     # Janela de conversa ativa outbound (inbound continua com o agente ACTIVE):
     # encerra se (now - data_ultimo_contato) > N horas. Separado de status_timeout_hours.
     active_conversation_timeout_hours: int = 24
+
+    # Camada D — TTL de slots Redis (sem callback Twilio; estimativa + rede de segurança)
+    # Voz/vídeo: duração estimada da chamada até o holder expirar e liberar o slot.
+    call_slot_ttl_seconds: int = 300
+    # WhatsApp/Telegram: TTL de segurança do holder; liberação principal ao encerrar conversa.
+    chat_slot_ttl_seconds: int = 24 * 3600  # alinhado a active_conversation_timeout_hours (24h)
 
     # Comportamento do agente (gerenciável via UI / app_settings)
     intent_temperature: float = 0.0
@@ -122,5 +131,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
 
+
+ACTIVATION_TIMEZONE = "America/Sao_Paulo"
 
 settings = Settings()

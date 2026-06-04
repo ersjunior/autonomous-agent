@@ -12,8 +12,10 @@ from sqlalchemy.orm import selectinload
 
 from agents.channels.phone import normalize_phone_digits as normalize_phone
 from app.models.interaction import Interaction
+from app.core.activation_defaults import MESSAGING_CHANNELS, normalize_channel_type
 from app.models.lead import Lead
 from app.models.lead_interaction import LeadInteraction
+from worker.tasks.conversation_routing import TERMINAL_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +33,16 @@ async def upsert_lead_interaction(
     devolutiva: str | None = None,
     last_interaction_id: uuid.UUID | None = None,
     set_acionamento: bool = False,
+    touch_inbound: bool = False,
+    record_outbound_attempt: bool = False,
 ) -> LeadInteraction:
-    """Busca ou cria LeadInteraction por (lead_id, campaign_id, channel_type). Não commita."""
+    """
+    Busca ou cria LeadInteraction por (lead_id, campaign_id, channel_type). Não commita.
+
+    Semântica de timestamps:
+      - data_ultimo_contato: apenas inbound (touch_inbound=True)
+      - data_ultima_tentativa + tentativas: outbound (record_outbound_attempt=True)
+    """
     channel = channel_type.lower()
     now = datetime.now(timezone.utc)
 
@@ -45,25 +55,40 @@ async def upsert_lead_interaction(
     )
     record = result.scalar_one_or_none()
 
-    if record is None:
+    is_new = record is None
+    if is_new:
         record = LeadInteraction(
             lead_id=lead_id,
             campaign_id=campaign_id,
             channel_type=channel,
-            status=status or "pendente",
+            status="pendente",
+            tentativas=0,
         )
         session.add(record)
 
     if status is not None:
+        prev_status = "" if is_new else (record.status or "").lower()
+        new_status = status.lower()
+        becoming_terminal = (
+            new_status in TERMINAL_STATUSES and prev_status not in TERMINAL_STATUSES
+        )
         record.status = status
+        if becoming_terminal and normalize_channel_type(channel) in MESSAGING_CHANNELS:
+            from app.services.activation_slots import release_slot_for_lead
+
+            release_slot_for_lead(str(lead_id), channel)
     if devolutiva is not None:
         record.devolutiva = devolutiva
     if last_interaction_id is not None:
         record.last_interaction_id = last_interaction_id
-    if set_acionamento:
+    if set_acionamento and record.data_acionamento is None:
         record.data_acionamento = now
+    if touch_inbound:
+        record.data_ultimo_contato = now
+    if record_outbound_attempt:
+        record.tentativas = (record.tentativas or 0) + 1
+        record.data_ultima_tentativa = now
 
-    record.data_ultimo_contato = now
     await session.flush()
     return record
 
@@ -173,4 +198,5 @@ async def track_inbound_lead_interaction(
         status=new_status,
         devolutiva=devolutiva,
         last_interaction_id=last_interaction_id,
+        touch_inbound=True,
     )

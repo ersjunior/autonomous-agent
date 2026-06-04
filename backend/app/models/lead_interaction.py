@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,7 +36,17 @@ class LeadInteraction(Base):
     status: Mapped[str] = mapped_column(String(50), default="pendente", nullable=False)
     devolutiva: Mapped[str | None] = mapped_column(Text, nullable=True)
     data_acionamento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    data_ultimo_contato: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    data_ultimo_contato: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Último inbound do lead neste canal (base para detectar resposta).",
+    )
+    tentativas: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    data_ultima_tentativa: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Timestamp do último outbound (1ª msg ou follow-up).",
+    )
     last_interaction_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("interactions.id", ondelete="SET NULL"),

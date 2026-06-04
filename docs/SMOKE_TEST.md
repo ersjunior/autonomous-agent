@@ -64,7 +64,7 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 - [ ] **Migrations em head**  
   - `docker exec autonomous-agent-backend alembic current`  
-  - Passou: revisão **`a1b2c3d4e5f6`** (head)
+  - Passou: revisão **`g8h9i0j1k2l3`** (head)
 
 - [ ] **Embedding 768**  
   ```bash
@@ -230,7 +230,7 @@ Abas abertas:
 | Campanha RECEPTIVE não envia | Regra de negócio | **Esperado** — cenário E do script |
 | Lead IMPORT editável | `source` errado na base | Reimportar; checar API `LeadBaseResponse.source` |
 | UI sem selo | Frontend desatualizado | Rebuild frontend; hard refresh |
-| `alembic current` antigo | Migração pendente | `make migrate` até `a1b2c3d4e5f6` |
+| `alembic current` antigo | Migração pendente | `make migrate` até `g8h9i0j1k2l3` |
 | SadTalker unhealthy | Sem GPU | MP4 em `docs/demo-assets/` |
 | Coqui `model_loaded: false` | Build/startup | Aguardar; `reference.wav` |
 | 401 na UI | JWT expirado | Login de novo |
@@ -254,4 +254,4 @@ Plano B acionado:
 
 ---
 
-*Alinhado ao README, `validate_rag.py`, `validate_phase4_routing.py`, `conversation_routing.py`, `authorization.py`, lifespan em `main.py` / `seed.py`, head Alembic `a1b2c3d4e5f6`.*
+*Alinhado ao README, `validate_rag.py`, `validate_phase4_routing.py`, `conversation_routing.py`, `authorization.py`, lifespan em `main.py` / `seed.py`, head Alembic `g8h9i0j1k2l3`.*

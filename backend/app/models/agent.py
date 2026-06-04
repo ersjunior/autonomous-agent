@@ -14,8 +14,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
 if TYPE_CHECKING:
-    from app.models.user import User
+    from app.models.agent_activation import AgentActivation
+    from app.models.agent_channel_settings import AgentChannelSettings
     from app.models.campaign import Campaign
+    from app.models.user import User
 
 
 class AgentMode(str, enum.Enum):
@@ -38,3 +40,11 @@ class Agent(Base):
 
     user: Mapped[User] = relationship(back_populates="agents")
     campaigns: Mapped[list[Campaign]] = relationship(back_populates="agent")
+    channel_settings: Mapped[list["AgentChannelSettings"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    activations: Mapped[list["AgentActivation"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )

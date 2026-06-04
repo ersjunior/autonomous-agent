@@ -54,9 +54,6 @@ async def _process_inbound_message(message: str, channel: str, user_id: str) -> 
 @celery.task(bind=True, max_retries=3)
 def process_inbound_message(self, message: str, channel: str, user_id: str) -> str:
     """Processa mensagem recebida e retorna a resposta do agente."""
-    from app.services.settings_sync import ensure_settings_fresh_sync
-
-    ensure_settings_fresh_sync()
     try:
         return asyncio.run(_process_inbound_message(message, channel, user_id))
     except Exception as exc:
