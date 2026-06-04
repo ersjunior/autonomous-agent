@@ -66,14 +66,20 @@ async def escalate(state: AgentState) -> AgentState:
 
 
 async def generate_response(state: AgentState) -> AgentState:
+    # RAG no nó do grafo: tem user_id + message; falha não bloqueia a resposta.
+    rag_memories = await _long_term_memory.retrieve_similar_memories(
+        state["user_id"],
+        state["message"],
+    )
     text = await run_generate_response(
         state["message"],
         state.get("intent", "other"),
         state.get("entities", {}),
         state.get("conversation_history", []),
         state.get("channel", ""),
+        rag_memories=rag_memories,
     )
-    return {"response": text}
+    return {"response": text, "rag_memories": rag_memories}
 
 
 async def send_response(state: AgentState) -> AgentState:

@@ -1,6 +1,6 @@
 """Shared graph state definition."""
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class AgentState(TypedDict):
@@ -13,3 +13,4 @@ class AgentState(TypedDict):
     response: str
     should_escalate: bool
     conversation_history: list[dict]
+    rag_memories: NotRequired[list[dict]]

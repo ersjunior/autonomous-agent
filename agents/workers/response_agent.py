@@ -37,12 +37,36 @@ def _append_current_user_message(messages: list[dict], message: str) -> None:
     messages.append({"role": "user", "content": message})
 
 
+def format_rag_context_block(rag_memories: list[dict]) -> str | None:
+    """Monta bloco de sistema com interações antigas (não confundir com histórico Redis)."""
+    if not rag_memories:
+        return None
+
+    lines = [
+        "Conversas anteriores relevantes com este contato (memória de longo prazo, "
+        "outras sessões — não é o histórico imediato da conversa atual):",
+    ]
+    for item in rag_memories:
+        past_msg = (item.get("message") or "").strip()
+        past_resp = (item.get("response") or "").strip()
+        if not past_msg and not past_resp:
+            continue
+        sim = item.get("similarity")
+        suffix = f" [similaridade {sim:.2f}]" if isinstance(sim, (int, float)) else ""
+        lines.append(f"- Cliente: {past_msg} → Atendente: {past_resp}{suffix}")
+
+    if len(lines) <= 1:
+        return None
+    return "\n".join(lines)
+
+
 async def generate_response(
     message: str,
     intent: str,
     entities: dict,
     history: list[dict],
     channel: str,
+    rag_memories: list[dict] | None = None,
 ) -> str:
     llm = ProviderFactory.get_llm()
 
@@ -55,8 +79,14 @@ async def generate_response(
     messages: list[dict] = [
         {"role": "system", "content": _resolve_system_prompt()},
         {"role": "system", "content": context},
-        *_history_to_messages(history),
     ]
+
+    rag_block = format_rag_context_block(rag_memories or [])
+    if rag_block:
+        messages.append({"role": "system", "content": rag_block})
+        logger.debug("RAG context injected (%s memories)", len(rag_memories or []))
+
+    messages.extend(_history_to_messages(history))
     _append_current_user_message(messages, message)
 
     max_tokens = (
