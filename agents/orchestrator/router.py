@@ -8,13 +8,19 @@ from agents.orchestrator.state import AgentState
 VALID_CHANNELS = frozenset({"telegram", "whatsapp", "voice", "video"})
 
 
-def build_initial_state(message: str, channel: str, user_id: str) -> AgentState:
+def build_initial_state(
+    message: str,
+    channel: str,
+    user_id: str,
+    *,
+    agent_context: dict | None = None,
+) -> AgentState:
     """Build a complete AgentState for graph invocation."""
     normalized_channel = channel.lower()
     if normalized_channel not in VALID_CHANNELS:
         raise ValueError(f"Unsupported channel: {channel}")
 
-    return {
+    state: AgentState = {
         "message": message,
         "channel": normalized_channel,
         "user_id": user_id,
@@ -25,6 +31,9 @@ def build_initial_state(message: str, channel: str, user_id: str) -> AgentState:
         "should_escalate": False,
         "conversation_history": [],
     }
+    if agent_context:
+        state.update(agent_context)
+    return state
 
 
 def route_after_escalation_check(state: AgentState) -> str:
@@ -40,6 +49,7 @@ async def route_message(
     user_id: str,
     *,
     notify_received: bool = False,
+    agent_context: dict | None = None,
 ) -> AgentState:
     """Run a message through the agent graph and return the final state."""
     from app.services.settings_sync import ensure_settings_fresh_async
@@ -59,7 +69,12 @@ async def route_message(
             },
         )
 
-    state = build_initial_state(message, normalized_channel, user_id)
+    state = build_initial_state(
+        message,
+        normalized_channel,
+        user_id,
+        agent_context=agent_context,
+    )
     return await agent_graph.ainvoke(state)
 
 

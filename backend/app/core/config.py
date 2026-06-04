@@ -79,8 +79,12 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "http://localhost:3000"
 
-    # Lead interaction status sweep (worker)
+    # Lead interaction status sweep (worker): acionado sem resposta → nao_atendido
     status_timeout_hours: int = 48
+
+    # Janela de conversa ativa outbound (inbound continua com o agente ACTIVE):
+    # encerra se (now - data_ultimo_contato) > N horas. Separado de status_timeout_hours.
+    active_conversation_timeout_hours: int = 24
 
     # Comportamento do agente (gerenciável via UI / app_settings)
     intent_temperature: float = 0.0

@@ -7,10 +7,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.channels.whatsapp.handler import WhatsAppHandler
+from app.core.authorization import raise_if_cannot_delete, raise_if_cannot_edit, raise_if_cannot_view
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user
@@ -62,12 +63,11 @@ def _build_voice_outbound_play_twiml(filename: str) -> str:
 async def _get_channel(
     channel_id: uuid.UUID, user: User, db: AsyncSession
 ) -> Channel:
-    result = await db.execute(
-        select(Channel).where(Channel.id == channel_id, Channel.user_id == user.id)
-    )
+    result = await db.execute(select(Channel).where(Channel.id == channel_id))
     channel = result.scalar_one_or_none()
     if channel is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+    raise_if_cannot_view(channel, user, not_found_detail="Channel not found")
     return channel
 
 
@@ -76,7 +76,9 @@ async def list_channels(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Channel]:
-    result = await db.execute(select(Channel).where(Channel.user_id == user.id))
+    result = await db.execute(
+        select(Channel).where(or_(Channel.is_system.is_(True), Channel.user_id == user.id))
+    )
     return list(result.scalars().all())
 
 
@@ -88,6 +90,7 @@ async def create_channel(
 ) -> Channel:
     channel = Channel(
         user_id=user.id,
+        name=payload.name,
         type=payload.type,
         credentials=payload.credentials,
         is_active=payload.is_active,
@@ -115,6 +118,7 @@ async def update_channel(
     db: AsyncSession = Depends(get_db),
 ) -> Channel:
     channel = await _get_channel(channel_id, user, db)
+    raise_if_cannot_edit(channel, user)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(channel, field, value)
     await db.commit()
@@ -129,6 +133,7 @@ async def delete_channel(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     channel = await _get_channel(channel_id, user, db)
+    raise_if_cannot_delete(channel, user)
     await db.delete(channel)
     await db.commit()
 

@@ -78,6 +78,7 @@ async def generate_response(state: AgentState) -> AgentState:
         state.get("conversation_history", []),
         state.get("channel", ""),
         rag_memories=rag_memories,
+        agent_personality=state.get("agent_personality"),
     )
     return {"response": text, "rag_memories": rag_memories}
 

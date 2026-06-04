@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.lead_base import LeadBaseSource
+
 
 class LeadBaseCreate(BaseModel):
     campaign_id: UUID
@@ -27,6 +29,8 @@ class LeadBaseResponse(BaseModel):
     column_mapping: dict[str, Any]
     channel_types: list[str]
     leads_count: int
+    source: LeadBaseSource = LeadBaseSource.MANUAL
+    is_system: bool = False
     created_at: datetime
 
 

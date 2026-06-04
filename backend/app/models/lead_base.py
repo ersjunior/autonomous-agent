@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Date, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,6 +16,11 @@ from app.models.base import Base
 if TYPE_CHECKING:
     from app.models.campaign import Campaign
     from app.models.lead import Lead
+
+
+class LeadBaseSource(str, enum.Enum):
+    IMPORT = "IMPORT"
+    MANUAL = "MANUAL"
 
 
 class LeadBaseChannel(Base):
@@ -44,6 +50,12 @@ class LeadBase(Base):
     data_inicio: Mapped[date | None] = mapped_column(Date, nullable=True)
     data_fim: Mapped[date | None] = mapped_column(Date, nullable=True)
     column_mapping: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    source: Mapped[LeadBaseSource] = mapped_column(
+        Enum(LeadBaseSource, name="lead_base_source"),
+        default=LeadBaseSource.MANUAL,
+        nullable=False,
+    )
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

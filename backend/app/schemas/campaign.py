@@ -28,6 +28,7 @@ class CampaignResponse(BaseModel):
     status: str
     channel_types: list[str]
     leads_count: int
+    is_system: bool = False
     created_at: datetime
 
 

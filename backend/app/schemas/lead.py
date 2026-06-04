@@ -43,6 +43,7 @@ class LeadResponse(BaseModel):
     telefone_2: str | None
     telefone_3: str | None
     aux_values: dict[str, Any]
+    is_system: bool = False
     created_at: datetime
 
 

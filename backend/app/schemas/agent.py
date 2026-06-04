@@ -33,4 +33,5 @@ class AgentResponse(BaseModel):
     mode: AgentMode
     status: str
     config: dict[str, Any]
+    is_system: bool = False
     created_at: datetime

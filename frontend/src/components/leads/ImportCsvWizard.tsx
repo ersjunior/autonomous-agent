@@ -9,11 +9,8 @@ import {
   buildPreviewRows,
   type CsvMappingResult,
 } from "@/lib/csv";
-import {
-  FIXED_LEAD_COLUMNS,
-  type Campaign,
-  sortAuxKeys,
-} from "@/lib/types/leads";
+import type { Campaign } from "@/lib/types/campaigns";
+import { FIXED_LEAD_COLUMNS, sortAuxKeys } from "@/lib/types/leads";
 
 interface ImportCsvWizardProps {
   open: boolean;

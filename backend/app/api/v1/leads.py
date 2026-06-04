@@ -3,15 +3,20 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.authorization import (
+    raise_if_cannot_delete_lead,
+    raise_if_cannot_edit_lead,
+    raise_if_cannot_view,
+)
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.campaign import Campaign
 from app.models.lead import Lead
-from app.models.lead_base import LeadBase
+from app.models.lead_base import LeadBase, LeadBaseSource
 from app.models.user import User
 from app.schemas.lead import LeadCreate, LeadResponse, LeadUpdate
 
@@ -22,11 +27,14 @@ async def _get_lead(
     lead_id: uuid.UUID, user: User, db: AsyncSession
 ) -> Lead:
     result = await db.execute(
-        select(Lead).where(Lead.id == lead_id, Lead.user_id == user.id)
+        select(Lead)
+        .options(selectinload(Lead.lead_base))
+        .where(Lead.id == lead_id)
     )
     lead = result.scalar_one_or_none()
     if lead is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    raise_if_cannot_view(lead, user, not_found_detail="Lead not found")
     return lead
 
 
@@ -44,6 +52,11 @@ async def _get_user_lead_base(
     lead_base = result.scalar_one_or_none()
     if lead_base is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead base not found")
+    if lead_base.source == LeadBaseSource.IMPORT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot add leads individually to an imported base",
+        )
     return lead_base
 
 
@@ -52,7 +65,9 @@ async def list_leads(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[Lead]:
-    result = await db.execute(select(Lead).where(Lead.user_id == user.id))
+    result = await db.execute(
+        select(Lead).where(or_(Lead.is_system.is_(True), Lead.user_id == user.id))
+    )
     return list(result.scalars().all())
 
 
@@ -99,6 +114,7 @@ async def update_lead(
     db: AsyncSession = Depends(get_db),
 ) -> Lead:
     lead = await _get_lead(lead_id, user, db)
+    raise_if_cannot_edit_lead(lead, user)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(lead, field, value)
     await db.commit()
@@ -113,5 +129,6 @@ async def delete_lead(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     lead = await _get_lead(lead_id, user, db)
+    raise_if_cannot_delete_lead(lead, user)
     await db.delete(lead)
     await db.commit()

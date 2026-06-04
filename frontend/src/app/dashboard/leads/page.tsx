@@ -6,13 +6,18 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { ImportCsvWizard } from "@/components/leads/ImportCsvWizard";
 import { LeadsTable } from "@/components/leads/LeadsTable";
 import { ManualLeadForm } from "@/components/leads/ManualLeadForm";
+import { deleteLeadBase } from "@/lib/api-entities";
 import { apiDownload, apiFetch } from "@/lib/api";
+import { canDeleteLeadBase, isImportLeadBase } from "@/lib/protection";
 import type {
   DevolutivaFile,
   LeadBase,
   LeadBaseListResponse,
   LeadListResponse,
 } from "@/lib/types/leads";
+import { Badge } from "@/components/ui/Badge";
+import { ConfirmDeleteModal } from "@/components/ui/ConfirmDeleteModal";
+import { SystemBadge } from "@/components/ui/SystemBadge";
 
 const PAGE_SIZE = 20;
 
@@ -31,6 +36,9 @@ export default function LeadsPage() {
   const [devolutivas, setDevolutivas] = useState<DevolutivaFile[]>([]);
   const [loadingDevolutivas, setLoadingDevolutivas] = useState(false);
   const [downloadingDevolutiva, setDownloadingDevolutiva] = useState(false);
+  const [deleteBaseOpen, setDeleteBaseOpen] = useState(false);
+  const [deletingBase, setDeletingBase] = useState(false);
+  const [success, setSuccess] = useState("");
 
   const loadLeadBases = useCallback(async () => {
     const token = localStorage.getItem("access_token");
@@ -192,6 +200,27 @@ export default function LeadsPage() {
     setShowManualForm(false);
   }
 
+  async function confirmDeleteBase() {
+    if (!selectedBaseId) {
+      return;
+    }
+    setDeletingBase(true);
+    setError("");
+    try {
+      await deleteLeadBase(selectedBaseId);
+      setSuccess("Base de leads excluída com todos os seus leads.");
+      setDeleteBaseOpen(false);
+      await loadLeadBases();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir base.");
+    } finally {
+      setDeletingBase(false);
+    }
+  }
+
+  const baseIsImport = isImportLeadBase(selectedBase?.source);
+  const canDeleteBase = canDeleteLeadBase(selectedBase);
+
   function handleColumnMappingUpdated(mapping: Record<string, string>) {
     setLeadBases((current) =>
       current.map((base) =>
@@ -217,7 +246,12 @@ export default function LeadsPage() {
               type="button"
               onClick={() => setShowManualForm((current) => !current)}
               className="btn-primary"
-              disabled={!selectedBase}
+              disabled={!selectedBase || baseIsImport}
+              title={
+                baseIsImport
+                  ? "Bases importadas não permitem inclusão manual de leads"
+                  : undefined
+              }
             >
               {showManualForm ? "Cancelar" : "Novo lead"}
             </button>
@@ -226,11 +260,23 @@ export default function LeadsPage() {
       />
 
       {error && <Alert>{error}</Alert>}
+      {success && <Alert variant="info">{success}</Alert>}
 
       <div className="glass-card mb-6 p-5">
-        <label htmlFor="leadBase" className="mb-2 block text-sm font-medium text-foreground">
-          Base de leads
-        </label>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <label htmlFor="leadBase" className="text-sm font-medium text-foreground">
+            Base de leads
+          </label>
+          {selectedBase && canDeleteBase && (
+            <button
+              type="button"
+              className="btn-secondary text-sm text-destructive"
+              onClick={() => setDeleteBaseOpen(true)}
+            >
+              Excluir base
+            </button>
+          )}
+        </div>
         {loadingBases ? (
           <p className="text-sm text-muted-foreground">Carregando bases...</p>
         ) : leadBases.length === 0 ? (
@@ -251,6 +297,17 @@ export default function LeadsPage() {
               </option>
             ))}
           </select>
+        )}
+
+        {selectedBase && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {selectedBase.is_system && <SystemBadge />}
+            <Badge variant={baseIsImport ? "warning" : "success"}>
+              {baseIsImport
+                ? "Importada (somente leitura)"
+                : "Manual (edição permitida)"}
+            </Badge>
+          </div>
         )}
 
         {selectedBase && (
@@ -319,6 +376,7 @@ export default function LeadsPage() {
       )}
 
       <LeadsTable
+        selectedBase={selectedBase}
         columnMapping={selectedBase?.column_mapping ?? {}}
         leads={leads}
         total={total}
@@ -330,6 +388,22 @@ export default function LeadsPage() {
             loadLeads(selectedBaseId, nextSkip);
           }
         }}
+        onRefresh={() => {
+          if (selectedBaseId) {
+            loadLeads(selectedBaseId, skip);
+          }
+        }}
+        onError={setError}
+      />
+
+      <ConfirmDeleteModal
+        open={deleteBaseOpen}
+        title="Excluir base de leads"
+        message={`Tem certeza? Todos os ${selectedBase?.leads_count ?? 0} lead(s) desta base serão apagados permanentemente. Esta ação não pode ser desfeita.`}
+        confirmLabel="Excluir base inteira"
+        loading={deletingBase}
+        onClose={() => setDeleteBaseOpen(false)}
+        onConfirm={confirmDeleteBase}
       />
 
       <ImportCsvWizard

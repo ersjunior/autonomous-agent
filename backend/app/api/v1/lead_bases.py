@@ -8,15 +8,16 @@ from io import BytesIO
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.authorization import raise_if_cannot_delete, raise_if_cannot_edit, raise_if_cannot_view
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.campaign import Campaign, CampaignChannel
 from app.models.lead import Lead
-from app.models.lead_base import LeadBase, LeadBaseChannel
+from app.models.lead_base import LeadBase, LeadBaseChannel, LeadBaseSource
 from app.models.user import User
 from app.schemas.lead import LeadListResponse, LeadResponse
 from app.schemas.lead_base import (
@@ -86,6 +87,10 @@ async def _validate_campaign_channels(
         )
 
 
+def _campaign_visibility_filter(user: User):
+    return or_(Campaign.is_system.is_(True), Campaign.user_id == user.id)
+
+
 async def _get_user_lead_base(
     lead_base_id: uuid.UUID,
     user: User,
@@ -93,13 +98,17 @@ async def _get_user_lead_base(
 ) -> LeadBase:
     result = await db.execute(
         select(LeadBase)
-        .options(selectinload(LeadBase.lead_base_channels))
+        .options(
+            selectinload(LeadBase.lead_base_channels),
+            selectinload(LeadBase.campaign),
+        )
         .join(Campaign)
-        .where(LeadBase.id == lead_base_id, Campaign.user_id == user.id)
+        .where(LeadBase.id == lead_base_id, _campaign_visibility_filter(user))
     )
     lead_base = result.scalar_one_or_none()
     if lead_base is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead base not found")
+    raise_if_cannot_view(lead_base, user, not_found_detail="Lead base not found")
     return lead_base
 
 
@@ -140,6 +149,7 @@ async def _create_lead_base_record(
     data_fim: date | None,
     column_mapping: dict[str, str],
     channel_types: list[str],
+    source: LeadBaseSource,
     db: AsyncSession,
 ) -> LeadBase:
     lead_base = LeadBase(
@@ -148,6 +158,7 @@ async def _create_lead_base_record(
         data_inicio=data_inicio,
         data_fim=data_fim,
         column_mapping=column_mapping,
+        source=source,
     )
     db.add(lead_base)
     await db.flush()
@@ -176,14 +187,14 @@ async def list_lead_bases(
         select(func.count())
         .select_from(LeadBase)
         .join(Campaign)
-        .where(Campaign.user_id == user.id)
+        .where(_campaign_visibility_filter(user))
     )
 
     result = await db.execute(
         select(LeadBase)
         .options(selectinload(LeadBase.lead_base_channels))
         .join(Campaign)
-        .where(Campaign.user_id == user.id)
+        .where(_campaign_visibility_filter(user))
         .order_by(LeadBase.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -219,12 +230,25 @@ async def create_lead_base(
         data_fim=payload.data_fim,
         column_mapping=payload.column_mapping,
         channel_types=channel_types,
+        source=LeadBaseSource.MANUAL,
         db=db,
     )
 
     await db.commit()
     await db.refresh(lead_base, attribute_names=["lead_base_channels"])
     return _to_lead_base_response(lead_base, leads_count=0)
+
+
+@router.delete("/{lead_base_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_lead_base(
+    lead_base_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    lead_base = await _get_user_lead_base(lead_base_id, user, db)
+    raise_if_cannot_delete(lead_base, user)
+    await db.delete(lead_base)
+    await db.commit()
 
 
 @router.post("/import", response_model=LeadBaseResponse, status_code=status.HTTP_201_CREATED)
@@ -263,6 +287,7 @@ async def import_lead_base_csv(
         data_fim=data_fim,
         column_mapping=column_mapping,
         channel_types=normalized_channels,
+        source=LeadBaseSource.IMPORT,
         db=db,
     )
 
@@ -294,6 +319,7 @@ async def update_lead_base_column_mapping(
     db: AsyncSession = Depends(get_db),
 ) -> LeadBaseResponse:
     lead_base = await _get_user_lead_base(lead_base_id, user, db)
+    raise_if_cannot_edit(lead_base, user)
     lead_base.column_mapping = payload.column_mapping
     await db.commit()
     await db.refresh(lead_base, attribute_names=["lead_base_channels"])

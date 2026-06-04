@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.services.avatar_video import gerar_video_avatar
 from app.services.voice_audio import gerar_audio_chamada
+from app.models.agent import AgentMode
 from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.models.lead_base import LeadBase
@@ -60,6 +61,28 @@ def _resolve_recipient(lead: Lead, channel_type: str) -> str | None:
     if channel in ("whatsapp", "voice"):
         return get_phone(lead)
     return None
+
+
+async def _block_non_active_outbound(
+    session: AsyncSession,
+    lead: Lead,
+    campaign: Campaign,
+    channel_type: str,
+) -> None:
+    """Registra bloqueio quando a campanha não usa agente ACTIVE."""
+    channel = channel_type.lower()
+    warning = (
+        f"Campanha {campaign.id} usa agente não-ACTIVE; disparo outbound bloqueado"
+    )
+    logger.warning("%s (lead=%s channel=%s)", warning, lead.id, channel)
+    await upsert_lead_interaction(
+        session,
+        lead.id,
+        campaign.id,
+        channel,
+        status="erro",
+        devolutiva=warning,
+    )
 
 
 async def _send_on_channel(
@@ -222,11 +245,45 @@ async def _send_campaign_message(lead_id: str, campaign_id: str) -> dict:
             raise ValueError(f"Lead {lead_id} not found")
 
         campaign_result = await session.execute(
-            select(Campaign).where(Campaign.id == uuid.UUID(campaign_id))
+            select(Campaign)
+            .options(selectinload(Campaign.agent))
+            .where(Campaign.id == uuid.UUID(campaign_id))
         )
         campaign = campaign_result.scalar_one_or_none()
         if campaign is None:
             raise ValueError(f"Campaign {campaign_id} not found")
+
+        if campaign.agent is None:
+            raise ValueError(f"Campaign {campaign_id} has no agent")
+
+        if campaign.agent.mode != AgentMode.ACTIVE:
+            if lead.lead_base is None or not lead.lead_base.lead_base_channels:
+                logger.warning(
+                    "Lead %s has no lead_base_channels; non-ACTIVE outbound block only logged",
+                    lead.id,
+                )
+                return {
+                    "lead_id": lead_id,
+                    "campaign_id": campaign_id,
+                    "channels": [],
+                    "blocked": True,
+                    "reason": "campaign_agent_not_active",
+                }
+            for base_channel in lead.lead_base.lead_base_channels:
+                await _block_non_active_outbound(
+                    session,
+                    lead,
+                    campaign,
+                    base_channel.channel_type,
+                )
+            await session.commit()
+            return {
+                "lead_id": lead_id,
+                "campaign_id": campaign_id,
+                "channels": [],
+                "blocked": True,
+                "reason": "campaign_agent_not_active",
+            }
 
         if lead.lead_base is None or not lead.lead_base.lead_base_channels:
             logger.warning("Lead %s has no lead_base_channels configured", lead.id)

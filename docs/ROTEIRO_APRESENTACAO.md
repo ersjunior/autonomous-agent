@@ -10,14 +10,16 @@
 |---------|-----|
 | Dashboard | http://localhost:3000 |
 | Login | http://localhost:3000/ (admin@admin.com / admin) |
-| Configurações | http://localhost:3000/dashboard/settings |
+| Agentes | http://localhost:3000/dashboard/agents |
+| Canais | http://localhost:3000/dashboard/channels |
 | Campanhas | http://localhost:3000/dashboard/campaigns |
 | Leads | http://localhost:3000/dashboard/leads |
+| Configurações | http://localhost:3000/dashboard/settings |
 | Métricas | http://localhost:3000/dashboard/metrics |
 | Monitoramento (eventos do grafo) | http://localhost:3000/dashboard/monitoring |
 | API Swagger | http://localhost:8000/docs |
 
-**Diagramas:** seção *Arquitetura* do [README.md](../README.md) (GitHub ou preview no IDE).
+**Diagramas e regras:** seções *Destaques de IA*, *Arquitetura* e *Regras de negócio* do [README.md](../README.md).
 
 ---
 
@@ -28,47 +30,39 @@
 - Uma frase de posicionamento; não abrir o terminal ainda.
 
 ### O que falar
-> "Este trabalho transforma um fluxo clássico de telemarketing em um **agente de IA autônomo**, omnichannel. O diferencial para a banca de **IA aplicada** é a pilha **multi-agente orquestrada por LangGraph**, com **RAG em pgvector**, **LLM e embeddings 100% locais** no Ollama, e síntese de **voz clonada** e **avatar em vídeo** sem depender de APIs pagas — com opção comercial só por configuração."
+> "Este trabalho transforma um fluxo clássico de telemarketing em um **agente de IA autônomo**, omnichannel. Para a banca de **IA aplicada**, o foco é a pilha **multi-agente LangGraph** com **RAG ativo no pgvector**, modelos **locais na GPU** (Ollama, Coqui, SadTalker) e **regras de domínio**: agentes **ATIVO/RECEPTIVO**, **roteamento por dono da conversa** e **proteção sistema vs usuário** (`is_system`, bases IMPORT)."
 
 ### O que a banca vê
-- Clareza do problema e do foco técnico (IA, não só CRUD).
+- Problema + contribuição técnica (IA + governança leve).
 
 ---
 
 ## 2. Arquitetura de IA (~3 min)
 
 ### O que fazer
-1. Abrir o **README** no GitHub (ou VS Code preview) na seção **Arquitetura**.
-2. Mostrar o **diagrama B** (grafo LangGraph) — zoom se possível.
-3. Mostrar o **diagrama D** (memória / RAG).
-4. Opcional: diagrama **A** (visão geral dos serviços).
+1. README — **Destaques de IA** e **Arquitetura**.
+2. **Diagrama B** — grafo + `retrieve_similar_memories` + `agent_personality`.
+3. **Diagrama D** — Redis + pgvector + roteamento.
+4. **Flowchart** em *Regras de negócio* — decisão ACTIVE/RECEPTIVE.
 
-### O que falar — Diagrama B (grafo)
-> "Cada mensagem entra por `route_message`. O grafo tem **dois agentes de LLM**: primeiro **classifica intenção** e extrai entidades com saída estruturada; depois decide se **escala para humano** ou **gera resposta**. O nó de resposta agora faz **recuperação RAG** no mesmo `user_id` antes de chamar o segundo LLM. Por fim, `send_response` grava o turno no **Redis** (curto prazo, 1 hora) e no **Postgres com embedding** (longo prazo)."
+### O que falar — Grafo
+> "Entrada única: `route_message`. Nós: `identify_intent` → `check_escalation` → (`escalate` | `generate_response`) → `send_response`. Em `generate_response`, **`LongTermMemory.retrieve_similar_memories`** filtra pelo **mesmo `user_id`** antes do LLM de resposta. No inbound, `inbound_handler` injeta a personalidade do agente de negócio escolhido por `resolve_inbound_agent`."
 
-**Nós para citar:** `identify_intent` → `check_escalation` → (`escalate` | `generate_response`) → `send_response`.
-
-### O que falar — Diagrama D (RAG)
-> "Memória **curta**: histórico da conversa atual em Redis. Memória **longa**: cada par pergunta-resposta vira vetor com `nomic-embed-text`. Na geração, buscamos conversas **antigas do mesmo cliente** por similaridade de cosseno no pgvector — **não misturamos leads**. Similaridade é `1 menos a distância` do operador `<=>`."
-
-### O que a banca vê
-- Separação clara: orquestração × modelos × memória × canais.
+### O que falar — Roteamento (visão)
+> "`conversation_routing.py`: outbound só se `campaign.agent.mode == ACTIVE`; inbound usa a `LeadInteraction` mais recente por `(lead, canal)` — conversa **aberta** se houve `data_acionamento`, status não terminal (`convertido`, `recusou`, `nao_atendido`, `erro`) e último contato dentro de `active_conversation_timeout_hours` (24h)."
 
 ### Plano B
-- Se o preview Mermaid falhar: usar captura de tela salva dos diagramas ou o PDF exportado do README.
+- Screenshots dos diagramas (README ou `docs/demo-assets/`).
 
 ---
 
 ## 3. Demo ao vivo — cérebro local + hot-reload (~3 min)
 
 ### O que fazer
-1. Terminal: `docker exec autonomous-agent-ollama ollama list` (prova local).
-2. Navegador: **Configurações** → aba **Texto (LLM)** — mostrar badge `ollama ativo`.
-3. Aba **Comportamento**: mostrar `agent_system_prompt`, temperaturas, `rag_top_k`, `rag_similarity_threshold`.
-4. Alterar algo leve (ex.: acrescentar uma linha no system prompt) → **Salvar** → mensagem de sucesso.
-5. (Opcional) **Monitoramento** — mostrar eventos `intent_detected` / `response_sent` após uma mensagem de teste.
-
-**Mensagem de teste sem Telegram** (terminal):
+1. `docker exec autonomous-agent-ollama ollama list`
+2. **Configurações** → Texto / Comportamento (`rag_top_k`, `rag_similarity_threshold`).
+3. Salvar alteração leve no prompt (hot-reload via Redis `settings_version`).
+4. (Opcional) **Monitoramento** após mensagem de teste.
 
 ```bash
 docker exec autonomous-agent-worker python -c "
@@ -81,179 +75,220 @@ asyncio.run(main())
 "
 ```
 
-### O que falar
-> "O LLM é o **llama3.1 no Ollama**, com GPU quando disponível. Provedores são trocados por variável de ambiente e pela tela **sem reiniciar Docker**: o backend publica versão no Redis e o worker recarrega `app_settings` a cada mensagem."
-
-### O que a banca vê
-- Modelo local listado; resposta em português; settings persistem.
-
 ### Plano B
-- **Ollama lento (cold start):** rodar `make warm-ollama` antes; ou mostrar resposta já copiada no bloco de notas.
-- **Timeout:** repetir com mensagem mais curta; verificar `docker logs autonomous-agent-ollama --tail 20`.
+- `make warm-ollama`; resposta pré-gravada.
 
 ---
 
 ## 4. Demo ao vivo — RAG (~3 min) ★ principal
 
-### O que fazer (sequência ensaiada)
+O script `backend/scripts/validate_rag.py` reproduz o que o grafo faz: seed no pgvector, busca semântica isolada, bloco injetado e `route_message` com Redis limpo.
 
-**Passo 1 — Limpar memória curta** (para não confundir com histórico Redis):
+### Sequência ensaiada
+
+**Passo 1 — Limpar memória curta** (evitar confundir Redis com RAG):
 
 ```bash
 docker exec autonomous-agent-redis redis-cli DEL chat:RAGTEST
 ```
 
-**Passo 2 — Rodar validação** (seed + busca + resposta):
+**Passo 2 — Rodar validação:**
 
 ```bash
 docker cp backend/scripts/validate_rag.py autonomous-agent-worker:/tmp/validate_rag.py
 docker exec autonomous-agent-worker python /tmp/validate_rag.py
 ```
 
-**Passo 3 — Destacar na saída do terminal:**
-- Linhas `sim=0.xx` com mensagens antigas (horário, domingo, cancelamento).
-- `Bloco RAG injetado? SIM` e trecho do texto "Conversas anteriores relevantes...".
-- `Vazamento: NAO (OK)`.
-- Resposta final mencionando **9h** ou horário de funcionamento.
-- `rag_memories no state: 3` (ou > 0).
+**Passo 3 — Destacar na saída (na ordem do script):**
 
-**Passo 4 (opcional, UI):** Configurações → Comportamento → `rag_similarity_threshold` = `0.9` → Salvar → rerodar só a query; mostrar 0 memórias. Voltar threshold para `0` ou `0.5`.
+| Etapa do script | O que mostrar |
+|-----------------|---------------|
+| Seed | 3 pares para `RAGTEST` + 1 interação `OTHERUSER` (prova de isolamento) |
+| `get_similar` | Linhas `sim=… dist=…` — pergunta antiga sobre horário próxima de *"Que horas vocês abrem?"* |
+| Bloco RAG | `Bloco RAG injetado? SIM` + trecho *"Conversas anteriores relevantes…"* |
+| Isolamento | `Vazamento: NAO (OK)` — `OTHERUSER` não aparece na busca de `RAGTEST` |
+| Threshold | Com `0.9` → 0 resultados; com `0` → várias memórias (comportamento da UI) |
+| `route_message` | Resposta citando **9h–18h** sem colar no prompt; `rag_memories no state:` ≥ 1 |
+
+**Passo 4 (opcional):** Settings → `rag_similarity_threshold` = `0.9` → Salvar → rerodar só a query; voltar threshold.
 
 ### O que falar
-> "Gravamos três atendimentos **passados** só no Postgres. O Redis deste contato está **vazio** — não há histórico imediato. A pergunta nova — 'Que horas vocês abrem?' — é semanticamente próxima da pergunta antiga sobre horário. O sistema **recupera** essas linhas, monta um bloco extra no prompt e o LLM responde alinhado ao que já foi dito — **9h às 18h**, sem eu ter colado isso na pergunta. Outro `user_id` no banco **não aparece** na busca: isolamento por cliente."
-
-### O que a banca vê
-- Evidência numérica (similaridade) + resposta coerente + isolamento.
+> "Memória longa só no Postgres; Redis deste `user_id` está vazio. A busca usa **similaridade = 1 − distância cossena** (`<=>` no pgvector) com `WHERE user_id = $1` — mesmo filtro que `retrieve_similar_memories` no nó `generate_response`. O LLM recebe o bloco RAG e responde alinhado ao atendimento passado, **sem vazar** o cliente `OTHERUSER`."
 
 ### Plano B
-- **Script falha:** mostrar log de uma execução bem-sucedida gravada (screenshot) + explicar o código em `graph.py` / `long_term.py`.
-- **0 memórias:** conferir `EMBEDDING_DIMENSIONS=768`; rodar seed de novo; threshold muito alto.
-- **Resposta genérica:** aumentar `rag_top_k`; baixar threshold; repetir após `warm-ollama`.
+- Arquivo `docs/demo-assets/validate-rag-output.txt` (saída completa de um ensaio bem-sucedido).
+- Trecho de `agents/orchestrator/graph.py` (chamada RAG) + `agents/memory/long_term.py` (`get_similar`).
 
 ---
 
-## 5. Demo ao vivo — voz clonada (~2 min)
+## 5. Demo ao vivo — Roteamento de agentes ATIVO/RECEPTIVO (~2–3 min) ★ IA + negócio
 
-### O que fazer
-1. http://localhost:3000/dashboard/settings → aba **Áudio (STT/TTS)**.
-2. Coluna **Voz de referência**: player do `reference.wav` (se existir).
-3. Coluna **Testar voz**: texto padrão ou customizado, ex.:  
-   *"Olá! Esta é a minha voz clonada em português, gerada pelo Coqui XTTS."*
-4. Clicar **Gerar e ouvir** — aguardar ~10–20 s — player MP3.
+### A regra (antes do terminal)
 
-### O que falar
-> "O TTS é **Coqui XTTS-v2** com **clonagem** a partir de um WAV de referência. O mesmo áudio alimenta campanhas de **voz outbound** via Twilio: o worker gera MP3, expõe URL pública e o TwiML usa `<Play>`. STT local é faster-whisper para a fase inbound de voz, ainda em roadmap."
+| Fluxo | Regra |
+|-------|--------|
+| **Outbound** | Só agente **ACTIVE** da campanha dispara; `set_acionamento` na `LeadInteraction`. Agente **RECEPTIVE** → `_send_campaign_message` retorna `blocked=True` (sem envio). |
+| **Inbound — conversa aberta** | `is_active_conversation_open`: `data_acionamento` + status não terminal + inatividade ≤ 24h → agente **ACTIVE** (da campanha se for ACTIVE, senão seed `Agente_Ativo`). |
+| **Inbound — primeiro contato ou encerrada** | Status terminal, sem acionamento ou inatividade > 24h → agente **RECEPTIVE** (campanha RECEPTIVE ou seed `Agente_Receptivo`). |
+| **Lead desconhecido** | `lead=None` → sempre `Agente_Receptivo`. |
 
-### O que a banca vê
-- Áudio em PT com timbre da amostra.
+**Dono da conversa:** o outbound **ACTIVE** que acionou (`data_acionamento`) mantém o atendimento inbound **enquanto a conversa estiver aberta** — o cliente volta para o mesmo perfil proativo, não para o receptivo genérico. Quando a conversa **encerra** (terminal ou timeout), o próximo inbound é **novo ciclo** → RECEPTIVE.
 
-### Plano B
-- **Sem reference.wav:** upload pela UI antes da banca; ou arquivo em `infra/docker/coqui-tts/voices/reference.wav`.
-- **Coqui down:** `curl http://localhost:18002/health` (ou porta do `.env`); MP3 pré-gravado no notebook.
-- **Erro 503 no teste:** ver smoke test Coqui `model_loaded: true`.
+> Dois timeouts: `active_conversation_timeout_hours` (24h, roteamento) ≠ `status_timeout_hours` (48h, sweep Celery → `nao_atendido`).
 
----
-
-## 6. Demo ao vivo — avatar em vídeo (~2 min)
-
-### O que fazer
-
-**Opção A — UI (recomendada na sala):**
-1. Configurações → aba **Avatar / Vídeo**.
-2. Preview da foto (`default.png` ou upload).
-3. Texto de teste → **Gerar e ver vídeo** — aguardar **~20–30 s**.
-4. Player `<video>` no navegador.
-
-**Opção B — Telegram (impacto visual):**
-- Ter `TELEGRAM_BOT_TOKEN` e `chat_id` de teste no `.env`.
-- Vídeo pré-enviado na conversa **ou** comando rápido:
+### Demo ao vivo
 
 ```bash
-docker exec autonomous-agent-worker python -c "
-import asyncio
-from app.services.settings_sync import ensure_settings_fresh_async
-from app.services.avatar_video import gerar_video_avatar
-from agents.channels.telegram.client import send_telegram_video
-from app.core.config import settings
-
-async def go():
-    await ensure_settings_fresh_async()
-    fn = await gerar_video_avatar('Olá! Demonstração do avatar em português para a banca.')
-    path = f'{settings.avatar_video_root}/{fn}'
-    await send_telegram_video('SEU_CHAT_ID', path, caption='TCC - Avatar SadTalker')
-    print('ok', fn)
-
-asyncio.run(go())
-"
+docker cp backend/scripts/validate_phase4_routing.py autonomous-agent-backend:/tmp/validate_phase4_routing.py
+docker exec autonomous-agent-backend python /tmp/validate_phase4_routing.py
 ```
 
-### O que falar
-> "Pipeline: texto → **Coqui** (áudio) → **SadTalker** na **GPU** (lip-sync sobre foto do rosto) → MP4. No outbound, o canal `video` envia o arquivo pelo **Telegram**. Provedor comercial **D-ID** existe, mas o padrão do trabalho é **local**."
+**Cinco cenários (linhas com `OK=True`):**
 
-### O que a banca vê
-- Rosto animado com áudio em português.
+| Cenário | O que o script faz | Resultado esperado |
+|---------|-------------------|-------------------|
+| **A** | `resolve_inbound_agent(session, None, "whatsapp")` | `Agente_Receptivo`, `mode=RECEPTIVE` |
+| **B** | `LeadInteraction` `acionado` + `data_acionamento` agora | `open=True`, agente **ACTIVE** |
+| **C** | Status `convertido` (terminal) | Agente **RECEPTIVE** |
+| **D** | `data_ultimo_contato` > `active_conversation_timeout_hours` | `open=False`, **RECEPTIVE** |
+| **E** | Campanha com `Agente_Receptivo` + `_send_campaign_message` | `blocked=True`, `channels=0` |
+
+> Se aparecer `B–E SKIP: nenhuma campanha no banco`, criar uma campanha mínima no dashboard antes da banca (o script precisa de campanha/lead para B–D).
+
+### O que falar
+> "Não é só prompt: `resolve_inbound_agent` lê o **estado da conversa** na `LeadInteraction` mais recente por canal. O agente que **iniciou** o relacionamento ativo continua **dono** enquanto `is_active_conversation_open` for verdadeiro — isso evita que um retorno pós-campanha caia no receptivo genérico no meio do funil. O script `validate_phase4_routing.py` é a prova automatizada dos cinco casos."
 
 ### Plano B
-- **SadTalker lento ou unhealthy:** MP4 gravado de ensaio anterior; screenshot do Telegram.
-- **Sem GPU:** explicar limitação; mostrar endpoint `GET /api/v1/channels/avatar-video/{uuid}.mp4` no Swagger.
-- **Falha upload imagem:** usar `default.png` versionado em `infra/docker/sadtalker/avatars/`.
+- `docs/demo-assets/validate-phase4-routing-output.txt` (saída com todos `OK=True`).
+- Flowchart do README + log `Inbound routing: open active conversation…` do worker.
 
 ---
 
-## 7. Aplicação de negócio (~2 min)
+## 6. Demo ao vivo — Modelo de propriedade (sistema vs usuário) (~2 min)
 
-### O que fazer (rápido, 1–2 telas cada)
-1. **Leads** — base importada ou criar campanha com CSV (mapeamento `aux1`, telefones, `telegram_id`).
-2. **Campanhas** — canais `whatsapp`, `telegram`, `voice`, `video`; botão iniciar (se Twilio/Telegram configurados).
-3. **Métricas** — gráficos por campanha/base.
-4. **Devolutiva** — download Excel (ou mencionar geração diária via Celery Beat).
+### O que fazer (navegador + API)
+
+**1. Seeds visíveis (admin)**  
+- http://localhost:3000/dashboard/agents — **Agente_Ativo**, **Agente_Receptivo**: selo **Padrão do sistema**, ações só **Visualizar** (descrição longa no modal).  
+- http://localhost:3000/dashboard/channels — **WhatsApp_Agent**, **Telegram_Agent**, **Voice_Agent**, **Video_Agent**: mesmo selo; **Visualizar** mostra credenciais **mascaradas** (`lib/credentials.ts`).
+
+**2. Registro próprio com CRUD**  
+- Criar agente ou canal com nome próprio → **Editar** e **Excluir** habilitados.
+
+**3. Prova API — 403 em sistema** (Swagger ou terminal):
+
+```bash
+# Token admin (JSON)
+curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@admin.com","password":"admin"}'
+
+# Copiar access_token; listar agentes; PUT no Agente_Ativo (is_system=true)
+curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/agents/<UUID_AGENTE_ATIVO>" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"TentativaHack"}'
+```
+
+- Passou: **403** com detalhe *"Registro padrão do sistema não pode ser editado"* (`authorization.py` → `raise_if_cannot_edit`).
+
+**4. (Opcional) Multi-usuário**  
+- Registrar `user2@test.com` → user2 **vê** seeds + **cria** canal próprio; PUT no seed → 403; não vê campanhas do admin.
+
+**5. Leads (30 s)**  
+- Base **IMPORT**: badge somente leitura; **Excluir base** OK. Base **MANUAL**: editar lead.
 
 ### O que falar
-> "A camada de negócio **dispara** o mesmo cérebro de IA: campanha ativa enfileira Celery, cada canal usa o grafo e depois o adaptador — texto, MP3 ou vídeo. **LeadInteraction** rastreia status; **devolutiva** consolida em Excel para o gestor. Isso sustenta o experimento; o contribuição de IA está no grafo, RAG e multimodal local."
-
-### O que a banca vê
-- Produto completo, não só notebook.
+> "**Multi-tenancy leve**: listagens `is_system OR user_id == eu` (`authorization.py`). Registros padrão são **referência global imutável** — ninguém altera o playbook do sistema, mas qualquer usuário pode montar campanha com `agent_id` de agente sistema (`can_view`). Dados privados ficam isolados por dono."
 
 ### Plano B
-- Sem Twilio: pular disparo real; mostrar fila no log do worker ou métricas de bases já populadas.
+- Screenshots das telas com selo; print do 403 no Swagger.
 
 ---
 
-## 8. Fechamento (~1 min)
+## 7. Demo ao vivo — voz clonada (~2 min)
+
+1. Settings → **Áudio** — `reference.wav` + **Gerar e ouvir** (~10–20 s).
 
 ### O que falar
-> "Entregamos **quatro canais**, **dois agentes** no LangGraph, **RAG por cliente** no pgvector, stack **open source** com GPU, e **providers agnósticos**. Limitações honestas: inbound de voz/vídeo e Telegram polling não estão no Compose automático; SadTalker exige NVIDIA. Próximos passos: inbound multimodal, fine-tuning, escalar workers."
+> "Coqui XTTS com clonagem; outbound voz usa MP3 + Twilio `<Play>`."
 
-### O que a banca vê
-- Mapa mental fechado: IA + aplicação + limites.
+### Plano B
+- `docs/demo-assets/voz-demo.mp3`
+
+---
+
+## 8. Demo ao vivo — avatar em vídeo (~2 min)
+
+- Settings → **Avatar / Vídeo** → **Gerar e ver vídeo** (~20–30 s), ou MP4/Telegram pré-enviado.
+
+### Plano B
+- `docs/demo-assets/avatar-demo.mp4`
+
+---
+
+## 9. Aplicação de negócio (~1 min)
+
+- **Campanhas** — `Agente_Ativo` no `agent_id`; aviso se RECEPTIVE; **Iniciar** (se Twilio configurado).
+- **Métricas / devolutiva** — uma tela.
+
+### O que falar
+> "A camada operacional **dispara** o mesmo grafo; `LeadInteraction` e devolutiva Excel fecham o ciclo para o gestor."
+
+---
+
+## 10. Fechamento (~1 min)
+
+> "Entregamos **RAG ativo** (script + grafo), **roteamento por dono da conversa** (ACTIVE/RECEPTIVE), **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py` e `validate_phase4_routing.py` são evidência de regressão para a defesa."
 
 ---
 
 ## Perguntas prováveis da banca + respostas
 
-### Por que IA local em vez de API paga?
-> "Reprodutibilidade para o TCC, **custo zero** em inferência, dados no ambiente controlado e alinhamento com o tema open source. OpenAI/ElevenLabs/D-ID são **plugáveis** pelo `ProviderFactory` quando a operação exige qualidade máxima."
+### Por que IA local?
+> "Reprodutibilidade, custo zero em inferência, dados no ambiente controlado. OpenAI/ElevenLabs/D-ID via `ProviderFactory` quando necessário."
+
+### Como decidem qual agente atende cada contato?
+> "**Dono da conversa** em `conversation_routing.py`: outbound ACTIVE abre com `data_acionamento`; inbound reutiliza esse ACTIVE enquanto `is_active_conversation_open`; senão RECEPTIVE (ou desconhecido → seed `Agente_Receptivo`). Escopo: última `LeadInteraction` por `(lead_id, channel_type)`."
+
+### O agente ativo pode atender inbound?
+> "**Sim, mas só** se for a conversa que **ele** (ou a campanha ACTIVE vinculada) abriu e que ainda está **aberta**. **Primeiro contato** ou conversa **encerrada** vai para o **RECEPTIVE** — não mistura funil ativo com triagem passiva."
+
+### Como protegem os registros padrão do sistema?
+> "Campo `is_system=true` + `authorization.py`: `can_edit`/`can_delete` falsos para todos; API retorna **403**; UI com selo **Padrão do sistema** e só visualizar. Seeds idempotentes no lifespan (`seed_default_channels`, `seed_default_agents`, `ensure_seed_flags`)."
+
+### O RAG está ativo de verdade?
+> "**Sim.** `generate_response` em `graph.py` chama `retrieve_similar_memories` antes do `response_agent`. Prova ao vivo: `validate_rag.py` — `get_similar` com `sim=…`, bloco injetado, `route_message` com `rag_memories` ≥ 1 e `Vazamento: NAO`."
+
+### Como isolam dados entre usuários?
+> "Listagens: `or_(is_system, user_id == current_user)` em agents/channels/campaigns/leads; lead_bases via campanha visível. Registros do usuário B **não** aparecem para A. RAG/pgvector: filtro **`user_id` do contato no canal**, não do usuário logado."
 
 ### Como o RAG evita misturar clientes?
-> "Toda busca em `get_similar` filtra `WHERE user_id = $1`. O `user_id` do grafo é o identificador do contato no canal (telefone, Telegram id). Outro cliente **nunca** entra no prompt."
+> "`WHERE user_id = $1` em `get_similar`; `user_id` estável (telefone / `telegram_id`). Script grava `OTHERUSER` e confirma que não vaza na busca de `RAGTEST`."
+
+### ATIVO vs RECEPTIVE — por que dois agentes de campanha?
+> "Separa **disparo proativo** (ACTIVE, abre conversa) de **triagem/receptivo** (RECEPTIVE). Distinto dos dois workers LangGraph (intenção vs resposta). `description` vira `agent_personality` no prompt."
+
+### O que é conversa ativa aberta?
+> "Todas verdadeiras: existe `LeadInteraction`; `data_acionamento` preenchido; status ∉ {`convertido`,`recusou`,`nao_atendido`,`erro`}; `(agora − data_ultimo_contato) ≤ 24h` (`is_active_conversation_open`)."
+
+### Leads importados podem ser editados?
+> "Lead individual: **não** (`LeadBase.source=IMPORT` → 403). **Excluir a base inteira**: sim (`DELETE /lead-bases/{id}`)."
+
+### Dois agentes LangGraph vs dois Agent no banco?
+> "LangGraph: pipeline técnico. `Agent` ACTIVE/RECEPTIVE: persona + regra de quem dispara e quem atende inbound."
 
 ### Distância ou similaridade no pgvector?
-> "O operador `<=>` devolve **distância** cosseno (0 = igual). Usamos **similaridade = 1 − distância** no SQL e no threshold da UI. Mantemos se `similaridade >= rag_similarity_threshold`."
+> "Similaridade = 1 − distância cosseno; threshold `rag_similarity_threshold` na UI/`app_settings`."
 
-### Como trocar modelo sem downtime?
-> "Variáveis em `.env` ou tela **Configurações** → `app_settings` + Redis `settings_version` → worker/backend recarregam em até ~30 s ou na próxima mensagem. **Não** é preciso `docker compose restart` para prompt/temperatura/provider."
+### Hot-reload de settings?
+> "`app_settings` + Redis `settings_version`; worker recarrega sem restart de container."
 
-### Quais limitações conhecidas?
-> "SadTalker depende de GPU; primeira geração ~20–30 s; RAG ranking pode priorizar frase semanticamente vizinha; voz outbound Twilio trial pode pedir tecla; embeddings gravados com mensagem+resposta, busca só com mensagem atual."
+### Limitações?
+> "GPU SadTalker; 2 LLM + RAG por mensagem; Twilio trial; Telegram polling manual; cenário E do script precisa de campanha no DB para B–D."
 
-### E escalabilidade?
-> "Arquitetura **stateless** no API, filas Celery horizontais, Postgres e Redis externos. Gargalos: GPU para Ollama/SadTalker, latência do grafo (2 chamadas LLM + RAG). Sharding natural por `user_id` no RAG."
-
-### Por que dois agentes e não um prompt só?
-> "Separa **classificação estruturada** (intenção, entidades, confiança, escalação) da **geração livre**, reduz alucinação na rota crítica e permite temperatura 0 na intenção e 0.7 na resposta."
-
-### O RAG substitui o Redis?
-> "Não. Redis = conversa **atual** (minutos). pgvector = histórico **entre sessões**. O prompt deixa explícito que o bloco RAG são 'conversas anteriores'."
+### Escalabilidade?
+> "API stateless, Celery horizontal; gargalos GPU Ollama/SadTalker."
 
 ---
 
@@ -261,25 +296,29 @@ asyncio.run(go())
 
 | Demo | Fallback |
 |------|----------|
-| Diagramas | Screenshots no README |
+| Diagramas | Screenshots / `docs/demo-assets/diagrama-*.png` |
 | Ollama / grafo | Log + resposta pré-gravada |
-| RAG | Saída salva de `validate_rag.py` |
-| Voz | MP3 pré-gerado na UI |
-| Avatar | MP4 + print Telegram |
-| Campanha | Métricas/devolutiva de base antiga |
+| **RAG** | **`docs/demo-assets/validate-rag-output.txt`** |
+| **Roteamento** | **`docs/demo-assets/validate-phase4-routing-output.txt`** + flowchart README |
+| Voz / Avatar | `voz-demo.mp3` / `avatar-demo.mp4` |
+| Propriedade UI | Screenshots agentes/canais + print 403 |
+| Campanha real | Métricas de base antiga |
+
+**Gerar os `.txt` antes da banca:** rodar os dois scripts uma vez com smoke verde e redirecionar a saída para `docs/demo-assets/` (ver [demo-assets/README.md](demo-assets/README.md)).
 
 ---
 
 ## Checklist do apresentador (5 min antes)
 
 - [ ] `docs/SMOKE_TEST.md` todo verde
-- [ ] `make warm-ollama` executado
+- [ ] `make warm-ollama`
 - [ ] `redis-cli DEL chat:RAGTEST`
-- [ ] `validate_rag.py` copiado no worker
-- [ ] Abas do browser abertas: Settings, README diagramas, (opcional) Telegram
-- [ ] Áudio do notebook testado; volume OK
-- [ ] MP4/MP3 de fallback na pasta `docs/demo-assets/` (opcional)
+- [ ] Scripts copiados no container; saídas salvas em `docs/demo-assets/` (Plano B)
+- [ ] Campanha existente no DB (para cenários B–D do routing)
+- [ ] Browser: Settings, Agentes, Canais, README
+- [ ] (Opcional) `user2@test.com` para isolamento
+- [ ] MP3/MP4 fallback
 
 ---
 
-*Última revisão alinhada ao código: grafo com RAG em `generate_response`, script `backend/scripts/validate_rag.py`, URLs e comandos do `Makefile` na raiz do repositório.*
+*Alinhado ao README, `validate_rag.py`, `validate_phase4_routing.py`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`.*

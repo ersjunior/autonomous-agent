@@ -1,15 +1,17 @@
 """Campaign CRUD API routes."""
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.authorization import can_view, raise_if_cannot_delete, raise_if_cannot_edit, raise_if_cannot_view
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.agent import Agent
+from app.models.agent import Agent, AgentMode
 from app.models.campaign import Campaign, CampaignChannel
 from app.models.lead import Lead
 from app.models.lead_base import LeadBase
@@ -25,6 +27,7 @@ from app.services.metrics import get_campaign_metrics
 from worker.tasks.outbound_campaign import send_campaign_message
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
+logger = logging.getLogger(__name__)
 
 
 def _normalize_channel_types(channel_types: list[str]) -> list[str]:
@@ -55,23 +58,28 @@ async def _get_campaign(
     result = await db.execute(
         select(Campaign)
         .options(selectinload(Campaign.campaign_channels))
-        .where(Campaign.id == campaign_id, Campaign.user_id == user.id)
+        .where(Campaign.id == campaign_id)
     )
     campaign = result.scalar_one_or_none()
     if campaign is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    raise_if_cannot_view(campaign, user, not_found_detail="Campaign not found")
     return campaign
 
 
-async def _get_user_agent(
+async def _get_agent_for_reference(
     agent_id: uuid.UUID, user: User, db: AsyncSession
 ) -> Agent:
-    result = await db.execute(
-        select(Agent).where(Agent.id == agent_id, Agent.user_id == user.id)
-    )
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
-    if agent is None:
+    if agent is None or not can_view(agent, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if agent.mode == AgentMode.RECEPTIVE:
+        logger.warning(
+            "Campaign references RECEPTIVE agent %s (%s); outbound dispatch will be blocked",
+            agent.id,
+            agent.name,
+        )
     return agent
 
 
@@ -96,7 +104,7 @@ async def list_campaigns(
     result = await db.execute(
         select(Campaign)
         .options(selectinload(Campaign.campaign_channels))
-        .where(Campaign.user_id == user.id)
+        .where(or_(Campaign.is_system.is_(True), Campaign.user_id == user.id))
     )
     campaigns = list(result.scalars().unique().all())
     return [_to_campaign_response(campaign) for campaign in campaigns]
@@ -108,7 +116,7 @@ async def create_campaign(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CampaignResponse:
-    await _get_user_agent(payload.agent_id, user, db)
+    await _get_agent_for_reference(payload.agent_id, user, db)
     channel_types = _normalize_channel_types(payload.channel_types)
 
     campaign = Campaign(
@@ -153,11 +161,12 @@ async def update_campaign(
     db: AsyncSession = Depends(get_db),
 ) -> CampaignResponse:
     campaign = await _get_campaign(campaign_id, user, db)
+    raise_if_cannot_edit(campaign, user)
     data = payload.model_dump(exclude_unset=True)
 
     channel_types = data.pop("channel_types", None)
     if "agent_id" in data:
-        await _get_user_agent(data["agent_id"], user, db)
+        await _get_agent_for_reference(data["agent_id"], user, db)
 
     for field, value in data.items():
         setattr(campaign, field, value)
@@ -177,6 +186,7 @@ async def start_campaign(
     db: AsyncSession = Depends(get_db),
 ) -> CampaignStartResponse:
     campaign = await _get_campaign(campaign_id, user, db)
+    raise_if_cannot_edit(campaign, user)
 
     if campaign.status not in ("draft", "paused"):
         raise HTTPException(
@@ -219,5 +229,6 @@ async def delete_campaign(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     campaign = await _get_campaign(campaign_id, user, db)
+    raise_if_cannot_delete(campaign, user)
     await db.delete(campaign)
     await db.commit()

@@ -67,6 +67,7 @@ async def generate_response(
     history: list[dict],
     channel: str,
     rag_memories: list[dict] | None = None,
+    agent_personality: str | None = None,
 ) -> str:
     llm = ProviderFactory.get_llm()
 
@@ -80,6 +81,8 @@ async def generate_response(
         {"role": "system", "content": _resolve_system_prompt()},
         {"role": "system", "content": context},
     ]
+    if agent_personality:
+        messages.insert(1, {"role": "system", "content": agent_personality})
 
     rag_block = format_rag_context_block(rag_memories or [])
     if rag_block:

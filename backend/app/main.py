@@ -13,7 +13,12 @@ from sqlalchemy import text
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, engine
-from app.core.seed import seed_default_admin
+from app.core.seed import (
+    ensure_seed_flags,
+    seed_default_admin,
+    seed_default_agents,
+    seed_default_channels,
+)
 from app.services.settings_sync import bootstrap_settings
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -35,6 +40,9 @@ async def lifespan(app: FastAPI):
 
     async with AsyncSessionLocal() as db:
         await seed_default_admin(db)
+        await seed_default_channels(db)
+        await seed_default_agents(db)
+        await ensure_seed_flags(db)
 
     await bootstrap_settings()
 

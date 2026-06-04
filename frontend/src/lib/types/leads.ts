@@ -9,8 +9,11 @@ export interface Lead {
   telefone_2?: string | null;
   telefone_3?: string | null;
   aux_values: Record<string, string>;
+  is_system?: boolean;
   created_at: string;
 }
+
+export type LeadBaseSource = "IMPORT" | "MANUAL";
 
 export interface LeadListResponse {
   items: Lead[];
@@ -28,6 +31,8 @@ export interface LeadBase {
   column_mapping: Record<string, string>;
   channel_types: string[];
   leads_count: number;
+  source?: LeadBaseSource;
+  is_system?: boolean;
   created_at: string;
 }
 
@@ -44,15 +49,6 @@ export interface LeadBaseListResponse {
   limit: number;
 }
 
-export interface Campaign {
-  id: string;
-  name: string;
-  agent_id: string;
-  channel_types: string[];
-  status: string;
-  leads_count: number;
-  created_at: string;
-}
 
 export const FIXED_LEAD_COLUMNS = [
   { key: "id_cliente", label: "ID Cliente" },
