@@ -70,14 +70,22 @@ class LongTermMemory:
         self,
         user_id: str,
         query: str,
-        limit: int = 5,
+        limit: int | None = None,
     ) -> list[dict]:
+        top_k = settings.rag_top_k if limit is None else limit
+        if top_k <= 0:
+            return []
+
+        threshold = settings.rag_similarity_threshold
+        fetch_limit = top_k * 3 if threshold > 0 else top_k
+
         query_embedding = await self._embed(query)
         pool = await self._get_pool()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, user_id, message, response, intent, created_at
+                SELECT id, user_id, message, response, intent, created_at,
+                       (1 - (embedding <=> $2)) AS similarity
                 FROM interactions
                 WHERE user_id = $1
                 ORDER BY embedding <=> $2
@@ -85,17 +93,26 @@ class LongTermMemory:
                 """,
                 user_id,
                 query_embedding,
-                limit,
+                fetch_limit,
             )
 
-        return [
-            {
-                "id": str(row["id"]),
-                "user_id": row["user_id"],
-                "message": row["message"],
-                "response": row["response"],
-                "intent": row["intent"],
-                "created_at": row["created_at"].isoformat(),
-            }
-            for row in rows
-        ]
+        results: list[dict] = []
+        for row in rows:
+            similarity = float(row["similarity"])
+            if threshold > 0 and similarity < threshold:
+                continue
+            results.append(
+                {
+                    "id": str(row["id"]),
+                    "user_id": row["user_id"],
+                    "message": row["message"],
+                    "response": row["response"],
+                    "intent": row["intent"],
+                    "created_at": row["created_at"].isoformat(),
+                    "similarity": similarity,
+                }
+            )
+            if len(results) >= top_k:
+                break
+
+        return results

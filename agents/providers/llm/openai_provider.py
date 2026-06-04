@@ -41,12 +41,16 @@ class OpenAILLMProvider(LLMProvider):
         messages: list[dict[str, Any]],
         temperature: float = 0.7,
         structured_output_schema: type[BaseModel] | None = None,
+        max_tokens: int | None = None,
     ) -> str | BaseModel:
-        llm = ChatOpenAI(
-            model=settings.openai_model,
-            api_key=settings.openai_api_key,
-            temperature=temperature,
-        )
+        llm_kwargs: dict[str, Any] = {
+            "model": settings.openai_model,
+            "api_key": settings.openai_api_key,
+            "temperature": temperature,
+        }
+        if max_tokens is not None and max_tokens > 0:
+            llm_kwargs["max_tokens"] = max_tokens
+        llm = ChatOpenAI(**llm_kwargs)
         lc_messages = _to_langchain_messages(messages)
         if structured_output_schema is not None:
             structured_llm = llm.with_structured_output(structured_output_schema)

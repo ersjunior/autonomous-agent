@@ -8,7 +8,8 @@ COMPOSE := $(COMPOSE_DEV)
 up:
 	$(COMPOSE) up -d --build
 
-COMPOSE_OPENSOURCE := docker compose --env-file .env.local -f $(COMPOSE_BASE) --profile opensource
+# Mesma stack do compose principal; usa .env.local se existir (cópia de .env.example).
+COMPOSE_OPENSOURCE := docker compose --env-file .env.local -f $(COMPOSE_BASE) -f infra/docker/docker-compose.dev.yml
 
 opensource-up:
 	$(COMPOSE_OPENSOURCE) up -d --build

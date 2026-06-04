@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agents.provider_factory import ProviderFactory
+from app.core.config import settings
 
 IntentType = Literal[
     "greeting",
@@ -47,7 +48,7 @@ async def identify_intent(message: str, history: list[dict]) -> IntentResult:
 
     result = await llm.complete(
         messages,
-        temperature=0,
+        temperature=settings.intent_temperature,
         structured_output_schema=IntentResult,
     )
     if not isinstance(result, IntentResult):

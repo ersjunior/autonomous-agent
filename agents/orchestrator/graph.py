@@ -1,5 +1,7 @@
 """LangGraph orchestrator for customer service conversations."""
 
+import logging
+
 from langgraph.graph import END, START, StateGraph
 
 from agents.events import publish_event_async
@@ -10,7 +12,12 @@ from agents.orchestrator.state import AgentState
 from agents.workers.intent_agent import identify_intent as run_identify_intent
 from agents.workers.response_agent import generate_response as run_generate_response
 
+logger = logging.getLogger(__name__)
+
 ESCALATION_CONFIDENCE_THRESHOLD = 0.5
+EMPTY_RESPONSE_FALLBACK = (
+    "Desculpe, não consegui processar sua mensagem agora. Pode reformular?"
+)
 
 _short_term_memory = ShortTermMemory()
 _long_term_memory = LongTermMemory()
@@ -60,6 +67,7 @@ async def escalate(state: AgentState) -> AgentState:
 
 async def generate_response(state: AgentState) -> AgentState:
     text = await run_generate_response(
+        state["message"],
         state.get("intent", "other"),
         state.get("entities", {}),
         state.get("conversation_history", []),
@@ -70,15 +78,24 @@ async def generate_response(state: AgentState) -> AgentState:
 
 async def send_response(state: AgentState) -> AgentState:
     memory = _short_term_memory
+    response = (state.get("response") or "").strip()
+    if not response:
+        logger.warning(
+            "Empty LLM response for user_id=%s channel=%s",
+            state["user_id"],
+            state.get("channel", ""),
+        )
+        response = EMPTY_RESPONSE_FALLBACK
+
     history = list(state.get("conversation_history", []))
     history.append({"role": "user", "content": state["message"]})
-    history.append({"role": "assistant", "content": state.get("response", "")})
+    history.append({"role": "assistant", "content": response})
 
     await memory.save_history(state["user_id"], history)
     await _long_term_memory.save_interaction(
         state["user_id"],
         state["message"],
-        state.get("response", ""),
+        response,
         state.get("intent", "other"),
     )
 
@@ -89,12 +106,12 @@ async def send_response(state: AgentState) -> AgentState:
             "user_id": state["user_id"],
             "channel": state.get("channel", ""),
             "message": state["message"],
-            "response": state.get("response", ""),
+            "response": response,
             "intent": state.get("intent", ""),
         },
     )
 
-    return {"conversation_history": history}
+    return {"conversation_history": history, "response": response}
 
 
 def create_graph():

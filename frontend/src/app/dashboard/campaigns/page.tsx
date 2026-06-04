@@ -17,7 +17,7 @@ interface Campaign {
   id: string;
   name: string;
   agent_id: string;
-  channel_type: ChannelType;
+  channel_types: string[];
   status: string;
   leads_count: number;
   created_at: string;
@@ -32,7 +32,7 @@ export default function CampaignsPage() {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [agentId, setAgentId] = useState("");
-  const [channelType, setChannelType] = useState<ChannelType>("WHATSAPP");
+  const [channelTypes, setChannelTypes] = useState<ChannelType[]>(["WHATSAPP"]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -81,7 +81,7 @@ export default function CampaignsPage() {
         body: JSON.stringify({
           name,
           agent_id: agentId,
-          channel_type: channelType,
+          channel_types: channelTypes.map((type) => type.toLowerCase()),
         }),
       });
 
@@ -93,7 +93,7 @@ export default function CampaignsPage() {
 
       setShowForm(false);
       setName("");
-      setChannelType("WHATSAPP");
+      setChannelTypes(["WHATSAPP"]);
       await loadData();
     } catch {
       setError("Erro de conexão. Tente novamente.");
@@ -167,24 +167,28 @@ export default function CampaignsPage() {
             </div>
 
             <div>
-              <label htmlFor="channelType" className="mb-2 block text-sm font-medium text-foreground">
-                Canal
-              </label>
-              <select
-                id="channelType"
-                value={channelType}
-                onChange={(e) => setChannelType(e.target.value as ChannelType)}
-                className="input-field"
-              >
+              <p className="mb-2 block text-sm font-medium text-foreground">Canais</p>
+              <div className="flex flex-wrap gap-3">
                 {CHANNEL_TYPES.map((type) => (
-                  <option key={type} value={type}>
+                  <label key={type} className="flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={channelTypes.includes(type)}
+                      onChange={() =>
+                        setChannelTypes((current) =>
+                          current.includes(type)
+                            ? current.filter((item) => item !== type)
+                            : [...current, type],
+                        )
+                      }
+                    />
                     {type}
-                  </option>
+                  </label>
                 ))}
-              </select>
+              </div>
             </div>
 
-            <button type="submit" disabled={submitting} className="btn-primary">
+            <button type="submit" disabled={submitting || channelTypes.length === 0} className="btn-primary">
               {submitting ? "Salvando..." : "Salvar campanha"}
             </button>
           </form>
@@ -222,7 +226,7 @@ export default function CampaignsPage() {
                     {getAgentName(campaign.agent_id)}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm text-foreground">
-                    {campaign.channel_type}
+                    {campaign.channel_types.join(", ").toUpperCase() || "—"}
                   </td>
                   <td className="whitespace-nowrap px-6 py-4 text-sm">
                     <Badge>{campaign.status}</Badge>

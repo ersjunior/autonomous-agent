@@ -7,7 +7,9 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/workspace:/workspace/backend:/workspace/worker
 
 COPY backend/requirements.txt backend/
-RUN pip install --no-cache-dir -r backend/requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir -r backend/requirements.txt
 
 COPY backend/ backend/
 COPY agents/ agents/

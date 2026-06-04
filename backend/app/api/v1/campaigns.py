@@ -3,14 +3,16 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.agent import Agent
-from app.models.campaign import Campaign
+from app.models.campaign import Campaign, CampaignChannel
 from app.models.lead import Lead
+from app.models.lead_base import LeadBase
 from app.models.user import User
 from app.schemas.campaign import (
     CampaignCreate,
@@ -18,16 +20,42 @@ from app.schemas.campaign import (
     CampaignStartResponse,
     CampaignUpdate,
 )
+from app.schemas.metrics import MetricsResponse
+from app.services.metrics import get_campaign_metrics
 from worker.tasks.outbound_campaign import send_campaign_message
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
+
+
+def _normalize_channel_types(channel_types: list[str]) -> list[str]:
+    normalized = [channel_type.strip().lower() for channel_type in channel_types if channel_type.strip()]
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one channel type is required",
+        )
+    return normalized
+
+
+def _to_campaign_response(campaign: Campaign) -> CampaignResponse:
+    return CampaignResponse(
+        id=campaign.id,
+        agent_id=campaign.agent_id,
+        name=campaign.name,
+        status=campaign.status,
+        channel_types=[channel.channel_type for channel in campaign.campaign_channels],
+        leads_count=campaign.leads_count,
+        created_at=campaign.created_at,
+    )
 
 
 async def _get_campaign(
     campaign_id: uuid.UUID, user: User, db: AsyncSession
 ) -> Campaign:
     result = await db.execute(
-        select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == user.id)
+        select(Campaign)
+        .options(selectinload(Campaign.campaign_channels))
+        .where(Campaign.id == campaign_id, Campaign.user_id == user.id)
     )
     campaign = result.scalar_one_or_none()
     if campaign is None:
@@ -47,13 +75,31 @@ async def _get_user_agent(
     return agent
 
 
+async def _set_campaign_channels(
+    campaign: Campaign,
+    channel_types: list[str],
+    db: AsyncSession,
+) -> None:
+    await db.execute(
+        delete(CampaignChannel).where(CampaignChannel.campaign_id == campaign.id)
+    )
+    for channel_type in channel_types:
+        db.add(CampaignChannel(campaign_id=campaign.id, channel_type=channel_type))
+    await db.flush()
+
+
 @router.get("/", response_model=list[CampaignResponse])
 async def list_campaigns(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[Campaign]:
-    result = await db.execute(select(Campaign).where(Campaign.user_id == user.id))
-    return list(result.scalars().all())
+) -> list[CampaignResponse]:
+    result = await db.execute(
+        select(Campaign)
+        .options(selectinload(Campaign.campaign_channels))
+        .where(Campaign.user_id == user.id)
+    )
+    campaigns = list(result.scalars().unique().all())
+    return [_to_campaign_response(campaign) for campaign in campaigns]
 
 
 @router.post("/", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
@@ -61,18 +107,22 @@ async def create_campaign(
     payload: CampaignCreate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Campaign:
+) -> CampaignResponse:
     await _get_user_agent(payload.agent_id, user, db)
+    channel_types = _normalize_channel_types(payload.channel_types)
+
     campaign = Campaign(
         user_id=user.id,
         agent_id=payload.agent_id,
         name=payload.name,
-        channel_type=payload.channel_type,
     )
     db.add(campaign)
+    await db.flush()
+    await _set_campaign_channels(campaign, channel_types, db)
+
     await db.commit()
-    await db.refresh(campaign)
-    return campaign
+    await db.refresh(campaign, attribute_names=["campaign_channels"])
+    return _to_campaign_response(campaign)
 
 
 @router.get("/{campaign_id}", response_model=CampaignResponse)
@@ -80,8 +130,19 @@ async def get_campaign(
     campaign_id: uuid.UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Campaign:
-    return await _get_campaign(campaign_id, user, db)
+) -> CampaignResponse:
+    campaign = await _get_campaign(campaign_id, user, db)
+    return _to_campaign_response(campaign)
+
+
+@router.get("/{campaign_id}/metrics", response_model=MetricsResponse)
+async def campaign_metrics(
+    campaign_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MetricsResponse:
+    await _get_campaign(campaign_id, user, db)
+    return await get_campaign_metrics(db, campaign_id)
 
 
 @router.put("/{campaign_id}", response_model=CampaignResponse)
@@ -90,16 +151,23 @@ async def update_campaign(
     payload: CampaignUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Campaign:
+) -> CampaignResponse:
     campaign = await _get_campaign(campaign_id, user, db)
     data = payload.model_dump(exclude_unset=True)
+
+    channel_types = data.pop("channel_types", None)
     if "agent_id" in data:
         await _get_user_agent(data["agent_id"], user, db)
+
     for field, value in data.items():
         setattr(campaign, field, value)
+
+    if channel_types is not None:
+        await _set_campaign_channels(campaign, _normalize_channel_types(channel_types), db)
+
     await db.commit()
-    await db.refresh(campaign)
-    return campaign
+    await db.refresh(campaign, attribute_names=["campaign_channels"])
+    return _to_campaign_response(campaign)
 
 
 @router.post("/{campaign_id}/start", response_model=CampaignStartResponse)
@@ -116,20 +184,32 @@ async def start_campaign(
             detail=f"Campaign cannot be started from status '{campaign.status}'",
         )
 
-    result = await db.execute(
-        select(Lead).where(Lead.user_id == user.id, Lead.status == "new")
-    )
-    leads = list(result.scalars().all())
-    channel = campaign.channel_type.value.lower()
+    if not campaign.campaign_channels:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Campaign has no channels configured",
+        )
 
+    result = await db.execute(
+        select(Lead)
+        .options(selectinload(Lead.lead_base).selectinload(LeadBase.lead_base_channels))
+        .join(LeadBase)
+        .where(LeadBase.campaign_id == campaign.id, Lead.user_id == user.id)
+    )
+    leads = list(result.scalars().unique().all())
+
+    dispatched = 0
     for lead in leads:
-        send_campaign_message.delay(str(lead.id), str(campaign.id), channel)
+        if not lead.lead_base or not lead.lead_base.lead_base_channels:
+            continue
+        send_campaign_message.delay(str(lead.id), str(campaign.id))
+        dispatched += 1
 
     campaign.status = "active"
-    campaign.leads_count = len(leads)
+    campaign.leads_count = dispatched
     await db.commit()
 
-    return CampaignStartResponse(status="started", leads_dispatched=len(leads))
+    return CampaignStartResponse(status="started", leads_dispatched=dispatched)
 
 
 @router.delete("/{campaign_id}", status_code=status.HTTP_204_NO_CONTENT)

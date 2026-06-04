@@ -32,9 +32,9 @@ Por padrão o projeto roda **100% open source** — LLM, STT e TTS locais, sem n
 | LLM + embeddings | `LLM_PROVIDER` | ★ `ollama` (llama3.1) | `openai` (GPT-4o) |
 | STT | `STT_PROVIDER` | ★ `faster_whisper` | `openai` (Whisper) |
 | TTS | `TTS_PROVIDER` | ★ `coqui` | `elevenlabs` |
-| Avatar | `AVATAR_PROVIDER` | `sadtalker` | ★ `did` |
+| Avatar | `AVATAR_PROVIDER` | ★ `sadtalker` (GPU) | `did` |
 
-> ★ = valor padrão. O avatar em vídeo continua usando `did` por padrão (defina `AVATAR_PROVIDER=sadtalker` para a alternativa local).
+> ★ = valor padrão no `.env.example` e no Docker Compose. SadTalker exige NVIDIA Container Toolkit.
 
 ### Stack 100% local (open source) — padrão
 
@@ -187,6 +187,34 @@ Se precisar reaplicar migrations manualmente (ex.: após trocar `EMBEDDING_DIMEN
 ```bash
 make migrate
 ```
+
+**Importante — dimensão do embedding (`EMBEDDING_DIMENSIONS`):**
+
+A migration `a7b8c9d0e1f2` (`alter_interactions_embedding_dimensions`) alinha a coluna `interactions.embedding` ao valor de `EMBEDDING_DIMENSIONS` **somente no momento em que ela roda** (durante `alembic upgrade`). Se o banco já estava no `head` com `1536` e você depois muda o `.env` para `768`, um novo `make migrate` **não reexecuta** essa migration — a coluna permanece desalinhada e inserts falham com `expected 1536 dimensions, not 768`.
+
+**Antes da primeira migration**, defina `EMBEDDING_DIMENSIONS` corretamente:
+
+| Stack | Valor |
+|-------|-------|
+| Ollama (`nomic-embed-text`) | `768` |
+| OpenAI (`text-embedding-3-small`) | `1536` |
+
+**Se você trocou `EMBEDDING_DIMENSIONS` depois do migrate**, realinhe manualmente (a tabela `interactions` será truncada — embeddings de dimensões diferentes são incompatíveis):
+
+```bash
+# Confirme o valor desejado no container
+docker exec autonomous-agent-backend python -c "from app.core.config import settings; print(settings.embedding_dimensions)"
+
+# Exemplo para 768 (Ollama) — ajuste o número se usar OpenAI (1536)
+docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c "
+DROP INDEX IF EXISTS ix_interactions_embedding;
+TRUNCATE interactions CASCADE;
+ALTER TABLE interactions ALTER COLUMN embedding TYPE vector(768);
+CREATE INDEX ix_interactions_embedding ON interactions USING hnsw (embedding vector_cosine_ops);
+"
+```
+
+Use `TRUNCATE interactions CASCADE` porque `lead_interactions.last_interaction_id` referencia `interactions`. Se a tabela já estiver vazia, pode omitir o `TRUNCATE` e aplicar só o `ALTER TABLE`.
 
 ### 3. Notas comuns de ambiente
 

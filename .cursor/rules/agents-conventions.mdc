@@ -250,8 +250,9 @@ transcript = await stt.transcribe(audio_bytes, language="pt")
 tts = ProviderFactory.get_tts()
 audio = await tts.synthesize("Olá!", voice_id=None)
 
+audio = await text_to_speech(text)  # Coqui — mesma voz do canal de voz
 avatar = ProviderFactory.get_avatar()
-job = await avatar.create_video(text, avatar_id="...")
+job = await avatar.create_video(text, avatar_ref="default.png", audio_bytes=audio)
 ```
 
 Variáveis de ambiente (ver `app.core.config.settings`):

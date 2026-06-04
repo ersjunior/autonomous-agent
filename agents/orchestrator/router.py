@@ -42,6 +42,10 @@ async def route_message(
     notify_received: bool = False,
 ) -> AgentState:
     """Run a message through the agent graph and return the final state."""
+    from app.services.settings_sync import ensure_settings_fresh_async
+
+    await ensure_settings_fresh_async()
+
     from agents.orchestrator.graph import agent_graph
 
     normalized_channel = channel.lower()

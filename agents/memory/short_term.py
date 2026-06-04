@@ -26,10 +26,23 @@ class ShortTermMemory:
             return []
         return json.loads(data)
 
+    @staticmethod
+    def _sanitize_history(history: list[dict]) -> list[dict]:
+        """Drop assistant turns with empty content (legacy polluted history)."""
+        sanitized: list[dict] = []
+        for item in history:
+            role = item.get("role", "")
+            content = item.get("content", "")
+            if role in ("assistant", "ai", "agent") and not str(content).strip():
+                continue
+            sanitized.append(item)
+        return sanitized
+
     async def save_history(self, user_id: str, history: list[dict]) -> None:
+        cleaned = self._sanitize_history(history)
         await self._redis.set(
             self._key(user_id),
-            json.dumps(history),
+            json.dumps(cleaned),
             ex=TTL_SECONDS,
         )
 

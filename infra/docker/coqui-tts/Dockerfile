@@ -8,15 +8,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt install_deps.sh ./
+RUN chmod +x install_deps.sh && ./install_deps.sh
 
 COPY app.py .
 
+ENV COQUI_TOS_AGREED=1
 ENV COQUI_MODEL=tts_models/multilingual/multi-dataset/xtts_v2
 ENV COQUI_VOICE_SAMPLE=/voices/reference.wav
+ENV CUDA_VISIBLE_DEVICES=
 
 RUN mkdir -p /voices
+
+# Pré-baixa XTTS-v2 na imagem (~2 GB) — TOS automático via COQUI_TOS_AGREED.
+RUN python -c "\
+import os; \
+os.environ.setdefault('COQUI_TOS_AGREED', '1'); \
+from TTS.utils.manage import ModelManager; \
+ModelManager().download_model('tts_models/multilingual/multi-dataset/xtts_v2'); \
+print('Model download OK')"
 
 EXPOSE 8002
 

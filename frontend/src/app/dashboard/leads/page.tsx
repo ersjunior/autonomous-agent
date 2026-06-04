@@ -1,173 +1,225 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { ImportCsvWizard } from "@/components/leads/ImportCsvWizard";
+import { LeadsTable } from "@/components/leads/LeadsTable";
+import { ManualLeadForm } from "@/components/leads/ManualLeadForm";
+import { apiDownload, apiFetch } from "@/lib/api";
+import type {
+  DevolutivaFile,
+  LeadBase,
+  LeadBaseListResponse,
+  LeadListResponse,
+} from "@/lib/types/leads";
 
-interface Lead {
-  id: string;
-  name: string;
-  phone?: string;
-  email?: string;
-  status: string;
-  created_at: string;
-}
-
-interface UploadProgress {
-  total: number;
-  current: number;
-  errors: number;
-}
-
-function parseCsv(content: string): Array<{ name: string; phone: string; email: string }> {
-  const lines = content.trim().split(/\r?\n/);
-  if (lines.length === 0) return [];
-
-  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
-  const nameIdx = header.indexOf("name");
-  const phoneIdx = header.indexOf("phone");
-  const emailIdx = header.indexOf("email");
-
-  const rows: Array<{ name: string; phone: string; email: string }> = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",").map((c) => c.trim());
-    if (cols.length === 0 || cols.every((c) => !c)) continue;
-
-    rows.push({
-      name: nameIdx >= 0 ? cols[nameIdx] || "" : cols[0] || "",
-      phone: phoneIdx >= 0 ? cols[phoneIdx] || "" : cols[1] || "",
-      email: emailIdx >= 0 ? cols[emailIdx] || "" : cols[2] || "",
-    });
-  }
-
-  return rows.filter((r) => r.name);
-}
+const PAGE_SIZE = 20;
 
 export default function LeadsPage() {
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
+  const [leadBases, setLeadBases] = useState<LeadBase[]>([]);
+  const [selectedBaseId, setSelectedBaseId] = useState("");
+  const [selectedBase, setSelectedBase] = useState<LeadBase | null>(null);
+  const [leads, setLeads] = useState<LeadListResponse["items"]>([]);
+  const [total, setTotal] = useState(0);
+  const [skip, setSkip] = useState(0);
+  const [loadingBases, setLoadingBases] = useState(true);
+  const [loadingLeads, setLoadingLeads] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
+  const [showManualForm, setShowManualForm] = useState(false);
   const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [devolutivas, setDevolutivas] = useState<DevolutivaFile[]>([]);
+  const [loadingDevolutivas, setLoadingDevolutivas] = useState(false);
+  const [downloadingDevolutiva, setDownloadingDevolutiva] = useState(false);
 
-  async function loadLeads() {
+  const loadLeadBases = useCallback(async () => {
     const token = localStorage.getItem("access_token");
     if (!token) {
       window.location.href = "/";
       return;
     }
 
-    try {
-      const res = await apiFetch("/api/v1/leads/");
-      if (res.ok) {
-        setLeads(await res.json());
-      }
-    } catch {
-      setError("Erro ao carregar leads.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadLeads();
-  }, []);
-
-  async function createLead(data: { name: string; phone: string; email: string }) {
-    const res = await apiFetch("/api/v1/leads/", {
-      method: "POST",
-      body: JSON.stringify({
-        name: data.name,
-        phone: data.phone || null,
-        email: data.email || null,
-      }),
-    });
-    return res.ok;
-  }
-
-  async function handleManualSubmit(e: FormEvent) {
-    e.preventDefault();
+    setLoadingBases(true);
     setError("");
-    setSubmitting(true);
-
     try {
-      const ok = await createLead({ name, phone, email });
-      if (!ok) {
-        setError("Erro ao criar lead.");
+      const res = await apiFetch("/api/v1/lead-bases/?skip=0&limit=200");
+      if (!res.ok) {
+        setError("Erro ao carregar bases de leads.");
         return;
       }
 
-      setShowForm(false);
-      setName("");
-      setPhone("");
-      setEmail("");
-      await loadLeads();
+      const data: LeadBaseListResponse = await res.json();
+      setLeadBases(data.items);
+
+      if (data.items.length === 0) {
+        setSelectedBaseId("");
+        setSelectedBase(null);
+        return;
+      }
+
+      setSelectedBaseId((current) => {
+        const stillExists = data.items.some((base) => base.id === current);
+        return stillExists ? current : data.items[0].id;
+      });
     } catch {
-      setError("Erro de conexão. Tente novamente.");
+      setError("Erro de conexão ao carregar bases.");
     } finally {
-      setSubmitting(false);
+      setLoadingBases(false);
     }
-  }
+  }, []);
 
-  async function handleCsvUpload(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const loadLeads = useCallback(
+    async (baseId: string, pageSkip: number) => {
+      if (!baseId) {
+        setLeads([]);
+        setTotal(0);
+        return;
+      }
 
-    setError("");
-    const content = await file.text();
-    const rows = parseCsv(content);
+      setLoadingLeads(true);
+      try {
+        const res = await apiFetch(
+          `/api/v1/lead-bases/${baseId}/leads?skip=${pageSkip}&limit=${PAGE_SIZE}`,
+        );
+        if (!res.ok) {
+          setError("Erro ao carregar leads da base.");
+          return;
+        }
 
-    if (rows.length === 0) {
-      setError("CSV vazio ou sem dados válidos. Use colunas: name, phone, email.");
-      if (fileInputRef.current) fileInputRef.current.value = "";
+        const data: LeadListResponse = await res.json();
+        setLeads(data.items);
+        setTotal(data.total);
+        setSkip(data.skip);
+      } catch {
+        setError("Erro de conexão ao carregar leads.");
+      } finally {
+        setLoadingLeads(false);
+      }
+    },
+    [],
+  );
+
+  const loadDevolutivas = useCallback(async (baseId: string) => {
+    if (!baseId) {
+      setDevolutivas([]);
       return;
     }
 
-    setUploadProgress({ total: rows.length, current: 0, errors: 0 });
+    setLoadingDevolutivas(true);
+    try {
+      const res = await apiFetch(`/api/v1/lead-bases/${baseId}/devolutivas`);
+      if (!res.ok) {
+        setDevolutivas([]);
+        return;
+      }
 
-    let errors = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const ok = await createLead(rows[i]);
-      if (!ok) errors++;
-      setUploadProgress({ total: rows.length, current: i + 1, errors });
+      const data: DevolutivaFile[] = await res.json();
+      setDevolutivas(data);
+    } catch {
+      setDevolutivas([]);
+    } finally {
+      setLoadingDevolutivas(false);
+    }
+  }, []);
+
+  async function handleDownloadDevolutivaNow() {
+    if (!selectedBaseId) {
+      return;
     }
 
-    setUploadProgress(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-    await loadLeads();
-
-    if (errors > 0) {
-      setError(`${errors} lead(s) falharam no upload.`);
+    setDownloadingDevolutiva(true);
+    setError("");
+    try {
+      await apiDownload(`/api/v1/lead-bases/${selectedBaseId}/devolutiva`);
+    } catch {
+      setError("Erro ao baixar devolutiva.");
+    } finally {
+      setDownloadingDevolutiva(false);
     }
+  }
+
+  async function handleDownloadHistoricalDevolutiva(data: string) {
+    if (!selectedBaseId) {
+      return;
+    }
+
+    setError("");
+    try {
+      await apiDownload(`/api/v1/lead-bases/${selectedBaseId}/devolutivas/${data}`);
+    } catch {
+      setError("Erro ao baixar devolutiva histórica.");
+    }
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  useEffect(() => {
+    loadLeadBases();
+  }, [loadLeadBases]);
+
+  useEffect(() => {
+    const base = leadBases.find((item) => item.id === selectedBaseId) ?? null;
+    setSelectedBase(base);
+    setSkip(0);
+    if (base) {
+      loadLeads(base.id, 0);
+      loadDevolutivas(base.id);
+    } else {
+      setLeads([]);
+      setTotal(0);
+      setDevolutivas([]);
+    }
+  }, [selectedBaseId, leadBases, loadLeads, loadDevolutivas]);
+
+  function handleImportSuccess(leadBaseId: string) {
+    setSelectedBaseId(leadBaseId);
+    loadLeadBases();
+  }
+
+  function handleLeadCreated() {
+    if (selectedBaseId) {
+      loadLeads(selectedBaseId, skip);
+      loadLeadBases();
+    }
+    setShowManualForm(false);
+  }
+
+  function handleColumnMappingUpdated(mapping: Record<string, string>) {
+    setLeadBases((current) =>
+      current.map((base) =>
+        base.id === selectedBaseId ? { ...base, column_mapping: mapping } : base,
+      ),
+    );
+    setSelectedBase((current) =>
+      current ? { ...current, column_mapping: mapping } : current,
+    );
   }
 
   return (
     <>
       <PageHeader
         title="Leads"
-        description="Gerencie sua base de contatos e importações."
+        description="Gerencie bases de contatos, importações CSV e leads manuais."
         actions={
           <>
-            <label className="btn-secondary cursor-pointer">
+            <button type="button" onClick={() => setShowWizard(true)} className="btn-secondary">
               Importar CSV
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                onChange={handleCsvUpload}
-                className="hidden"
-              />
-            </label>
-            <button type="button" onClick={() => setShowForm(!showForm)} className="btn-primary">
-              {showForm ? "Cancelar" : "Novo lead"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowManualForm((current) => !current)}
+              className="btn-primary"
+              disabled={!selectedBase}
+            >
+              {showManualForm ? "Cancelar" : "Novo lead"}
             </button>
           </>
         }
@@ -175,99 +227,116 @@ export default function LeadsPage() {
 
       {error && <Alert>{error}</Alert>}
 
-      {uploadProgress && (
-        <div className="glass-card mb-6 p-5">
-          <div className="mb-2 flex justify-between text-sm text-muted-foreground">
-            <span>
-              Importando {uploadProgress.current} de {uploadProgress.total}
-            </span>
-            {uploadProgress.errors > 0 && (
-              <span className="text-destructive">{uploadProgress.errors} erro(s)</span>
-            )}
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary transition-all"
-              style={{
-                width: `${(uploadProgress.current / uploadProgress.total) * 100}%`,
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {showForm && (
-        <div className="glass-card mb-8 p-6">
-          <h2 className="mb-5 text-lg font-semibold text-foreground">Novo lead</h2>
-          <form onSubmit={handleManualSubmit} className="space-y-4">
-            {[
-              { id: "name", label: "Nome", type: "text", required: true, value: name, set: setName },
-              { id: "phone", label: "Telefone", type: "tel", required: false, value: phone, set: setPhone },
-              { id: "email", label: "Email", type: "email", required: false, value: email, set: setEmail },
-            ].map((field) => (
-              <div key={field.id}>
-                <label htmlFor={field.id} className="mb-2 block text-sm font-medium text-foreground">
-                  {field.label}
-                </label>
-                <input
-                  id={field.id}
-                  type={field.type}
-                  required={field.required}
-                  value={field.value}
-                  onChange={(e) => field.set(e.target.value)}
-                  className="input-field"
-                />
-              </div>
+      <div className="glass-card mb-6 p-5">
+        <label htmlFor="leadBase" className="mb-2 block text-sm font-medium text-foreground">
+          Base de leads
+        </label>
+        {loadingBases ? (
+          <p className="text-sm text-muted-foreground">Carregando bases...</p>
+        ) : leadBases.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Nenhuma base cadastrada. Importe um CSV para começar.
+          </p>
+        ) : (
+          <select
+            id="leadBase"
+            value={selectedBaseId}
+            onChange={(event) => setSelectedBaseId(event.target.value)}
+            className="input-field max-w-xl"
+          >
+            {leadBases.map((base) => (
+              <option key={base.id} value={base.id}>
+                {base.data_recebimento} — {base.leads_count} lead(s) —{" "}
+                {base.channel_types.join(", ")}
+              </option>
             ))}
-            <button type="submit" disabled={submitting} className="btn-primary">
-              {submitting ? "Salvando..." : "Salvar lead"}
+          </select>
+        )}
+
+        {selectedBase && (
+          <div className="mt-4 flex flex-wrap items-center gap-4">
+            <div className="grid flex-1 gap-2 text-sm text-muted-foreground md:grid-cols-3">
+              <span>Recebimento: {selectedBase.data_recebimento}</span>
+              <span>Início: {selectedBase.data_inicio || "—"}</span>
+              <span>Fim: {selectedBase.data_fim || "—"}</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleDownloadDevolutivaNow}
+              className="btn-secondary shrink-0"
+              disabled={downloadingDevolutiva}
+            >
+              {downloadingDevolutiva ? "Gerando..." : "Baixar devolutiva (agora)"}
             </button>
-          </form>
+          </div>
+        )}
+      </div>
+
+      {selectedBase && (
+        <div className="glass-card mb-6 p-5">
+          <h2 className="mb-3 text-sm font-medium text-foreground">Devolutivas anteriores</h2>
+          {loadingDevolutivas ? (
+            <p className="text-sm text-muted-foreground">Carregando devolutivas...</p>
+          ) : devolutivas.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nenhuma devolutiva histórica disponível para esta base.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {devolutivas.map((file) => (
+                <li
+                  key={file.data}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                >
+                  <div className="text-sm">
+                    <span className="font-medium text-foreground">{file.data}</span>
+                    <span className="ml-2 text-muted-foreground">
+                      {file.filename} · {formatFileSize(file.size_bytes)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadHistoricalDevolutiva(file.data)}
+                    className="btn-secondary text-sm"
+                  >
+                    Baixar
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
-      {loading ? (
-        <p className="text-muted-foreground">Carregando leads...</p>
-      ) : leads.length === 0 ? (
-        <div className="glass-card p-8 text-center text-muted-foreground">
-          Nenhum lead cadastrado.
-        </div>
-      ) : (
-        <div className="glass-card overflow-hidden">
-          <table className="min-w-full divide-y divide-border">
-            <thead className="bg-muted/50">
-              <tr>
-                {["Nome", "Telefone", "Email", "Status"].map((col) => (
-                  <th
-                    key={col}
-                    className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
-                  >
-                    {col}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {leads.map((lead) => (
-                <tr key={lead.id} className="transition hover:bg-muted/30">
-                  <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
-                    {lead.name}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
-                    {lead.phone || "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
-                    {lead.email || "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-6 py-4 text-sm">
-                    <Badge>{lead.status}</Badge>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {showManualForm && selectedBase && (
+        <div className="mb-8">
+          <ManualLeadForm
+            leadBase={selectedBase}
+            onSuccess={handleLeadCreated}
+            onColumnMappingUpdated={handleColumnMappingUpdated}
+          />
         </div>
       )}
+
+      <LeadsTable
+        columnMapping={selectedBase?.column_mapping ?? {}}
+        leads={leads}
+        total={total}
+        skip={skip}
+        limit={PAGE_SIZE}
+        loading={loadingLeads}
+        onPageChange={(nextSkip) => {
+          if (selectedBaseId) {
+            loadLeads(selectedBaseId, nextSkip);
+          }
+        }}
+      />
+
+      <ImportCsvWizard
+        open={showWizard}
+        onClose={() => setShowWizard(false)}
+        onSuccess={handleImportSuccess}
+      />
     </>
   );
 }

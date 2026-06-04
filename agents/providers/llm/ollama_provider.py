@@ -30,6 +30,7 @@ class OllamaLLMProvider(LLMProvider):
         messages: list[dict[str, Any]],
         temperature: float = 0.7,
         structured_output_schema: type[BaseModel] | None = None,
+        max_tokens: int | None = None,
     ) -> str | BaseModel:
         payload_messages = [dict(m) for m in messages]
         if structured_output_schema is not None:
@@ -43,13 +44,17 @@ class OllamaLLMProvider(LLMProvider):
                 *payload_messages,
             ]
 
+        options: dict[str, float | int] = {"temperature": temperature}
+        if max_tokens is not None and max_tokens > 0:
+            options["num_predict"] = max_tokens
+
         response = await self._client.post(
             "/api/chat",
             json={
                 "model": settings.ollama_model,
                 "messages": payload_messages,
                 "stream": False,
-                "options": {"temperature": temperature},
+                "options": options,
             },
         )
         response.raise_for_status()

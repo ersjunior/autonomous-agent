@@ -5,10 +5,13 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models.campaign import Campaign
 from app.models.lead import Lead
+from app.models.lead_base import LeadBase
 from app.models.user import User
 from app.schemas.lead import LeadCreate, LeadResponse, LeadUpdate
 
@@ -27,6 +30,23 @@ async def _get_lead(
     return lead
 
 
+async def _get_user_lead_base(
+    lead_base_id: uuid.UUID,
+    user: User,
+    db: AsyncSession,
+) -> LeadBase:
+    result = await db.execute(
+        select(LeadBase)
+        .options(selectinload(LeadBase.lead_base_channels))
+        .join(Campaign)
+        .where(LeadBase.id == lead_base_id, Campaign.user_id == user.id)
+    )
+    lead_base = result.scalar_one_or_none()
+    if lead_base is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead base not found")
+    return lead_base
+
+
 @router.get("/", response_model=list[LeadResponse])
 async def list_leads(
     user: User = Depends(get_current_user),
@@ -42,12 +62,19 @@ async def create_lead(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Lead:
+    await _get_user_lead_base(payload.lead_base_id, user, db)
+
     lead = Lead(
         user_id=user.id,
-        name=payload.name,
-        phone=payload.phone,
-        email=payload.email,
-        extra_data=payload.extra_data,
+        lead_base_id=payload.lead_base_id,
+        id_cliente=payload.id_cliente,
+        nome_cliente=payload.nome_cliente,
+        cpf_cliente=payload.cpf_cliente,
+        email_cliente=payload.email_cliente,
+        telefone_1=payload.telefone_1,
+        telefone_2=payload.telefone_2,
+        telefone_3=payload.telefone_3,
+        aux_values=payload.aux_values,
     )
     db.add(lead)
     await db.commit()

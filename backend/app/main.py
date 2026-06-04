@@ -14,6 +14,7 @@ from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, engine
 from app.core.seed import seed_default_admin
+from app.services.settings_sync import bootstrap_settings
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
 
@@ -34,6 +35,8 @@ async def lifespan(app: FastAPI):
 
     async with AsyncSessionLocal() as db:
         await seed_default_admin(db)
+
+    await bootstrap_settings()
 
     yield
     await engine.dispose()

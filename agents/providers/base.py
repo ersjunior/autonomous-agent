@@ -86,7 +86,17 @@ class TTSProvider(ABC):
 
 
 class AvatarProvider(ABC):
-    """Contract for talking-avatar / lip-sync video backends."""
+    """
+    Contract for talking-avatar / lip-sync video backends.
+
+    Fluxos por provedor:
+    - D-ID: ``text`` + ``avatar_ref`` (URL da imagem) — TTS interno; ignora ``audio_bytes``.
+    - SadTalker: imagem em ``avatars_root`` + ``audio_bytes`` (Coqui) — lip-sync local.
+
+    A camada de canal/handler deve sintetizar áudio via Coqui uma vez e passar
+    ``audio_bytes`` para reutilizar a voz clonada (consistente com o canal de voz).
+    Se ``audio_bytes`` for None, SadTalker sintetiza internamente como fallback.
+    """
 
     @property
     @abstractmethod
@@ -94,16 +104,22 @@ class AvatarProvider(ABC):
         """Human-readable provider identifier."""
 
     @abstractmethod
-    async def create_video(self, text: str, avatar_id: str) -> dict:
+    async def create_video(
+        self,
+        text: str,
+        avatar_ref: str,
+        audio_bytes: bytes | None = None,
+    ) -> dict:
         """
-        Start video generation from script text and avatar reference.
+        Start or complete video generation.
 
-        Returns a dict with at least ``id`` and ``status`` keys.
+        Returns a dict with at least ``id`` and ``status``. When ready, may include
+        ``video_filename`` (SadTalker, volume local) and/or ``video_url`` (D-ID).
         """
 
     @abstractmethod
     async def get_video(self, video_id: str) -> dict:
-        """Poll or fetch video job status and result URLs."""
+        """Poll or fetch job status (D-ID) or confirm local file (SadTalker)."""
 
     @abstractmethod
     async def aclose(self) -> None:

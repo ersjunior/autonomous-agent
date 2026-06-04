@@ -50,3 +50,20 @@ python -c "from app.core.config import settings; from agents.channels.telegram i
 ```
 
 Envie uma mensagem de texto ao bot no Telegram; a resposta passa pelo grafo em `agents.orchestrator.graph`.
+
+## Outbound (campanhas)
+
+| Canal na campanha | Função | Destinatário |
+|-------------------|--------|----------------|
+| `telegram` | `send_telegram_message` | `lead.aux_values.telegram_id` |
+| `video` | `send_telegram_video` (MP4 do SadTalker) | `telegram_id` (MVP: vídeo só via Telegram) |
+
+Geração do MP4: `app.services.avatar_video.gerar_video_avatar`.
+
+## Inbound (futuro — avatar em vídeo)
+
+O handler atual responde só com texto (`reply_text`). Para responder com avatar no inbound:
+
+1. `route_message` → texto da resposta
+2. `gerar_video_avatar(resposta)`
+3. `send_telegram_video(chat_id, path)` ou `update.message.reply_video(...)`

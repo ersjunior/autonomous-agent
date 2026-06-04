@@ -18,6 +18,8 @@ x-app-env: &app-env
     TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
     TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
     TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+    TWILIO_VOICE_NUMBER: ${TWILIO_VOICE_NUMBER:-}
+    PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
     ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
@@ -26,7 +28,7 @@ x-app-env: &app-env
     LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
     STT_PROVIDER: ${STT_PROVIDER:-faster_whisper}
     TTS_PROVIDER: ${TTS_PROVIDER:-coqui}
-    AVATAR_PROVIDER: ${AVATAR_PROVIDER:-did}
+    AVATAR_PROVIDER: ${AVATAR_PROVIDER:-sadtalker}
     OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
     OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
     WHISPER_BASE_URL: ${WHISPER_BASE_URL:-http://faster-whisper:8001}
@@ -34,6 +36,17 @@ x-app-env: &app-env
     COQUI_BASE_URL: ${COQUI_BASE_URL:-http://coqui-tts:8002}
     COQUI_VOICE_SAMPLE: ${COQUI_VOICE_SAMPLE:-}
     SADTALKER_BASE_URL: ${SADTALKER_BASE_URL:-http://sadtalker:8003}
+
+# GPU NVIDIA (Compose v2+). Requer NVIDIA Container Toolkit.
+# Em host sem GPU, comente estes blocos ou use um override local.
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
 
 services:
   postgres:
@@ -85,11 +98,18 @@ services:
       faster-whisper:
         condition: service_started
       coqui-tts:
-        condition: service_started
+        condition: service_healthy
+      sadtalker:
+        condition: service_healthy
     volumes:
       - ../../backend:/workspace/backend
       - ../../agents:/workspace/agents
       - ../../worker:/workspace/worker
+      - devolutivas:/workspace/devolutivas:ro
+      - voice_audio:/workspace/voice_audio:rw
+      - avatar_video:/workspace/avatar_video:rw
+      - ../../infra/docker/coqui-tts/voices:/voices:rw
+      - ../../infra/docker/sadtalker/avatars:/avatars:rw
     working_dir: /workspace/backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
@@ -130,20 +150,51 @@ services:
       faster-whisper:
         condition: service_started
       coqui-tts:
+        condition: service_healthy
+      sadtalker:
+        condition: service_healthy
+    volumes:
+      - ../../backend:/workspace/backend
+      - ../../agents:/workspace/agents
+      - ../../worker:/workspace/worker
+      - devolutivas:/workspace/devolutivas
+      - voice_audio:/workspace/voice_audio:rw
+      - avatar_video:/workspace/avatar_video:rw
+      - ../../infra/docker/coqui-tts/voices:/voices:rw
+      - ../../infra/docker/sadtalker/avatars:/avatars:rw
+    working_dir: /workspace/backend
+    command: celery -A worker.celery_app worker --loglevel=info
+
+  celery-beat:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    container_name: autonomous-agent-celery-beat
+    <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
         condition: service_started
     volumes:
       - ../../backend:/workspace/backend
       - ../../agents:/workspace/agents
       - ../../worker:/workspace/worker
+      - devolutivas:/workspace/devolutivas
+      - voice_audio:/workspace/voice_audio:rw
     working_dir: /workspace/backend
-    command: celery -A worker.celery_app worker --loglevel=info
+    command: celery -A worker.celery_app beat --loglevel=info
 
   ollama:
     image: ollama/ollama:latest
     container_name: autonomous-agent-ollama
+    <<: *gpu
     environment:
       # Mantém o modelo carregado em memória entre requisições (evita reload por inatividade).
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      NVIDIA_VISIBLE_DEVICES: all
     ports:
       - "${OLLAMA_PORT:-11434}:11434"
     volumes:
@@ -157,6 +208,7 @@ services:
       start_period: 30s
 
   faster-whisper:
+    # TODO: GPU opcional — defina WHISPER_DEVICE=cuda no .env quando expor GPU a este serviço
     build:
       context: ./faster-whisper
       dockerfile: Dockerfile
@@ -176,11 +228,13 @@ services:
       start_period: 30s
 
   coqui-tts:
+    # TODO: GPU opcional para Coqui — hoje install_deps.sh força PyTorch CPU
     build:
       context: ./coqui-tts
       dockerfile: Dockerfile
     container_name: autonomous-agent-coqui-tts
     environment:
+      COQUI_TOS_AGREED: "1"
       COQUI_MODEL: ${COQUI_MODEL:-tts_models/multilingual/multi-dataset/xtts_v2}
       COQUI_VOICE_SAMPLE: ${COQUI_VOICE_SAMPLE:-/voices/reference.wav}
     ports:
@@ -189,13 +243,54 @@ services:
       - ../../infra/docker/coqui-tts/voices:/voices:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 60s
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json, urllib.request; r=urllib.request.urlopen('http://localhost:8002/health'); d=json.loads(r.read()); assert d.get('model_loaded') is True",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 300s
+
+  sadtalker:
+    build:
+      context: ./sadtalker
+      dockerfile: Dockerfile
+    container_name: autonomous-agent-sadtalker
+    <<: *gpu
+    environment:
+      SADTALKER_ROOT: /opt/SadTalker
+      AVATAR_VIDEOS_DIR: /data/videos
+      AVATARS_DIR: /avatars
+      SADTALKER_SIZE: ${SADTALKER_SIZE:-256}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+    ports:
+      - "${SADTALKER_PORT:-8003}:8003"
+    volumes:
+      - avatar_video:/data/videos
+      - ./sadtalker/avatars:/avatars:ro
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8003/health'); d=json.loads(r.read()); assert d.get('status')=='ok' and d.get('model_loaded') is True and d.get('gpu') is True, d",
+        ]
+      interval: 30s
+      timeout: 15s
+      retries: 30
+      start_period: 900s
 
 volumes:
   postgres_data:
   redis_data:
   ollama_data:
+  devolutivas:
+  voice_audio:
+  avatar_video:
