@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DashboardShell } from "@/components/layout/DashboardShell";
 import { getCapacity } from "@/lib/api";
 import type { CapacityResponse } from "@/lib/types/capacity";
 
@@ -62,7 +61,7 @@ export default function CapacityPage() {
       : 0;
 
   return (
-    <DashboardShell>
+    <>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-foreground">Capacidade atual</h1>
         <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
@@ -257,6 +256,6 @@ export default function CapacityPage() {
           )}
         </>
       )}
-    </DashboardShell>
+    </>
   );
 }
