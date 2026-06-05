@@ -17,6 +17,7 @@
 | Configurações | http://localhost:3000/dashboard/settings |
 | Métricas (incl. fila receptiva) | http://localhost:3000/dashboard/metrics |
 | Capacidade (Erlang + estimativa) | http://localhost:3000/dashboard/capacity |
+| Tabulações | http://localhost:3000/dashboard/tabulacoes |
 | Monitoramento (eventos do grafo) | http://localhost:3000/dashboard/monitoring |
 | API Swagger | http://localhost:8000/docs |
 
@@ -222,6 +223,50 @@ docker exec -e MAX_WEIGHTED_CAPACITY_OVERRIDE=2 autonomous-agent-worker \
 
 ---
 
+## 5c. Demo ao vivo — Tabulação / status de atendimento (~2 min) ★ call center + IA
+
+### O que fazer
+
+**1. Catálogo no dashboard**
+
+- http://localhost:3000/dashboard/tabulacoes  
+- Mostrar tabulações **Padrão do sistema**: códigos `SIP:*` (Ocupado, Número inexistente…) e `NEG:*` (Venda, Recusado, Cliente Ausente…).  
+- Criar uma tabulação **customizada** (ex.: `CUSTOM:DEMO` / categoria CUSTOMIZADO) — CRUD habilitado; seeds só Visualizar.
+
+**2. Atribuição automática (terminal ou script)**
+
+```bash
+docker exec autonomous-agent-backend \
+  python /workspace/backend/scripts/validate_tabulacao_t2.py
+```
+
+- Destacar linhas `[OK]`: regra `purchase` → `NEG:VENDA`, `nao_atendido` → `NEG:AUSENTE`, camada IA (mock) e colunas na devolutiva Excel.
+
+**3. Devolutiva (opcional, 30 s)**
+
+- Baixar Excel de uma base com interações tabuladas — colunas **Status operacional**, **Tabulação**, **Categoria Tabulação**.
+
+### O que falar
+
+> "Separamos **status operacional** — o que o motor usa para roteamento e cadência — da **tabulação**, que é o vocabulário de **resultado de call center** para o gestor. A atribuição é **híbrida**: primeiro regras (`purchase` vira Venda, sweep sem resposta vira Cliente Ausente); se não resolver, a **IA escolhe um código do catálogo** — saída restrita, não inventa rótulo livre. **Não tabulamos a cada mensagem**, só em momentos de classificação: status terminal ou intent claro."
+
+> "Os códigos **SIP** já estão no seed — Ocupado, Timeout, Número inexistente — mas o **preenchimento automático via telefonia** depende de integração futura: Twilio StatusCallback ou discador Asterisk. Hoje funciona por **regras + IA**; o campo `twilio_call_sid` e `apply_tabulacao(sip_code=…)` estão prontos para quando o discador existir."
+
+### Perguntas prováveis (tabulação)
+
+| Pergunta | Resposta sugerida |
+|----------|------------------|
+| **Como o status é atribuído?** | Camadas: (1) regras intent/status em `tabulacao_mapping.py`; (2) se não resolver e houver texto, LLM em `tabulacao_agent.py` escolhe **só** códigos do catálogo; (3) SIP futuro. Gravado em `LeadInteraction.tabulacao_id` + `tabulacao_origem`. |
+| **E os códigos SIP?** | Catálogo seed pronto (`SIP:486` = Ocupado, etc.). **Automático via hangup/cause code ainda não** — precisa webhook de telefonia. Honestidade: hoje SIP manual/teste via `apply_tabulacao`; produção = discador ou Twilio callbacks. |
+| **Tabulação vs status interno?** | Status (`convertido`, `nao_atendido`…) governa grafo, slots e cadência. Tabulação é **relatório** para devolutiva Excel e gestão — pode ser mais granular (ex.: Venda vs Sucesso genérico). |
+
+### Plano B
+
+- Screenshot da aba Tabulações + saída de `validate_tabulacao_t2.py` em `docs/demo-assets/`.  
+- README — seção **Tabulação / Status de Atendimento**.
+
+---
+
 ## 6. Demo ao vivo — Modelo de propriedade (sistema vs usuário) (~2 min)
 
 ### O que fazer (navegador + API)
@@ -290,16 +335,16 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 - **Campanhas** — `Agente_Ativo` no `agent_id`; aviso se RECEPTIVE; **Iniciar** (se Twilio configurado).
 - **Métricas** — campanha/base + **Fila de atendimento** (SLA).
 - **Capacidade** — estimativa + Erlang (1 slide se faltar tempo na 5b).
-- **Devolutiva** — download Excel.
+- **Devolutiva** — download Excel (status operacional + tabulação).
 
 ### O que falar
-> "A camada operacional **dispara** o mesmo grafo; receptivo com **fila** quando o contact center enche; `LeadInteraction`, métricas de fila e devolutiva Excel fecham o ciclo para o gestor."
+> "A camada operacional **dispara** o mesmo grafo; receptivo com **fila** quando o contact center enche; `LeadInteraction`, **tabulação call center**, métricas de fila e devolutiva Excel fecham o ciclo para o gestor."
 
 ---
 
 ## 10. Fechamento (~1 min)
 
-> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **dimensionamento Erlang C**, **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py` e `validate_layer_ra/rb/rc` são evidência de regressão para a defesa."
+> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **tabulação híbrida (regras + IA)**, **dimensionamento Erlang C**, **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc` e `validate_tabulacao_t2.py` são evidência de regressão para a defesa."
 
 ---
 
@@ -359,6 +404,12 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 ### Capacidade real vs estimada?
 > "**Real no runtime:** pesos no Redis (`MAX_WEIGHTED_CAPACITY`, compartilhado ativo+receptivo). **Estimativa na aba Capacidade:** psutil + `CHANNEL_COST_*` no container — útil para planejar, não para substituir monitoramento de produção."
 
+### Tabulação automática via SIP?
+> "Catálogo e API prontos; **automático** depende de Twilio StatusCallback ou discador (Asterisk) — trabalho futuro. Hoje: **regras + IA** em transições significativas; devolutiva Excel já exporta tabulação."
+
+### Como a IA escolhe a tabulação?
+> "`tabulacao_agent.py`: structured output com lista fechada de códigos do dono (sistema + custom). Só roda se regras não resolverem e houver texto da conversa — não a cada turno."
+
 ---
 
 ## Plano B — resumo rápido
@@ -370,6 +421,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 | **RAG** | **`docs/demo-assets/validate-rag-output.txt`** |
 | **Roteamento** | **`docs/demo-assets/validate-phase4-routing-output.txt`** + flowchart README |
 | **Fila receptiva / Erlang** | Saída `validate_layer_ra_receptive.py` + screenshots Métricas/Capacidade |
+| **Tabulação** | Saída `validate_tabulacao_t2.py` + screenshot `/dashboard/tabulacoes` |
 | Voz / Avatar | `voz-demo.mp3` / `avatar-demo.mp4` |
 | Propriedade UI | Screenshots agentes/canais + print 403 |
 | Campanha real | Métricas de base antiga |
@@ -385,11 +437,12 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 - [ ] `redis-cli DEL chat:RAGTEST`
 - [ ] Scripts copiados no container; saídas salvas em `docs/demo-assets/` (Plano B)
 - [ ] Campanha existente no DB (para cenários B–D do routing)
-- [ ] Browser: Settings, Agentes, Canais, Métricas (fila), Capacidade, README
+- [ ] Browser: Settings, Agentes, Canais, Tabulações, Métricas (fila), Capacidade, README
 - [ ] `validate_layer_ra_receptive.py` ensaiado (MAX_WEIGHTED_CAPACITY_OVERRIDE=2)
+- [ ] `validate_tabulacao_t2.py` ensaiado
 - [ ] (Opcional) `user2@test.com` para isolamento
 - [ ] MP3/MP4 fallback
 
 ---
 
-*Alinhado ao README (Atendimento receptivo), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`, head Alembic `h9i0j1k2l3m4`.*
+*Alinhado ao README (Atendimento receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_tabulacao_t2.py`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`, head Alembic `i0j1k2l3m4n5`.*

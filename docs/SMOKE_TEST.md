@@ -64,7 +64,23 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 - [ ] **Migrations em head**  
   - `docker exec autonomous-agent-backend alembic current`  
-  - Passou: revisão **`h9i0j1k2l3m4`** (head)
+  - Passou: revisão **`i0j1k2l3m4n5`** (head)
+
+- [ ] **Tabela `tabulacoes` (T-2)**  
+  ```bash
+  docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
+    "SELECT count(*) FROM tabulacoes WHERE is_system = true;"
+  docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
+    "\\d tabulacoes"
+  ```  
+  - Passou: **15** tabulações `is_system`; colunas `codigo`, `categoria`, `is_terminal`
+
+- [ ] **Colunas de tabulação em `lead_interactions`**  
+  ```bash
+  docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
+    "SELECT column_name FROM information_schema.columns WHERE table_name='lead_interactions' AND column_name LIKE 'tabulacao%';"
+  ```  
+  - Passou: `tabulacao_id`, `tabulacao_origem`, `tabulacao_aplicada_em` (+ `twilio_call_sid` se migration aplicada)
 
 - [ ] **Tabela `queue_entries` (R-B)**  
   ```bash
@@ -94,6 +110,15 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
     - `Agente_Receptivo` | `RECEPTIVE` | `t`  
   - **Esperado (canais, 4 linhas):**  
     `Telegram_Agent`, `Video_Agent`, `Voice_Agent`, `WhatsApp_Agent` — todos `is_system = t`
+
+- [ ] **Seeds: 15 tabulações (`is_system`)**  
+  ```bash
+  docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
+    "SELECT codigo, nome, categoria FROM tabulacoes WHERE is_system = true ORDER BY codigo LIMIT 5;"
+  docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
+    "SELECT count(*) FROM tabulacoes WHERE is_system = true;"
+  ```  
+  - Passou: **15** linhas; amostra inclui `SIP:200`, `NEG:VENDA`, etc.
 
 - [ ] **API — listagem inclui seeds** (opcional, confirma visibilidade global)  
   - Login admin → `GET /api/v1/agents` e `GET /api/v1/channels` → JSON contém os nomes acima com `"is_system": true`
@@ -125,9 +150,14 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
   - `GET http://localhost:8000/api/v1/capacity` com mesmo token  
   - Passou: HTTP **200**, `resources` (cpu/ram), `estimate`, `erlang`, `usage.global_usage`
 
-- [ ] **UI — Métricas e Capacidade**  
+- [ ] **`GET /api/v1/tabulacoes` (T-2)**  
+  - `GET http://localhost:8000/api/v1/tabulacoes` com mesmo token  
+  - Passou: HTTP **200**, JSON com catálogo `SIP:*` e `NEG:*` (`is_system: true`) + customizados do usuário
+
+- [ ] **UI — Métricas, Capacidade e Tabulações**  
   - http://localhost:3000/dashboard/metrics — seção **Fila de atendimento** carrega  
-  - http://localhost:3000/dashboard/capacity — recursos + Erlang + uso global
+  - http://localhost:3000/dashboard/capacity — recursos + Erlang + uso global  
+  - http://localhost:3000/dashboard/tabulacoes — catálogo SIP/negócio com selo **Padrão do sistema**; criar tabulação custom OK
 
 ---
 
@@ -207,6 +237,21 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 ---
 
+## 6c. Tabulação (T-2)
+
+- [ ] **`validate_tabulacao_t2.py`**  
+  ```bash
+  docker exec autonomous-agent-backend \
+    python /workspace/backend/scripts/validate_tabulacao_t2.py
+  ```  
+  - Passou: linhas `[OK]` para seed catálogo, regras (`NEG:VENDA`, `NEG:AUSENTE`), IA (mock) e colunas **Tabulação** / **Categoria Tabulação** na devolutiva Excel
+
+- [ ] **Devolutiva Excel — colunas de tabulação**  
+  - Baixar devolutiva de uma base com `LeadInteraction` tabulada (`GET /api/v1/lead-bases/{id}/devolutiva`)  
+  - Passou: cabeçalhos incluem **Status operacional**, **Tabulação**, **Categoria Tabulação**
+
+---
+
 ## 7. Proteção, multi-usuário e leads
 
 - [ ] **Proteção API: PUT em registro `is_system` → 403**  
@@ -268,8 +313,9 @@ Abas abertas:
 3. http://localhost:3000/dashboard/channels  
 4. http://localhost:3000/dashboard/metrics (seção Fila de atendimento)  
 5. http://localhost:3000/dashboard/capacity  
-6. README → Atendimento receptivo + Regras de negócio  
-7. http://localhost:8000/docs  
+6. http://localhost:3000/dashboard/tabulacoes  
+7. README → Atendimento receptivo + Tabulação + Regras de negócio  
+8. http://localhost:8000/docs  
 
 ---
 
@@ -286,7 +332,7 @@ Abas abertas:
 | Campanha RECEPTIVE não envia | Regra de negócio | **Esperado** — cenário E do script |
 | Lead IMPORT editável | `source` errado na base | Reimportar; checar API `LeadBaseResponse.source` |
 | UI sem selo | Frontend desatualizado | Rebuild frontend; hard refresh |
-| `alembic current` antigo | Migração pendente | `make migrate` até `h9i0j1k2l3m4` |
+| `alembic current` antigo | Migração pendente | `make migrate` até `i0j1k2l3m4n5` |
 | SadTalker unhealthy | Sem GPU | MP4 em `docs/demo-assets/` |
 | Coqui `model_loaded: false` | Build/startup | Aguardar; `reference.wav` |
 | 401 na UI | JWT expirado | Login de novo |
@@ -310,4 +356,4 @@ Plano B acionado:
 
 ---
 
-*Alinhado ao README (seção Atendimento receptivo), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `conversation_routing.py`, `authorization.py`, lifespan em `main.py` / `seed.py`, head Alembic `h9i0j1k2l3m4`.*
+*Alinhado ao README (Atendimento receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_tabulacao_t2.py`, `conversation_routing.py`, `authorization.py`, lifespan em `main.py` / `seed.py`, head Alembic `i0j1k2l3m4n5`.*

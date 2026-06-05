@@ -272,11 +272,13 @@ async def _send_on_channel(
         try:
             await _deliver_message(session, lead, campaign, channel, recipient, response)
         except Exception as exc:
-            logger.exception(
-                "Messaging outbound failed lead=%s channel=%s: %s",
-                lead.id,
+            logger.error(
+                "Outbound delivery failed: channel=%s lead_id=%s recipient=%s error=%s",
                 channel,
+                lead.id,
+                recipient,
                 exc,
+                exc_info=True,
             )
             await upsert_lead_interaction(
                 session,
