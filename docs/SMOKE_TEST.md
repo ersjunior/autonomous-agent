@@ -73,7 +73,7 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
   docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
     "\\d tabulacoes"
   ```  
-  - Passou: **15** tabulações `is_system`; colunas `codigo`, `categoria`, `is_terminal`
+  - Passou: **16** tabulações `is_system`; colunas `codigo`, `categoria`, `is_terminal`
 
 - [ ] **Colunas de tabulação em `lead_interactions`**  
   ```bash
@@ -111,14 +111,14 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
   - **Esperado (canais, 4 linhas):**  
     `Telegram_Agent`, `Video_Agent`, `Voice_Agent`, `WhatsApp_Agent` — todos `is_system = t`
 
-- [ ] **Seeds: 15 tabulações (`is_system`)**  
+- [ ] **Seeds: 16 tabulações (`is_system`)**  
   ```bash
   docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
     "SELECT codigo, nome, categoria FROM tabulacoes WHERE is_system = true ORDER BY codigo LIMIT 5;"
   docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
     "SELECT count(*) FROM tabulacoes WHERE is_system = true;"
   ```  
-  - Passou: **15** linhas; amostra inclui `SIP:200`, `NEG:VENDA`, etc.
+  - Passou: **16** linhas; amostra inclui `SIP:200`, `NEG:VENDA`, `NEG:ESCALADO`, etc.
 
 - [ ] **API — listagem inclui seeds** (opcional, confirma visibilidade global)  
   - Login admin → `GET /api/v1/agents` e `GET /api/v1/channels` → JSON contém os nomes acima com `"is_system": true`
@@ -237,6 +237,49 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 ---
 
+## 6d. Comportamento do agente receptivo (B-1 + B-2)
+
+- [ ] **`validate_receptive_b1.py` — conduta + escalonamento + tabulação**  
+  ```bash
+  docker exec autonomous-agent-worker \
+    python /workspace/backend/scripts/validate_receptive_b1.py
+  ```  
+  - Passou: **8/8** cenários — bloco `RECEPTIVE_BEHAVIOR_PROMPT`, `resolve_should_escalate`, reclamação grave vs leve, `NEG:ESCALADO`, RAG, ACTIVE sem bloco receptivo
+
+- [ ] **`validate_human_mode_b2.py` — modo humano (handoff real)**  
+  ```bash
+  docker exec autonomous-agent-worker \
+    python /workspace/backend/scripts/validate_human_mode_b2.py
+  ```  
+  - Passou: **6/6** cenários — curto-circuito sem LLM, throttle de mensagem ocasional, reativação manual, TTL, fila/capacidade não consumidas
+
+- [ ] **`GET /api/v1/handoff/active` — lista modo humano**  
+  - Login admin → token JWT  
+  - `GET http://localhost:8000/api/v1/handoff/active` com `Authorization: Bearer <token>`  
+  - Passou: HTTP **200**, JSON array (vazio ou com `{ channel, user_id, escalated_at, ttl_seconds }`)
+
+- [ ] **`POST /api/v1/handoff/reactivate` — devolver ao bot**  
+  - Após escalar um contato de teste, chamar reactivate com `{ "channel": "telegram", "user_id": "<id>" }`  
+  - Passou: `{ "reactivated": true }` e contato some de `/handoff/active`
+
+- [ ] **UI — Monitoramento / Modo humano**  
+  - http://localhost:3000/dashboard/monitoring — seção **Modo humano** com lista e botão **Devolver ao bot**  
+  - (Opcional ao vivo) Escalar contato → aparece na lista; reativar → próxima mensagem atendida pelo bot
+
+- [ ] **Comportamento verificável (manual ou scripts)**  
+  | Cenário | Esperado |
+  |---------|----------|
+  | Dúvida receptiva / lead vago | Bot responde com RAG e qualifica (pergunta natural) |
+  | "Quero falar com um humano" | Transferência + `NEG:ESCALADO` + modo humano ativo |
+  | Reclamação grave | Escala + modo humano |
+  | Reclamação leve | Bot tenta resolver (não escala) |
+  | Nova msg em modo humano | Sem LLM; msg ocasional no 1º envio; throttle na 2ª imediata |
+  | Reativação ou TTL | Bot volta a atender normalmente |
+
+> **Alembic:** feature B-1/B-2 **não** adiciona migration — `NEG:ESCALADO` entra via **seed** (`seed_default_tabulacoes`). Head permanece **`i0j1k2l3m4n5`**.
+
+---
+
 ## 6c. Tabulação (T-2)
 
 - [ ] **`validate_tabulacao_t2.py`**  
@@ -313,8 +356,9 @@ Abas abertas:
 3. http://localhost:3000/dashboard/channels  
 4. http://localhost:3000/dashboard/metrics (seção Fila de atendimento)  
 5. http://localhost:3000/dashboard/capacity  
-6. http://localhost:3000/dashboard/tabulacoes  
-7. README → Atendimento receptivo + Tabulação + Regras de negócio  
+6. http://localhost:3000/dashboard/monitoring (Modo humano + feed de eventos)  
+7. http://localhost:3000/dashboard/tabulacoes  
+8. README → Atendimento receptivo + Comportamento do Agente Receptivo + Tabulação  
 8. http://localhost:8000/docs  
 
 ---
@@ -356,4 +400,4 @@ Plano B acionado:
 
 ---
 
-*Alinhado ao README (Atendimento receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_tabulacao_t2.py`, `conversation_routing.py`, `authorization.py`, lifespan em `main.py` / `seed.py`, head Alembic `i0j1k2l3m4n5`.*
+*Alinhado ao README (Atendimento receptivo + Comportamento do Agente Receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `conversation_routing.py`, `authorization.py`, lifespan em `main.py` / `seed.py`, head Alembic `i0j1k2l3m4n5` (sem migration nova em B-1/B-2; `NEG:ESCALADO` via seed).*

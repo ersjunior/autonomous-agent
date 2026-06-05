@@ -18,7 +18,7 @@
 | Métricas (incl. fila receptiva) | http://localhost:3000/dashboard/metrics |
 | Capacidade (Erlang + estimativa) | http://localhost:3000/dashboard/capacity |
 | Tabulações | http://localhost:3000/dashboard/tabulacoes |
-| Monitoramento (eventos do grafo) | http://localhost:3000/dashboard/monitoring |
+| Monitoramento (eventos + modo humano) | http://localhost:3000/dashboard/monitoring |
 | API Swagger | http://localhost:8000/docs |
 
 **Diagramas e regras:** seções *Destaques de IA*, *Arquitetura* e *Regras de negócio* do [README.md](../README.md).
@@ -223,6 +223,67 @@ docker exec -e MAX_WEIGHTED_CAPACITY_OVERRIDE=2 autonomous-agent-worker \
 
 ---
 
+## 5c. Demo ao vivo — Comportamento receptivo: qualificar, escalar e handoff (~3 min) ★ atendimento real
+
+### O que fazer
+
+**1. Receptivo qualificando + RAG (terminal ou WhatsApp/Telegram)**
+
+```bash
+docker exec autonomous-agent-redis redis-cli DEL chat:<user_id_teste>
+docker exec autonomous-agent-worker \
+  python /workspace/backend/scripts/validate_receptive_b1.py
+```
+
+- Destacar no output: bloco `RECEPTIVE_BEHAVIOR_PROMPT` injetado; lead vago recebe pergunta de qualificação; dúvida usa RAG (horário 9h–18h no script).
+
+**2. Escalonamento ao vivo (mensagem real)**
+
+- Enviar pelo canal: *"Quero falar com um humano"* **ou** reclamação grave (*"isso é um absurdo, vou processar vocês"*)  
+- Mostrar no **Monitoramento** (http://localhost:3000/dashboard/monitoring): evento **Escalada** + contato na seção **Modo humano**
+
+**3. Modo humano — bot para de responder**
+
+- Enviar **outra** mensagem pelo mesmo contato  
+- Esperado: **sem** resposta do LLM; no máximo a mensagem ocasional de fila humana (throttle ~5 min)  
+- Rodar (opcional): `validate_human_mode_b2.py` — curto-circuito e throttle com `[OK]`
+
+**4. Reativação no painel**
+
+- **Devolver ao bot** na seção Modo humano  
+- Nova mensagem → bot atende normalmente de novo
+
+**5. APIs (Swagger ou curl)**
+
+- `GET /api/v1/handoff/active`  
+- `POST /api/v1/handoff/reactivate` `{ "channel": "...", "user_id": "..." }`
+
+### O que falar
+
+> "O receptivo não é só FAQ: **responde com RAG** e **qualifica** com perguntas naturais quando o lead está vago — bloco operacional `RECEPTIVE_BEHAVIOR_PROMPT`, separado da personalidade do agente."
+
+> "O escalonamento é **inteligente**: pedido explícito de humano, baixa confiança na classificação, ou **reclamação grave** avaliada pela IA (`complaint_severity`). Reclamação leve o bot tenta resolver."
+
+> "Quando escala, não é só um aviso: entra **modo humano** no Redis — o bot **para** de consumir capacidade e de chamar o LLM. O operador vê quem aguarda no Monitoramento e pode **devolver ao bot**; se ninguém assumir, o **TTL** (4h default) devolve automaticamente. Tabulação **`NEG:ESCALADO`** registra o handoff para a devolutiva."
+
+### Plano B
+
+- Saída de `validate_receptive_b1.py` e `validate_human_mode_b2.py` em `docs/demo-assets/`.  
+- Screenshot da seção **Modo humano** no Monitoramento.  
+- README — seção **Comportamento do Agente Receptivo** + diagrama Mermaid.
+
+### Perguntas prováveis (comportamento / handoff)
+
+| Pergunta | Resposta sugerida |
+|----------|------------------|
+| **Como decide escalar?** | Três gatilhos em `resolve_should_escalate`: `intent=escalate`, `confidence < 0.5`, ou `complaint` com `severity=high`. Reclamação leve fica com o bot. |
+| **O que acontece depois que escala?** | Resposta de transferência, tabulação `NEG:ESCALADO` (origem `ESCALATION`), `enter_human_mode` no Redis. Inbound seguinte **não** chama o grafo. |
+| **E se ninguém assumir?** | `HUMAN_MODE_TTL_SECONDS` (default 4h) expira a chave; contato volta ao bot. Operador pode reativar antes via painel ou `POST /handoff/reactivate`. |
+| **Spamma mensagem de espera?** | Não — throttle `HUMAN_MODE_NOTIFY_INTERVAL_SECONDS` (default 5 min) via chave `human_mode_notified:*`. |
+| **Afeta campanha ACTIVE?** | Modo humano é por **contato** (`channel:user_id`). Gatilho vem do inbound; contatos que não escalaram seguem normais. |
+
+---
+
 ## 5c. Demo ao vivo — Tabulação / status de atendimento (~2 min) ★ call center + IA
 
 ### O que fazer
@@ -344,7 +405,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 
 ## 10. Fechamento (~1 min)
 
-> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **tabulação híbrida (regras + IA)**, **dimensionamento Erlang C**, **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc` e `validate_tabulacao_t2.py` são evidência de regressão para a defesa."
+> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **comportamento receptivo com handoff humano real**, **tabulação híbrida (regras + IA)**, **dimensionamento Erlang C**, **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py` e `validate_tabulacao_t2.py` são evidência de regressão para a defesa."
 
 ---
 
@@ -398,6 +459,12 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 ### Por que Erlang C num sistema de IA?
 > "O gargalo operacional é **concorrência de atendimentos**, não só tokens. Erlang C traduz histórico (λ, AHT) em SLA **previsto** e headroom — mesma linguagem de call center que o gestor entende. A IA decide o texto; a fila decide **quando** há slot."
 
+### Como o agente receptivo decide passar para humano?
+> "`resolve_should_escalate` após `identify_intent`: pedido explícito (`escalate`), confiança baixa, ou reclamação **grave** (`complaint_severity=high` no structured output). Leve → bot resolve. Escala → `NEG:ESCALADO` + **modo humano** Redis — bot para de responder até reativação ou TTL."
+
+### O handoff é real ou só mensagem?
+> "**Real.** `human_handoff.py` curto-circuita inbound antes do grafo; libera capacidade; mensagem ocasional com throttle. Operador reativa em `/dashboard/monitoring` ou TTL devolve ao bot. Scripts `validate_human_mode_b2.py` provam curto-circuito e reativação."
+
 ### Nível de serviço — duas leituras?
 > "**R-B (realizado):** % atendidos na fila dentro de T segundos nos `queue_entries`. **R-C (previsto):** Erlang com capacidade N atual. Podem divergir enquanto λ/AHT ainda usam default — deixamos `aht_source` explícito na API."
 
@@ -421,6 +488,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 | **RAG** | **`docs/demo-assets/validate-rag-output.txt`** |
 | **Roteamento** | **`docs/demo-assets/validate-phase4-routing-output.txt`** + flowchart README |
 | **Fila receptiva / Erlang** | Saída `validate_layer_ra_receptive.py` + screenshots Métricas/Capacidade |
+| **Comportamento receptivo / handoff** | Saída `validate_receptive_b1.py` + `validate_human_mode_b2.py` + screenshot Modo humano |
 | **Tabulação** | Saída `validate_tabulacao_t2.py` + screenshot `/dashboard/tabulacoes` |
 | Voz / Avatar | `voz-demo.mp3` / `avatar-demo.mp4` |
 | Propriedade UI | Screenshots agentes/canais + print 403 |
@@ -437,12 +505,13 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 - [ ] `redis-cli DEL chat:RAGTEST`
 - [ ] Scripts copiados no container; saídas salvas em `docs/demo-assets/` (Plano B)
 - [ ] Campanha existente no DB (para cenários B–D do routing)
-- [ ] Browser: Settings, Agentes, Canais, Tabulações, Métricas (fila), Capacidade, README
+- [ ] Browser: Settings, Agentes, Canais, Tabulações, Métricas (fila), Capacidade, **Monitoramento (modo humano)**, README
 - [ ] `validate_layer_ra_receptive.py` ensaiado (MAX_WEIGHTED_CAPACITY_OVERRIDE=2)
+- [ ] `validate_receptive_b1.py` e `validate_human_mode_b2.py` ensaiados
 - [ ] `validate_tabulacao_t2.py` ensaiado
 - [ ] (Opcional) `user2@test.com` para isolamento
 - [ ] MP3/MP4 fallback
 
 ---
 
-*Alinhado ao README (Atendimento receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_tabulacao_t2.py`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`, head Alembic `i0j1k2l3m4n5`.*
+*Alinhado ao README (Atendimento receptivo + Comportamento do Agente Receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`, head Alembic `i0j1k2l3m4n5` (B-1/B-2 sem migration; `NEG:ESCALADO` via seed).*

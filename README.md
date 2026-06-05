@@ -29,6 +29,7 @@ O dashboard Next.js cobre campanhas **ativas** (outbound multi-canal), importaç
 |-----------|-----------|
 | [Motor de acionamento](#motor-de-acionamento) (neste README) | Camadas A–D, defaults, scheduler, scripts `validate_layer_*` |
 | [Atendimento receptivo](#atendimento-receptivo-r-a0--r-c) (neste README) | Inbound unificado, fila, métricas de call center, Erlang C |
+| [Comportamento do Agente Receptivo](#comportamento-do-agente-receptivo-b-1--b-2) (neste README) | Conduta híbrida, escalonamento inteligente, handoff humano (modo humano) |
 | [Tabulação / Status de Atendimento](#tabulação--status-de-atendimento) (neste README) | Catálogo call center, atribuição híbrida (regras + IA + SIP futuro), devolutiva Excel |
 | [docs/ROTEIRO_APRESENTACAO.md](docs/ROTEIRO_APRESENTACAO.md) | Roteiro de demonstração para a banca (~15–20 min), com foco em IA aplicada |
 | [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) | Checklist de verificação antes da apresentação (comandos e troubleshooting) |
@@ -146,7 +147,7 @@ Idempotente por nome (`backend/app/core/seed.py` + `ensure_seed_flags()` no life
 | **Admin** | `admin@admin.com` / `admin` | Criado se não existir |
 | **4 canais** | `WhatsApp_Agent`, `Telegram_Agent`, `Voice_Agent`, `Video_Agent` | Credenciais do `.env`; `is_system=true` |
 | **2 agentes** | `Agente_Ativo`, `Agente_Receptivo` | ACTIVE / RECEPTIVE; descrições longas; `config` `{tipo: outbound\|inbound}`; `is_system=true` |
-| **15 tabulações** | Códigos `SIP:*` + `NEG:*` | Catálogo call center; `is_system=true`; read-only na API/UI |
+| **16 tabulações** | Códigos `SIP:*` + `NEG:*` | Catálogo call center; `is_system=true`; read-only na API/UI |
 
 O usuário **não começa do zero**: ao subir a stack, já pode usar canais e agentes padrão em campanhas (`agent_id` de agente sistema permitido via `can_view`).
 
@@ -377,6 +378,102 @@ Além de `process_active_activations` e sweeps existentes (`worker/celery_app.py
 
 ---
 
+## Comportamento do Agente Receptivo (B-1 + B-2)
+
+Camada de **conduta conversacional** e **handoff para humano**, complementar à infraestrutura de fila/capacidade descrita acima. Implementação: `agents/workers/response_agent.py`, `agents/orchestrator/graph.py`, `agents/workers/intent_agent.py`, `backend/app/services/inbound_attendance.py`, `backend/app/services/human_handoff.py`.
+
+O perfil **RECEPTIVE** no banco (`Agente_Receptivo`, `description`) define **quem é** o agente; um bloco operacional separado — `RECEPTIVE_BEHAVIOR_PROMPT` — define **como age** quando `agent_mode == "RECEPTIVE"` no grafo. Os dois são injetados como system messages distintas em `build_response_messages()`.
+
+### Conduta híbrida (B-1)
+
+O receptivo **responde** e **qualifica** na mesma conversa:
+
+| Aspecto | Comportamento |
+|---------|----------------|
+| **Responder** | Esclarece dúvidas com clareza, usando histórico imediato (Redis) e memória de longo prazo (**RAG** / pgvector). Não inventa fatos fora do contexto. |
+| **Qualificar** | Quando o lead demonstra interesse sem detalhar, faz **perguntas naturais**, uma de cada vez, para entender necessidade, prazo ou canal preferido — sem interrogatório ou script rígido. |
+| **Tom** | Acolhedor e profissional; conversa fluida. |
+| **ACTIVE** | O bloco `RECEPTIVE_BEHAVIOR_PROMPT` **não** é injetado; apenas `agent_personality` + prompt global. |
+
+### Escalonamento inteligente (B-1)
+
+Após `identify_intent`, o nó `check_escalation` usa `resolve_should_escalate()`:
+
+| Gatilho | Condição | Efeito |
+|---------|----------|--------|
+| **Pedido explícito de humano** | `intent == "escalate"` (classificador instruído a marcar quando o lead pede atendente, supervisor ou pessoa real) | Escala |
+| **Baixa confiança** | `confidence < 0.5` (`ESCALATION_CONFIDENCE_THRESHOLD`) | Escala |
+| **Reclamação grave** | `intent == "complaint"` **e** `complaint_severity == "high"` | Escala |
+| **Reclamação leve** | `intent == "complaint"` **e** `complaint_severity == "low"` | **Não** escala — o bot tenta resolver em `generate_response` |
+
+A gravidade é avaliada pela IA no structured output do `intent_agent` (`IntentResult.complaint_severity`: `low` \| `high`; default `low` para retrocompatibilidade). Reclamações leves (demora, confusão menor) permanecem com o bot; graves (ameaça legal, indignação extrema, promessa de processar) escalam.
+
+Quando escala: resposta fixa de transferência (`escalate` no grafo) + evento Redis `escalated` + tabulação **`NEG:ESCALADO`** (origem **`ESCALATION`**) na `LeadInteraction`.
+
+### Handoff humano — modo humano (B-2)
+
+Ao escalar, a transferência deixa de ser só telemetria: o bot **para de responder** aquele contato até saída explícita do modo humano.
+
+| Componente | Detalhe |
+|------------|---------|
+| **Estado** | Redis `human_mode:{channel}:{user_id}` com timestamp do escalonamento |
+| **TTL** | `HUMAN_MODE_TTL_SECONDS` (default **14400** = 4h) — timeout de segurança se ninguém assumir |
+| **Entrada** | `enter_human_mode()` após `should_escalate=true` em `attend_inbound_message` (libera capacidade/slot adquiridos) |
+| **Curto-circuito** | **Antes** de `route_message`, fila ou capacidade: se `is_in_human_mode`, o grafo/LLM **não** roda |
+| **Mensagem ocasional** | *"Seu atendimento está na fila de atendimento humano, em breve um atendente prosseguirá."* — throttle via `human_mode_notified:{channel}:{user_id}` e `HUMAN_MODE_NOTIFY_INTERVAL_SECONDS` (default **300** = 5 min); não spamma a cada mensagem |
+| **Escopo** | Por contato (`channel` + `user_id`), independente de ACTIVE/RECEPTIVE; gatilho vem do fluxo inbound receptivo |
+
+Enquanto em modo humano: **não** consome slot/capacidade global, **não** entra na fila receptiva.
+
+**Saída do modo humano:**
+
+1. **Reativação manual** — operador no painel (`/dashboard/monitoring` → seção **Modo humano** → **Devolver ao bot**) ou `POST /api/v1/handoff/reactivate` com `{ channel, user_id }`.
+2. **Timeout (TTL)** — chave expira no Redis; próxima mensagem volta a ser atendida pelo bot normalmente.
+
+API complementar: `GET /api/v1/handoff/active` — lista contatos aguardando humano (leitura das chaves `human_mode:*`).
+
+```mermaid
+flowchart TD
+  IN[Inbound mensagem] --> HM{Em modo humano?}
+  HM -->|Sim| OC{Throttle notificação?}
+  OC -->|Sim| MSG[Mensagem ocasional de espera]
+  OC -->|Não| SIL[Sem resposta / sem LLM]
+  MSG --> END1[Fim — não consome fila/capacidade]
+  SIL --> END1
+  HM -->|Não| INT[identify_intent]
+  INT --> ESC{resolve_should_escalate?}
+  ESC -->|Sim| TRF[Resposta transferência + NEG:ESCALADO]
+  TRF --> ENTER[enter_human_mode Redis TTL]
+  ENTER --> END2[Fim — bot para de atender]
+  ESC -->|Não| RAG[generate_response RAG + RECEPTIVE_BEHAVIOR]
+  RAG --> RESP[Responde / qualifica]
+  RESP --> END3[Fim — atendimento normal]
+  EXIT[TTL expira OU reactivate manual] --> HM
+```
+
+### Variáveis de ambiente (comportamento receptivo)
+
+Seção `# B-2` em `.env.example`:
+
+| Variável | Default | Uso |
+|----------|---------|-----|
+| `HUMAN_MODE_TTL_SECONDS` | `14400` | Tempo máximo em modo humano antes de devolver ao bot |
+| `HUMAN_MODE_NOTIFY_INTERVAL_SECONDS` | `300` | Intervalo mínimo entre mensagens ocasionais de espera |
+
+### Scripts de validação (comportamento)
+
+| Script | O que prova |
+|--------|-------------|
+| `validate_receptive_b1.py` | Bloco RECEPTIVE no prompt, `resolve_should_escalate`, severity de reclamação, `NEG:ESCALADO`, RAG intacto, ACTIVE sem bloco receptivo |
+| `validate_human_mode_b2.py` | Modo humano no Redis, curto-circuito sem LLM, throttle de mensagem, reativação manual, TTL, fila/capacidade não consumidas |
+
+```bash
+docker exec autonomous-agent-worker python /workspace/backend/scripts/validate_receptive_b1.py
+docker exec autonomous-agent-worker python /workspace/backend/scripts/validate_human_mode_b2.py
+```
+
+---
+
 ## Tabulação / Status de Atendimento
 
 Classificação do **resultado** de cada atendimento no vocabulário de **call center** (telefonia SIP + status de negócio), em eixo **separado** do **status operacional interno** da `LeadInteraction` (`pendente`, `acionado`, `em_andamento`, `convertido`, `recusou`, `nao_atendido`, `erro`), que continua a governar roteamento, cadência e slots.
@@ -390,7 +487,7 @@ Implementação: `backend/app/models/tabulacao.py`, `tabulacao_mapping.py`, `tab
 
 ### Catálogo padrão do sistema (`is_system`, read-only)
 
-Seed idempotente no startup (`seed_default_tabulacoes` em `seed.py`) — **15 tabulações** visíveis a todos os usuários; PUT/DELETE → **403** (mesma proteção de agentes/canais seed).
+Seed idempotente no startup (`seed_default_tabulacoes` em `seed.py`) — **16 tabulações** visíveis a todos os usuários; PUT/DELETE → **403** (mesma proteção de agentes/canais seed).
 
 **Telefonia (categoria `TELEFONIA`, códigos `SIP:*`):**
 
@@ -416,6 +513,7 @@ Seed idempotente no startup (`seed_default_tabulacoes` em `seed.py`) — **15 ta
 | `NEG:SUCESSO` | Sucesso |
 | `NEG:VENDA` | Venda |
 | `NEG:RECUSADO` | Recusado |
+| `NEG:ESCALADO` | Escalado para humano (bot encerrou; lead segue com operador) |
 
 ### Tabulações customizadas (usuário)
 
@@ -438,17 +536,18 @@ Política em `tabulacao_mapping.py` + `apply_tabulacao()` — **não roda a cada
 
 - Status terminal (`convertido`, `recusou`, `nao_atendido`, `erro`)
 - Intents claros (`purchase`, `cancel`)
+- **Escalonamento** (`escalated=True` → `NEG:ESCALADO`, origem `ESCALATION`) — ver [Comportamento do Agente Receptivo](#comportamento-do-agente-receptivo-b-1--b-2)
 - SIP futuro (webhook de discador)
 
 Ordem de resolução:
 
 1. **SIP** (preparado) — `sip_code` → código `SIP:*` no catálogo (`resolve_tabulacao_by_sip`). Gancho documentado para Twilio StatusCallback / Asterisk; **não wired em produção nesta entrega**.
-2. **Regras** — mapeamento determinístico intent/status → código (`resolve_tabulacao_by_rules`), ex.: `purchase` → `NEG:VENDA`, `cancel` → `NEG:RECUSADO`, `nao_atendido` → `NEG:AUSENTE`; `erro` de acionamento **sem** tabulação automática por regra.
+2. **Regras** — mapeamento determinístico intent/status → código (`resolve_tabulacao_by_rules`), ex.: `purchase` → `NEG:VENDA`, `cancel` → `NEG:RECUSADO`, `escalate` / escalonamento → `NEG:ESCALADO`, `nao_atendido` → `NEG:AUSENTE`; `erro` de acionamento **sem** tabulação automática por regra.
 3. **IA** — se regras não resolverem e houver texto (`devolutiva` / mensagem), `classify_tabulacao()` escolhe **um** código **dentro do catálogo** do dono (sistema + customizados); saída estruturada restrita à lista.
 
 Pontos de integração atuais: `track_inbound_lead_interaction()` (inbound), `close_lead_no_answer()` / cadência (`activation_cadence.py`), `status_sweep.py`.
 
-Campos gravados em `LeadInteraction`: `tabulacao_id`, `tabulacao_origem` (`INTENT` \| `IA` \| `SIP`), `tabulacao_aplicada_em`. **`twilio_call_sid`** já existe como gancho para correlacionar chamadas outbound/inbound de voz com tabulação SIP futura.
+Campos gravados em `LeadInteraction`: `tabulacao_id`, `tabulacao_origem` (`INTENT` \| `IA` \| `SIP` \| `ESCALATION`), `tabulacao_aplicada_em`. **`twilio_call_sid`** já existe como gancho para correlacionar chamadas outbound/inbound de voz com tabulação SIP futura.
 
 ### Devolutiva Excel
 
@@ -759,7 +858,7 @@ make setup
 - Usuário admin
 - **4 canais** padrão (`is_system`) com credenciais do `.env`
 - **2 agentes** padrão: Agente_Ativo (ACTIVE) e Agente_Receptivo (RECEPTIVE)
-- **15 tabulações** padrão (`SIP:*` + `NEG:*`, `is_system`)
+- **16 tabulações** padrão (`SIP:*` + `NEG:*`, `is_system`)
 
 `ensure_seed_flags()` garante `is_system=true` em registros seed criados antes da flag existir.
 
