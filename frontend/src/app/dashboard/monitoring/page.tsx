@@ -1,7 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { API_URL } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  API_URL,
+  formatApiError,
+  getActiveHandoffs,
+  reactivateHandoff,
+  type HandoffContact,
+} from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { PageHeader } from "@/components/ui/PageHeader";
 
@@ -30,10 +36,47 @@ const EVENT_VARIANTS: Record<string, "default" | "warning" | "success" | "muted"
   escalated: "muted",
 };
 
+function formatDurationSince(iso: string | null): string {
+  if (!iso) return "—";
+  const start = new Date(iso).getTime();
+  const mins = Math.floor((Date.now() - start) / 60000);
+  if (mins < 1) return "agora";
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ${mins % 60}min`;
+}
+
 export default function MonitoringPage() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [connected, setConnected] = useState(false);
+  const [handoffs, setHandoffs] = useState<HandoffContact[]>([]);
+  const [handoffLoading, setHandoffLoading] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const [reactivatingKey, setReactivatingKey] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const loadHandoffs = useCallback(async () => {
+    setHandoffLoading(true);
+    setHandoffError(null);
+    try {
+      const res = await getActiveHandoffs();
+      if (!res.ok) {
+        throw new Error(await formatApiError(res, "Falha ao carregar modo humano"));
+      }
+      const data = (await res.json()) as HandoffContact[];
+      setHandoffs(data);
+    } catch (err) {
+      setHandoffError(err instanceof Error ? err.message : "Erro desconhecido");
+    } finally {
+      setHandoffLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadHandoffs();
+    const interval = setInterval(() => void loadHandoffs(), 30000);
+    return () => clearInterval(interval);
+  }, [loadHandoffs]);
 
   useEffect(() => {
     const wsUrl = `${API_URL.replace(/^http/, "ws")}/api/v1/monitoring/ws`;
@@ -47,6 +90,9 @@ export default function MonitoringPage() {
       try {
         const data = JSON.parse(event.data) as AgentEvent;
         setEvents((prev) => [data, ...prev].slice(0, 100));
+        if (data.type === "escalated") {
+          void loadHandoffs();
+        }
       } catch {
         // ignore malformed events
       }
@@ -56,7 +102,23 @@ export default function MonitoringPage() {
       ws.close();
       wsRef.current = null;
     };
-  }, []);
+  }, [loadHandoffs]);
+
+  async function handleReactivate(channel: string, userId: string) {
+    const key = `${channel}:${userId}`;
+    setReactivatingKey(key);
+    try {
+      const res = await reactivateHandoff(channel, userId);
+      if (!res.ok) {
+        throw new Error(await formatApiError(res, "Falha ao reativar"));
+      }
+      await loadHandoffs();
+    } catch (err) {
+      setHandoffError(err instanceof Error ? err.message : "Erro ao reativar");
+    } finally {
+      setReactivatingKey(null);
+    }
+  }
 
   return (
     <>
@@ -76,6 +138,65 @@ export default function MonitoringPage() {
           </Badge>
         }
       />
+
+      <section className="glass-card mb-6 p-5">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <h2 className="text-lg font-semibold text-foreground">Modo humano</h2>
+          <Badge variant="warning">{handoffs.length} aguardando</Badge>
+          <button
+            type="button"
+            className="btn-secondary text-sm"
+            onClick={() => void loadHandoffs()}
+            disabled={handoffLoading}
+          >
+            Atualizar
+          </button>
+        </div>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Contatos escalados — o bot não responde até reativação manual ou expiração do TTL.
+        </p>
+        {handoffError && (
+          <p className="mb-3 text-sm text-destructive">{handoffError}</p>
+        )}
+        {handoffLoading && handoffs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Carregando...</p>
+        ) : handoffs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Nenhum contato em modo humano no momento.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {handoffs.map((item) => {
+              const key = `${item.channel}:${item.user_id}`;
+              return (
+                <div
+                  key={key}
+                  className="flex flex-wrap items-center gap-3 rounded-lg border border-border/60 bg-background/40 px-4 py-3"
+                >
+                  <Badge variant="muted">{item.channel}</Badge>
+                  <span className="text-sm text-foreground">{item.user_id}</span>
+                  <span className="text-xs text-muted-foreground">
+                    há {formatDurationSince(item.escalated_at)}
+                  </span>
+                  {item.ttl_seconds != null && (
+                    <span className="text-xs text-muted-foreground">
+                      TTL {Math.ceil(item.ttl_seconds / 60)} min
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-primary ml-auto text-sm"
+                    disabled={reactivatingKey === key}
+                    onClick={() => void handleReactivate(item.channel, item.user_id)}
+                  >
+                    {reactivatingKey === key ? "Reativando..." : "Devolver ao bot"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {events.length === 0 ? (
         <div className="glass-card p-8 text-center text-muted-foreground">

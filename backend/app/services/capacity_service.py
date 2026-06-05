@@ -254,6 +254,14 @@ def bind_contact_capacity(
         bind_lead_slot(lead_id, ch, handle.agent_id, handle.slot_token, ttl_seconds=ttl)
 
 
+def release_receptive_handle(handle: ReceptiveCapacityHandle, channel: str) -> bool:
+    """Libera slot local + peso global adquiridos mas não vinculados ao contato."""
+    ch = normalize_channel_type(channel)
+    released_slot = release_slot(handle.agent_id, ch, handle.slot_token)
+    released_global = release_global(handle.global_token, handle.weight)
+    return released_slot or released_global
+
+
 def release_contact_capacity(channel: str, user_id: str) -> bool:
     """Libera slot local + peso global para um contato."""
     ch = normalize_channel_type(channel)

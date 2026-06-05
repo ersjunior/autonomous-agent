@@ -176,6 +176,8 @@ async def track_inbound_lead_interaction(
     user_id: str,
     message: str,
     intent: str,
+    *,
+    escalated: bool = False,
 ) -> LeadInteraction | None:
     """Vincula mensagem inbound a LeadInteraction quando o lead é identificado."""
     lead = await find_lead_by_channel_user(session, channel, user_id)
@@ -218,5 +220,6 @@ async def track_inbound_lead_interaction(
         status_interno=new_status,
         channel=channel_lower,
         conversation_text=message,
+        escalated=escalated,
     )
     return record

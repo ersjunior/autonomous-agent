@@ -20,8 +20,11 @@ from app.services.activation_service import get_agent_channel_settings_row, merg
 from app.services.capacity_service import (
     ReceptiveCapacityHandle,
     bind_contact_capacity,
+    release_contact_capacity,
+    release_receptive_handle,
     try_acquire_receptive_capacity,
 )
+from app.services.human_handoff import enter_human_mode, handle_human_mode_inbound
 from app.services.queue_entry_service import (
     record_receptive_answered,
     record_receptive_enqueue,
@@ -75,29 +78,44 @@ async def attend_inbound_message(
 
     Se ``capacity`` for passado e ``bind_capacity``, registra mapeamento para liberação.
     """
+    ch = normalize_channel_type(channel)
+
+    handled, wait_msg = handle_human_mode_inbound(ch, user_id)
+    if handled:
+        if wait_msg:
+            await deliver_channel_text(ch, user_id, wait_msg)
+        return wait_msg or ""
+
     agent_context = agent_routing_metadata(agent)
     result = await route_message(
         message,
-        channel,
+        ch,
         user_id,
         notify_received=True,
         agent_context=agent_context,
     )
     response_text = result.get("response", "") or ""
-    await deliver_channel_text(channel, user_id, response_text)
+    await deliver_channel_text(ch, user_id, response_text)
 
+    escalated = bool(result.get("should_escalate"))
     await track_inbound_lead_interaction(
         session,
-        channel,
+        ch,
         user_id,
         message,
         result.get("intent", "other"),
+        escalated=escalated,
     )
 
-    if capacity and bind_capacity:
+    if escalated:
+        enter_human_mode(ch, user_id)
+        release_contact_capacity(ch, user_id)
+        if capacity is not None:
+            release_receptive_handle(capacity, ch)
+    elif capacity and bind_capacity:
         lead_id = str(lead.id) if lead else None
         bind_contact_capacity(
-            channel,
+            ch,
             user_id,
             capacity,
             lead_id=lead_id,
@@ -134,6 +152,12 @@ async def process_receptive_inbound(
             lead=lead,
             bind_capacity=False,
         )
+
+    handled, wait_msg = handle_human_mode_inbound(ch, user_id)
+    if handled:
+        if wait_msg:
+            await deliver_channel_text(ch, user_id, wait_msg)
+        return wait_msg or ""
 
     params = await merged_receptive_params(session, agent, ch)
 
@@ -211,6 +235,13 @@ async def attend_from_queue_payload(
     from sqlalchemy import select
 
     from app.models.agent import Agent
+
+    handled, wait_msg = handle_human_mode_inbound(payload.channel, payload.user_id)
+    if handled:
+        if wait_msg:
+            await deliver_channel_text(payload.channel, payload.user_id, wait_msg)
+        release_receptive_handle(capacity, payload.channel)
+        return wait_msg or ""
 
     enqueued_dt = datetime.fromtimestamp(payload.enqueued_at, tz=timezone.utc)
     await record_receptive_answered(

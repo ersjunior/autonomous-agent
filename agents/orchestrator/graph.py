@@ -14,6 +14,7 @@ from agents.workers.response_agent import generate_response as run_generate_resp
 
 logger = logging.getLogger(__name__)
 
+# B-1: escalonamento — intent escalate, baixa confiança ou reclamação grave (severity=high).
 ESCALATION_CONFIDENCE_THRESHOLD = 0.5
 EMPTY_RESPONSE_FALLBACK = (
     "Desculpe, não consegui processar sua mensagem agora. Pode reformular?"
@@ -21,6 +22,27 @@ EMPTY_RESPONSE_FALLBACK = (
 
 _short_term_memory = ShortTermMemory()
 _long_term_memory = LongTermMemory()
+
+
+def resolve_should_escalate(
+    intent: str,
+    confidence: float,
+    complaint_severity: str = "low",
+) -> bool:
+    """
+    Critérios de escalonamento (B-1):
+      a) intent == escalate (pedido explícito de humano ou frustração extrema)
+      b) confidence < ESCALATION_CONFIDENCE_THRESHOLD (incerteza na classificação)
+      c) intent == complaint AND complaint_severity == high (reclamação grave)
+    Reclamações leves (severity=low) não escalam — o bot tenta resolver em generate_response.
+    """
+    if intent == "escalate":
+        return True
+    if confidence < ESCALATION_CONFIDENCE_THRESHOLD:
+        return True
+    if intent == "complaint" and (complaint_severity or "low").lower() == "high":
+        return True
+    return False
 
 
 async def reset_worker_async_clients() -> None:
@@ -53,20 +75,24 @@ async def identify_intent(state: AgentState) -> AgentState:
             "message": state["message"],
             "intent": result.intent,
             "confidence": result.confidence,
+            "complaint_severity": result.complaint_severity,
         },
     )
     return {
         "intent": result.intent,
         "confidence": result.confidence,
         "entities": result.entities,
+        "complaint_severity": result.complaint_severity,
         "conversation_history": history,
     }
 
 
 async def check_escalation(state: AgentState) -> AgentState:
-    intent = state.get("intent", "")
-    confidence = state.get("confidence", 1.0)
-    should_escalate = intent == "escalate" or confidence < ESCALATION_CONFIDENCE_THRESHOLD
+    should_escalate = resolve_should_escalate(
+        state.get("intent", ""),
+        state.get("confidence", 1.0),
+        state.get("complaint_severity", "low"),
+    )
     return {"should_escalate": should_escalate}
 
 
@@ -94,6 +120,7 @@ async def generate_response(state: AgentState) -> AgentState:
         state.get("channel", ""),
         rag_memories=rag_memories,
         agent_personality=state.get("agent_personality"),
+        agent_mode=state.get("agent_mode"),
     )
     return {"response": text, "rag_memories": rag_memories}
 

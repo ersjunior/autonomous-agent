@@ -7,6 +7,7 @@ Gancho SIP (futuro): webhook Twilio StatusCallback / Asterisk chamará
 Política de QUANDO tabular (integradores devem respeitar):
   - Status terminal (convertido, recusou, nao_atendido, erro*)
   - Intent purchase/cancel (resultado claro)
+  - Escalonamento para humano (``escalated=True`` / NEG:ESCALADO) — B-1
   - SIP futuro
   - NÃO tabular em em_andamento sem sinal
 
@@ -29,6 +30,7 @@ from app.models.tabulacao import Tabulacao
 from app.services.tabulacao_mapping import (
     resolve_tabulacao_by_rules,
     resolve_tabulacao_by_sip,
+    resolve_tabulacao_for_escalation,
 )
 from worker.tasks.conversation_routing import TERMINAL_STATUSES
 from worker.tasks.lead_tracking import POSITIVE_INTENTS, REFUSAL_INTENTS
@@ -40,8 +42,15 @@ CLASSIFICATION_INTENTS = POSITIVE_INTENTS | REFUSAL_INTENTS
 _codigo_id_cache: dict[str, uuid.UUID | None] = {}
 
 
-def is_classification_moment(status_interno: str | None, intent: str | None = None) -> bool:
-    """Momento em que faz sentido atribuir tabulação (terminal ou intent claro)."""
+def is_classification_moment(
+    status_interno: str | None,
+    intent: str | None = None,
+    *,
+    escalated: bool = False,
+) -> bool:
+    """Momento em que faz sentido atribuir tabulação (terminal, intent claro ou escalonamento)."""
+    if escalated:
+        return True
     status = (status_interno or "").lower()
     if status in TERMINAL_STATUSES:
         return True
@@ -106,6 +115,7 @@ async def apply_tabulacao(
     sip_code: str | None = None,
     origem: str | None = None,
     conversation_text: str | None = None,
+    escalated: bool = False,
 ) -> bool:
     """
     Atribui tabulação ao LeadInteraction se houver match.
@@ -115,13 +125,16 @@ async def apply_tabulacao(
     status = (status_interno or lead_interaction.status or "").lower()
     ch = channel or lead_interaction.channel_type
 
-    if sip_code is None and not is_classification_moment(status, intent):
+    if sip_code is None and not escalated and not is_classification_moment(status, intent):
         return False
 
     codigo: str | None = None
     tab_origem: str | None = origem
 
-    if sip_code:
+    if escalated:
+        codigo = resolve_tabulacao_for_escalation()
+        tab_origem = tab_origem or "ESCALATION"
+    elif sip_code:
         codigo = resolve_tabulacao_by_sip(sip_code)
         tab_origem = tab_origem or "SIP"
     else:
@@ -189,10 +202,11 @@ async def maybe_apply_tabulacao_on_transition(
     channel: str | None = None,
     conversation_text: str | None = None,
     sip_code: str | None = None,
+    escalated: bool = False,
 ) -> bool:
     """Atalho para integradores: só aplica em momento de classificação."""
     status = status_interno or lead_interaction.status
-    if sip_code is None and not is_classification_moment(status, intent):
+    if sip_code is None and not escalated and not is_classification_moment(status, intent):
         return False
     return await apply_tabulacao(
         session,
@@ -202,4 +216,5 @@ async def maybe_apply_tabulacao_on_transition(
         channel=channel,
         sip_code=sip_code,
         conversation_text=conversation_text,
+        escalated=escalated,
     )

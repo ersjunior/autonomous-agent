@@ -9,6 +9,7 @@ from app.api.v1 import (
     campaigns,
     capacity,
     channels,
+    handoff,
     lead_bases,
     leads,
     metrics,
@@ -28,5 +29,6 @@ api_router.include_router(campaigns.router)
 api_router.include_router(metrics.router)
 api_router.include_router(capacity.router)
 api_router.include_router(monitoring.router)
+api_router.include_router(handoff.router)
 api_router.include_router(settings.router)
 api_router.include_router(tabulacoes.router)

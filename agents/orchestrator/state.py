@@ -14,6 +14,7 @@ class AgentState(TypedDict):
     should_escalate: bool
     conversation_history: list[dict]
     rag_memories: NotRequired[list[dict]]
+    complaint_severity: NotRequired[str]
     agent_id: NotRequired[str]
     agent_name: NotRequired[str]
     agent_mode: NotRequired[str]

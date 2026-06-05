@@ -180,6 +180,27 @@ export async function getCapacity(): Promise<Response> {
   return apiFetch("/api/v1/capacity");
 }
 
+export interface HandoffContact {
+  channel: string;
+  user_id: string;
+  escalated_at: string | null;
+  ttl_seconds: number | null;
+}
+
+export async function getActiveHandoffs(): Promise<Response> {
+  return apiFetch("/api/v1/handoff/active");
+}
+
+export async function reactivateHandoff(
+  channel: string,
+  user_id: string
+): Promise<Response> {
+  return apiFetch("/api/v1/handoff/reactivate", {
+    method: "POST",
+    body: JSON.stringify({ channel, user_id }),
+  });
+}
+
 export async function getSettings(): Promise<Response> {
   return apiFetch("/api/v1/settings");
 }

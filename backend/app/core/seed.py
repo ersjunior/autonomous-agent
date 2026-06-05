@@ -47,6 +47,7 @@ SEED_TABULACAO_CODIGOS = (
     "NEG:SUCESSO",
     "NEG:VENDA",
     "NEG:RECUSADO",
+    "NEG:ESCALADO",
 )
 
 AGENT_ATIVO_DESCRIPTION = (
@@ -290,6 +291,17 @@ def _seed_tabulacao_specs() -> list[dict]:
             "categoria": TabulacaoCategoria.NEGOCIO,
             "is_terminal": True,
             "descricao": "Cliente recusou explicitamente a oferta (intent cancel).",
+        },
+        {
+            "codigo": "NEG:ESCALADO",
+            "nome": "Escalado para humano",
+            "categoria": TabulacaoCategoria.NEGOCIO,
+            "is_terminal": True,
+            "descricao": (
+                "Atendimento do bot encerrado por escalonamento para humano "
+                "(pedido explícito, baixa confiança ou reclamação grave). "
+                "is_terminal=true do ponto de vista do bot; o lead segue com atendente."
+            ),
         },
     ]
 

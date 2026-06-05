@@ -9,6 +9,7 @@ Política de atribuição (T-2):
 Decisões documentadas:
   - purchase → NEG:VENDA (venda concretizada, não NEG:SUCESSO genérico)
   - cancel → NEG:RECUSADO (recusa explícita; catálogo ampliado na T-2)
+  - escalonamento (B-1) → NEG:ESCALADO via flag ``escalated`` ou intent escalate
   - nao_atendido → NEG:AUSENTE (cadência/sweep sem resposta do cliente)
   - erro → sem tabulação (falha técnica de acionamento; eixo status já cobre)
   - em_andamento sem sinal claro → sem tabulação (evita ruído na planilha)
@@ -22,7 +23,11 @@ from typing import Final
 INTENT_TO_CODIGO: dict[str, str] = {
     "purchase": "NEG:VENDA",
     "cancel": "NEG:RECUSADO",
+    "escalate": "NEG:ESCALADO",
 }
+
+# Tabulação de sistema quando o bot encaminha para humano (B-1).
+ESCALATION_TABULACAO_CODIGO: Final[str] = "NEG:ESCALADO"
 
 STATUS_TO_CODIGO: dict[str, str] = {
     "nao_atendido": "NEG:AUSENTE",
@@ -55,6 +60,11 @@ def normalize_sip_code(sip_code: str) -> str | None:
         candidate = f"SIP:{raw}"
         return candidate if candidate in SIP_RESPONSE_CODES else None
     return None
+
+
+def resolve_tabulacao_for_escalation() -> str:
+    """Código fixo quando ``should_escalate`` — encerramento do atendimento pelo bot."""
+    return ESCALATION_TABULACAO_CODIGO
 
 
 def resolve_tabulacao_by_rules(

@@ -123,6 +123,10 @@ class Settings(BaseSettings):
     service_level_target_seconds: int = 20
     queue_abandon_timeout_seconds: int = 60
 
+    # B-2 — modo humano após escalonamento (Redis TTL + mensagem ocasional)
+    human_mode_ttl_seconds: int = 14400  # 4h — timeout antes de devolver ao bot
+    human_mode_notify_interval_seconds: int = 300  # 5min — throttle msg de espera
+
     def resolved_channel_weights(self) -> dict[str, int]:
         from app.core.activation_defaults import DEFAULT_CHANNEL_WEIGHTS
 
