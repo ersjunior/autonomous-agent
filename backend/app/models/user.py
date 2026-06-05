@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.agent import Agent
+    from app.models.campaign import Campaign
+    from app.models.channel import Channel
+    from app.models.knowledge import KBDocument
+    from app.models.lead import Lead
+    from app.models.tabulacao import Tabulacao
 
 
 class User(Base):
@@ -33,6 +42,10 @@ class User(Base):
     leads: Mapped[list[Lead]] = relationship(back_populates="user", cascade="all, delete-orphan")
     campaigns: Mapped[list[Campaign]] = relationship(back_populates="user", cascade="all, delete-orphan")
     tabulacoes: Mapped[list["Tabulacao"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    kb_documents: Mapped[list["KBDocument"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )

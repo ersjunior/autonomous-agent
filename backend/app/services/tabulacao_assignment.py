@@ -116,6 +116,7 @@ async def apply_tabulacao(
     origem: str | None = None,
     conversation_text: str | None = None,
     escalated: bool = False,
+    tabulacao_codigo: str | None = None,
 ) -> bool:
     """
     Atribui tabulação ao LeadInteraction se houver match.
@@ -125,19 +126,22 @@ async def apply_tabulacao(
     status = (status_interno or lead_interaction.status or "").lower()
     ch = channel or lead_interaction.channel_type
 
-    if sip_code is None and not escalated and not is_classification_moment(status, intent):
-        return False
-
     codigo: str | None = None
     tab_origem: str | None = origem
 
-    if escalated:
+    if tabulacao_codigo:
+        codigo = tabulacao_codigo.strip().upper()
+        tab_origem = tab_origem or "HANDOFF_FINALIZE"
+    elif sip_code is None and not escalated and not is_classification_moment(status, intent):
+        return False
+
+    if codigo is None and escalated:
         codigo = resolve_tabulacao_for_escalation()
         tab_origem = tab_origem or "ESCALATION"
-    elif sip_code:
+    elif codigo is None and sip_code:
         codigo = resolve_tabulacao_by_sip(sip_code)
         tab_origem = tab_origem or "SIP"
-    else:
+    elif codigo is None:
         codigo = resolve_tabulacao_by_rules(intent, status, ch)
         if codigo:
             tab_origem = tab_origem or "INTENT"

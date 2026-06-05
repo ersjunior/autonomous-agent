@@ -201,13 +201,13 @@ async def test_ttl_expiry(session) -> bool:
     uid = f"B2TTL-{uuid.uuid4().hex[:8]}"
     exit_human_mode(ch, uid)
 
-    original_ttl = settings.human_mode_ttl_seconds
-    settings.human_mode_ttl_seconds = 2
+    original_ttl = settings.human_handoff_finalize_ttl_seconds
+    settings.human_handoff_finalize_ttl_seconds = 2
     try:
         enter_human_mode(ch, uid)
         ok = _ok("modo humano ativo", is_in_human_mode(ch, uid))
         time.sleep(3)
-        ok &= _ok("TTL expirou", not is_in_human_mode(ch, uid))
+        ok &= _ok("TTL Redis expirou (finalize_ttl)", not is_in_human_mode(ch, uid))
 
         agent = await _get_receptive_agent(session)
         route_mock = AsyncMock(
@@ -230,7 +230,7 @@ async def test_ttl_expiry(session) -> bool:
                 )
         ok &= _ok("bot atende após TTL", route_mock.await_count == 1)
     finally:
-        settings.human_mode_ttl_seconds = original_ttl
+        settings.human_handoff_finalize_ttl_seconds = original_ttl
         exit_human_mode(ch, uid)
     return ok
 

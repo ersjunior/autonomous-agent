@@ -110,6 +110,7 @@ services:
       - avatar_video:/workspace/avatar_video:rw
       - ../../infra/docker/coqui-tts/voices:/voices:rw
       - ../../infra/docker/sadtalker/avatars:/avatars:rw
+      - kb_uploads:/workspace/kb_uploads:rw
     working_dir: /workspace/backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
@@ -162,6 +163,7 @@ services:
       - avatar_video:/workspace/avatar_video:rw
       - ../../infra/docker/coqui-tts/voices:/voices:rw
       - ../../infra/docker/sadtalker/avatars:/avatars:rw
+      - kb_uploads:/workspace/kb_uploads:rw
     working_dir: /workspace/backend
     command: celery -A worker.celery_app worker --loglevel=info
 
@@ -294,3 +296,4 @@ volumes:
   devolutivas:
   voice_audio:
   avatar_video:
+  kb_uploads:

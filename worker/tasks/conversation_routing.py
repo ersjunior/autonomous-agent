@@ -122,11 +122,20 @@ def agent_personality_context(agent: Agent) -> str:
 
 
 def agent_routing_metadata(agent: Agent) -> dict[str, Any]:
+    """
+    Metadados injetados no AgentState via ``build_initial_state``.
+
+    ``owner_user_id``: dono do agente no dashboard (``agent.user_id``). Para agentes
+    ``is_system`` (ex.: Agente_Receptivo seed), é o usuário admin do seed — a busca KB
+    ainda inclui documentos institucionais (``is_system`` na KB). Outbound sobrescreve
+    com ``campaign.user_id`` em ``_agent_context_for_campaign``.
+    """
     return {
         "agent_id": str(agent.id),
         "agent_name": agent.name,
         "agent_mode": agent.mode.value,
         "agent_personality": agent_personality_context(agent),
+        "owner_user_id": str(agent.user_id),
     }
 
 

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 import asyncpg
 from pgvector.asyncpg import register_vector
 
-from agents.provider_factory import ProviderFactory
+from agents.services.embedding_service import embed_text
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -49,8 +49,7 @@ class LongTermMemory:
         return self._pool
 
     async def _embed(self, text: str) -> list[float]:
-        llm = ProviderFactory.get_llm()
-        return await llm.embed(text)
+        return await embed_text(text)
 
     async def save_interaction(
         self,

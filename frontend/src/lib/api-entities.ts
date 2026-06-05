@@ -207,3 +207,31 @@ export async function deleteLeadBase(id: string): Promise<void> {
     await parseError(res, "Erro ao excluir base de leads");
   }
 }
+
+export async function fetchKnowledgeDocuments(): Promise<import("@/lib/types/knowledge").KBDocument[]> {
+  const res = await apiFetch("/api/v1/knowledge/");
+  if (!res.ok) {
+    await parseError(res, "Erro ao listar conhecimento");
+  }
+  return res.json();
+}
+
+export async function createManualKnowledge(
+  payload: import("@/lib/types/knowledge").KBManualCreatePayload
+): Promise<import("@/lib/types/knowledge").KBDocument> {
+  const res = await apiFetch("/api/v1/knowledge/manual", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    await parseError(res, "Erro ao criar documento manual");
+  }
+  return res.json();
+}
+
+export async function deleteKnowledgeDocument(id: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/knowledge/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    await parseError(res, "Erro ao excluir documento");
+  }
+}

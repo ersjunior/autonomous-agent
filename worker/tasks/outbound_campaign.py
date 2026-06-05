@@ -67,8 +67,14 @@ def _resolve_recipient(lead: Lead, channel_type: str) -> str | None:
     return None
 
 
-def _agent_context_for_campaign(agent: Agent, *, followup: bool = False) -> dict:
+def _agent_context_for_campaign(
+    agent: Agent,
+    campaign: Campaign,
+    *,
+    followup: bool = False,
+) -> dict:
     ctx = agent_routing_metadata(agent)
+    ctx["owner_user_id"] = str(campaign.user_id)
     personality = agent_personality_context(agent)
     if followup:
         personality = f"{personality}\n\n{FOLLOWUP_TRIGGER_MESSAGE}"
@@ -256,7 +262,7 @@ async def _send_on_channel(
         raise ValueError(f"Campaign {campaign.id} has no agent")
 
     prompt = FOLLOWUP_TRIGGER_MESSAGE if followup else _build_initial_message(lead, campaign)
-    agent_context = _agent_context_for_campaign(agent, followup=followup)
+    agent_context = _agent_context_for_campaign(agent, campaign, followup=followup)
     result = await route_message(
         prompt,
         channel,

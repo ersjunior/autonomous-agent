@@ -124,8 +124,24 @@ class Settings(BaseSettings):
     queue_abandon_timeout_seconds: int = 60
 
     # B-2 — modo humano após escalonamento (Redis TTL + mensagem ocasional)
-    human_mode_ttl_seconds: int = 14400  # 4h — timeout antes de devolver ao bot
+    # Legado: alias do queue TTL curto; preferir human_handoff_queue_ttl_seconds (H-2).
+    human_mode_ttl_seconds: int = 1800
     human_mode_notify_interval_seconds: int = 300  # 5min — throttle msg de espera
+
+    # H-2 — ciclo de finalização do handoff humano
+    human_handoff_queue_ttl_seconds: int = 1800  # 30min sem assumir → devolve ao bot
+    human_handoff_finalize_ttl_seconds: int = 14400  # 4h após assumir → auto NEG:ABANDONO
+    human_handoff_sweep_seconds: int = 60  # intervalo do Beat sweep_human_handoff_timeouts
+
+    # H-1 — handoff humano: notificação do operador + link wa.me ao lead no escalonamento
+    human_handoff_whatsapp: str = ""  # E.164 do atendente; vazio = desabilitado
+    human_handoff_enabled: bool = True  # requer número preenchido para ativar na prática
+
+    # KB-1 — base de conhecimento documental
+    kb_uploads_root: str = "/workspace/kb_uploads"
+    kb_chunk_size: int = 512  # tokens aproximados por chunk
+    kb_chunk_overlap: int = 64  # tokens de overlap entre chunks
+    kb_max_upload_bytes: int = 10 * 1024 * 1024  # 10 MB
 
     def resolved_channel_weights(self) -> dict[str, int]:
         from app.core.activation_defaults import DEFAULT_CHANNEL_WEIGHTS
@@ -148,7 +164,13 @@ class Settings(BaseSettings):
     )
     rag_top_k: int = 5
     rag_similarity_threshold: float = 0.0
+    # KB-2 — recuperação semântica na base documental (mais seletiva que memória de contato)
+    kb_top_k: int = 0  # 0 = usa rag_top_k
+    kb_similarity_threshold: float = 0.62
     response_max_tokens: int = 0
+
+    def resolved_kb_top_k(self) -> int:
+        return self.rag_top_k if self.kb_top_k <= 0 else self.kb_top_k
 
     def require_public_base_url(self) -> str:
         """Base URL pública exigida para Twilio buscar TwiML de voz outbound."""

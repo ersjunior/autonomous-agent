@@ -24,7 +24,11 @@ from app.services.capacity_service import (
     release_receptive_handle,
     try_acquire_receptive_capacity,
 )
-from app.services.human_handoff import enter_human_mode, handle_human_mode_inbound
+from app.services.human_handoff import (
+    enter_human_mode,
+    handle_escalation_handoff,
+    handle_human_mode_inbound,
+)
 from app.services.queue_entry_service import (
     record_receptive_answered,
     record_receptive_enqueue,
@@ -108,7 +112,16 @@ async def attend_inbound_message(
     )
 
     if escalated:
-        enter_human_mode(ch, user_id)
+        intent = result.get("intent", "other") or "other"
+        enter_human_mode(ch, user_id, intent=intent)
+        await handle_escalation_handoff(
+            session,
+            channel=ch,
+            user_id=user_id,
+            lead=lead,
+            message=message,
+            intent=intent,
+        )
         release_contact_capacity(ch, user_id)
         if capacity is not None:
             release_receptive_handle(capacity, ch)

@@ -31,6 +31,8 @@ celery.conf.update(
         "worker.tasks.activation_scheduler",
         "worker.tasks.receptive_queue",
         "worker.tasks.queue_abandon_sweep",
+        "worker.tasks.kb_ingestion",
+        "worker.tasks.human_handoff_sweep",
     ),
     beat_schedule={
         "gerar-devolutivas-diarias": {
@@ -60,6 +62,11 @@ celery.conf.update(
         "sweep-queue-abandonment": {
             "task": "worker.tasks.queue_abandon_sweep.sweep_queue_abandonment",
             "schedule": crontab(minute="*/2"),
+        },
+        # H-2: handoff humano — queue timeout (devolve ao bot) + finalize timeout (NEG:ABANDONO)
+        "sweep-human-handoff-timeouts": {
+            "task": "worker.tasks.human_handoff_sweep.sweep_human_handoff_timeouts_task",
+            "schedule": float(settings.human_handoff_sweep_seconds),
         },
     },
 )

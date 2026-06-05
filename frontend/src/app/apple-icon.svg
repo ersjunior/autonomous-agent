@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="Autonomous Agent">
+  <rect width="180" height="180" rx="40" fill="#7c3aed"/>
+  <g fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M90 62V45h-17"/>
+    <rect x="50" y="62" width="80" height="62" rx="10"/>
+    <path d="M34 82h8M138 82h8M76 79v8M104 79v8"/>
+  </g>
+</svg>

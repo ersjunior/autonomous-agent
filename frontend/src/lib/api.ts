@@ -183,12 +183,51 @@ export async function getCapacity(): Promise<Response> {
 export interface HandoffContact {
   channel: string;
   user_id: string;
+  lead_name: string | null;
   escalated_at: string | null;
+  human_assumed_at: string | null;
+  assumed_by: string | null;
+  is_assumed: boolean;
   ttl_seconds: number | null;
+}
+
+export interface TabulacaoCatalogItem {
+  id: string;
+  codigo: string;
+  nome: string;
+  categoria: string;
+  is_terminal: boolean;
 }
 
 export async function getActiveHandoffs(): Promise<Response> {
   return apiFetch("/api/v1/handoff/active");
+}
+
+export async function assumeHandoff(
+  channel: string,
+  user_id: string
+): Promise<Response> {
+  return apiFetch("/api/v1/handoff/assume", {
+    method: "POST",
+    body: JSON.stringify({ channel, user_id }),
+  });
+}
+
+export async function finalizeHandoff(
+  channel: string,
+  user_id: string,
+  tabulacao_codigo: string,
+  status_interno?: string
+): Promise<Response> {
+  return apiFetch("/api/v1/handoff/finalize", {
+    method: "POST",
+    body: JSON.stringify({
+      channel,
+      user_id,
+      tabulacao_codigo,
+      ...(status_interno ? { status_interno } : {}),
+    }),
+  });
 }
 
 export async function reactivateHandoff(
@@ -199,6 +238,22 @@ export async function reactivateHandoff(
     method: "POST",
     body: JSON.stringify({ channel, user_id }),
   });
+}
+
+export async function getTabulacaoCatalog(): Promise<Response> {
+  return apiFetch("/api/v1/tabulacoes/catalog");
+}
+
+export async function uploadKnowledgeDocument(
+  file: File,
+  title?: string
+): Promise<Response> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (title?.trim()) {
+    formData.append("title", title.trim());
+  }
+  return apiUpload("/api/v1/knowledge/upload", formData);
 }
 
 export async function getSettings(): Promise<Response> {

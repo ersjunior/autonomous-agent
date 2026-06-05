@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.app_setting import AppSetting
+from agents.channels.phone import normalize_phone_digits, to_e164
 from app.services.settings_schema import (
     AGENT_SYSTEM_PROMPT_MAX_LENGTH,
     CATEGORY_LABELS,
@@ -90,6 +91,42 @@ def _coerce_number(
     return value
 
 
+def _coerce_bool_setting(raw: str | bool | None) -> bool:
+    if raw is None:
+        return False
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ("true", "1", "yes", "on")
+
+
+def _serialize_bool_setting(value: Any) -> str:
+    return "true" if _coerce_bool_setting(value) else "false"
+
+
+def _validate_e164_whatsapp(raw: str) -> str:
+    """Normaliza número do operador para E.164; rejeita inválidos."""
+    stripped = raw.strip()
+    if not stripped:
+        return ""
+    try:
+        e164 = to_e164(stripped)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Número WhatsApp do atendente inválido. "
+                "Use E.164 (+5511999999999) ou DDD+número brasileiro (ex.: 11999999999)."
+            ),
+        ) from exc
+    digits = normalize_phone_digits(e164)
+    if len(digits) < 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Número WhatsApp do atendente inválido (poucos dígitos).",
+        )
+    return e164
+
+
 def _coerce_value(key: str, raw: str | None, *, clamp_numbers: bool = False) -> Any:
     """Convert a DB/API string into the Python type declared in settings_schema."""
     if raw is None:
@@ -97,6 +134,12 @@ def _coerce_value(key: str, raw: str | None, *, clamp_numbers: bool = False) -> 
     schema = SCHEMA_BY_KEY.get(key)
     if schema is None:
         return raw
+
+    if key == "human_handoff_enabled":
+        return _coerce_bool_setting(raw)
+
+    if key == "human_handoff_whatsapp":
+        return raw.strip() if raw else ""
 
     if schema.field_type == "number":
         return _coerce_number(key, raw, clamp=clamp_numbers)
@@ -290,6 +333,12 @@ def _serialize_managed_value(key: str, value: Any) -> str | None:
                 ),
             )
         return str_value
+
+    if key == "human_handoff_enabled":
+        return _serialize_bool_setting(str_value)
+
+    if key == "human_handoff_whatsapp":
+        return _validate_e164_whatsapp(str_value) if str_value else ""
 
     return str_value if str_value else None
 

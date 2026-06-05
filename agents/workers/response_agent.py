@@ -49,6 +49,29 @@ def _append_current_user_message(messages: list[dict], message: str) -> None:
     messages.append({"role": "user", "content": message})
 
 
+def format_kb_context_block(kb_chunks: list[dict]) -> str | None:
+    """Bloco institucional — precede a memória de contato no prompt."""
+    if not kb_chunks:
+        return None
+
+    lines = [
+        "Base de conhecimento da empresa (informações institucionais — use para responder "
+        "com precisão sobre horários, políticas, preços e produtos; não invente além disto):",
+    ]
+    for item in kb_chunks:
+        content = (item.get("content") or "").strip()
+        if not content:
+            continue
+        title = (item.get("document_title") or "Documento").strip()
+        sim = item.get("similarity")
+        suffix = f" [similaridade {sim:.2f}]" if isinstance(sim, (int, float)) else ""
+        lines.append(f"- [{title}]{suffix}: {content}")
+
+    if len(lines) <= 1:
+        return None
+    return "\n".join(lines)
+
+
 def format_rag_context_block(rag_memories: list[dict]) -> str | None:
     """Monta bloco de sistema com interações antigas (não confundir com histórico Redis)."""
     if not rag_memories:
@@ -80,32 +103,42 @@ def build_response_messages(
     channel: str,
     *,
     rag_memories: list[dict] | None = None,
+    kb_chunks: list[dict] | None = None,
     agent_personality: str | None = None,
     agent_mode: str | None = None,
 ) -> list[dict]:
-    """Monta mensagens para o LLM de resposta (exposto para testes e generate_response)."""
+    """
+    Monta mensagens para o LLM de resposta (exposto para testes e generate_response).
+
+    Ordem dos blocos de sistema:
+      1. prompt global → 2. personality → 3. RECEPTIVE (se aplicável)
+      4. KB institucional (precedência factual) → 5. memória de contato
+      6. canal/intent/entidades → 7. histórico → 8. mensagem atual
+    """
     context = (
         f"Canal: {channel}\n"
         f"Intenção detectada: {intent}\n"
         f"Entidades: {entities}"
     )
 
-    messages: list[dict] = [
-        {"role": "system", "content": _resolve_system_prompt()},
-        {"role": "system", "content": context},
-    ]
+    messages: list[dict] = [{"role": "system", "content": _resolve_system_prompt()}]
 
     if agent_personality:
-        messages.insert(1, {"role": "system", "content": agent_personality})
+        messages.append({"role": "system", "content": agent_personality})
 
     mode = (agent_mode or "").upper()
     if mode == "RECEPTIVE":
-        messages.insert(2 if agent_personality else 1, {"role": "system", "content": RECEPTIVE_BEHAVIOR_PROMPT})
+        messages.append({"role": "system", "content": RECEPTIVE_BEHAVIOR_PROMPT})
+
+    kb_block = format_kb_context_block(kb_chunks or [])
+    if kb_block:
+        messages.append({"role": "system", "content": kb_block})
 
     rag_block = format_rag_context_block(rag_memories or [])
     if rag_block:
         messages.append({"role": "system", "content": rag_block})
 
+    messages.append({"role": "system", "content": context})
     messages.extend(_history_to_messages(history))
     _append_current_user_message(messages, message)
     return messages
@@ -118,6 +151,7 @@ async def generate_response(
     history: list[dict],
     channel: str,
     rag_memories: list[dict] | None = None,
+    kb_chunks: list[dict] | None = None,
     agent_personality: str | None = None,
     agent_mode: str | None = None,
 ) -> str:
@@ -130,6 +164,7 @@ async def generate_response(
         history,
         channel,
         rag_memories=rag_memories,
+        kb_chunks=kb_chunks,
         agent_personality=agent_personality,
         agent_mode=agent_mode,
     )
@@ -141,9 +176,13 @@ async def generate_response(
             len(messages),
         )
 
+    kb_block = format_kb_context_block(kb_chunks or [])
+    if kb_block:
+        logger.debug("KB context injected (%s chunks)", len(kb_chunks or []))
+
     rag_block = format_rag_context_block(rag_memories or [])
     if rag_block:
-        logger.debug("RAG context injected (%s memories)", len(rag_memories or []))
+        logger.debug("RAG memory context injected (%s memories)", len(rag_memories or []))
 
     max_tokens = (
         settings.response_max_tokens if settings.response_max_tokens > 0 else None

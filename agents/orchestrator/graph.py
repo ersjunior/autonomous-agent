@@ -9,6 +9,7 @@ from agents.memory.long_term import LongTermMemory
 from agents.memory.short_term import ShortTermMemory
 from agents.orchestrator.router import route_after_escalation_check
 from agents.orchestrator.state import AgentState
+from agents.tools.knowledge_base import retrieve_kb_chunks
 from agents.workers.intent_agent import identify_intent as run_identify_intent
 from agents.workers.response_agent import generate_response as run_generate_response
 
@@ -107,9 +108,13 @@ async def escalate(state: AgentState) -> AgentState:
 
 
 async def generate_response(state: AgentState) -> AgentState:
-    # RAG no nó do grafo: tem user_id + message; falha não bloqueia a resposta.
+    # Dois RAGs complementares: memória do contato + base documental do dono/institucional.
     rag_memories = await _long_term_memory.retrieve_similar_memories(
         state["user_id"],
+        state["message"],
+    )
+    kb_chunks = await retrieve_kb_chunks(
+        state.get("owner_user_id"),
         state["message"],
     )
     text = await run_generate_response(
@@ -119,10 +124,11 @@ async def generate_response(state: AgentState) -> AgentState:
         state.get("conversation_history", []),
         state.get("channel", ""),
         rag_memories=rag_memories,
+        kb_chunks=kb_chunks,
         agent_personality=state.get("agent_personality"),
         agent_mode=state.get("agent_mode"),
     )
-    return {"response": text, "rag_memories": rag_memories}
+    return {"response": text, "rag_memories": rag_memories, "kb_chunks": kb_chunks}
 
 
 async def send_response(state: AgentState) -> AgentState:

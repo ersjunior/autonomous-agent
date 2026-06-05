@@ -93,3 +93,21 @@ def resolve_tabulacao_by_rules(
 def resolve_tabulacao_by_sip(sip_code: str) -> str | None:
     """Mapeia código de resposta SIP para tabulação TELEFONIA."""
     return normalize_sip_code(sip_code)
+
+
+# H-2 — status interno derivado da tabulação escolhida na finalização manual/auto.
+TABULACAO_TO_STATUS: dict[str, str] = {
+    "NEG:SUCESSO": "convertido",
+    "NEG:VENDA": "convertido",
+    "NEG:RECUSADO": "recusou",
+    "NEG:ABANDONO": "nao_atendido",
+    "NEG:AUSENTE": "nao_atendido",
+}
+
+AUTO_ABANDON_TABULACAO_CODIGO: Final[str] = "NEG:ABANDONO"
+
+
+def status_from_tabulacao_codigo(codigo: str) -> str:
+    """Deriva status terminal do código de tabulação (fallback: nao_atendido)."""
+    key = (codigo or "").strip().upper()
+    return TABULACAO_TO_STATUS.get(key, "nao_atendido")

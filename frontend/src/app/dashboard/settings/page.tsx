@@ -229,11 +229,17 @@ function SettingFieldInput({
     );
   }
 
+  const placeholder =
+    field.key === "human_handoff_whatsapp"
+      ? "+55 11 99999-9999 (E.164 ou DDD+número)"
+      : undefined;
+
   return (
     <input
       type="text"
       className={inputClass}
       value={value}
+      placeholder={placeholder}
       onChange={(e) => onChange(field.key, e.target.value)}
     />
   );
@@ -739,8 +745,10 @@ export default function SettingsPage() {
           {activeTab === "agent" && (
             <div className="glass-card space-y-6 p-6">
               <p className="text-sm text-muted-foreground">
-                Temperaturas, prompt do sistema, RAG e limite de tokens — lidos do banco a
-                cada mensagem (sem reiniciar containers).
+                Temperaturas, prompt do sistema, RAG, limite de tokens e número WhatsApp do
+                atendente humano — lidos do banco a cada mensagem (sem reiniciar containers).
+                No escalonamento, o lead recebe o link wa.me do operador e o operador é
+                notificado no WhatsApp dele.
               </p>
               {visibleCategories.map((cat) => renderCategoryFields(cat, null))}
             </div>

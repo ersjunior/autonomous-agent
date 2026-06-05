@@ -214,6 +214,21 @@ MANAGED_SETTINGS: tuple[SettingFieldSchema, ...] = (
         step=64,
         default_value="0",
     ),
+    SettingFieldSchema(
+        key="human_handoff_enabled",
+        label="Handoff humano ativo (notificar operador no escalonamento)",
+        category="agent",
+        field_type="enum",
+        options=("true", "false"),
+        default_value="true",
+    ),
+    SettingFieldSchema(
+        key="human_handoff_whatsapp",
+        label="WhatsApp do atendente humano (E.164 ou DDD+número)",
+        category="agent",
+        field_type="string",
+        default_value="",
+    ),
     # Read-only (env / migration)
     SettingFieldSchema(
         key="embedding_dimensions",
