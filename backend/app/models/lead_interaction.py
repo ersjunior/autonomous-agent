@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from app.models.campaign import Campaign
     from app.models.interaction import Interaction
     from app.models.lead import Lead
+    from app.models.tabulacao import Tabulacao
 
 
 class LeadInteraction(Base):
@@ -52,6 +53,27 @@ class LeadInteraction(Base):
         ForeignKey("interactions.id", ondelete="SET NULL"),
         nullable=True,
     )
+    tabulacao_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tabulacoes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    tabulacao_origem: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        doc="Origem da tabulação: INTENT, IA, SIP ou MANUAL (preenchido na T-2).",
+    )
+    tabulacao_aplicada_em: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Timestamp em que a tabulação foi aplicada (preenchido na T-2).",
+    )
+    twilio_call_sid: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+        doc="Call SID Twilio para correlação SIP (gancho futuro).",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -61,3 +83,4 @@ class LeadInteraction(Base):
     lead: Mapped[Lead] = relationship(back_populates="lead_interactions")
     campaign: Mapped[Campaign] = relationship(back_populates="lead_interactions")
     last_interaction: Mapped[Interaction | None] = relationship(foreign_keys=[last_interaction_id])
+    tabulacao: Mapped[Tabulacao | None] = relationship(back_populates="lead_interactions")

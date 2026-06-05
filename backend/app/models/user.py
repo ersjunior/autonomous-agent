@@ -32,3 +32,7 @@ class User(Base):
     channels: Mapped[list[Channel]] = relationship(back_populates="user", cascade="all, delete-orphan")
     leads: Mapped[list[Lead]] = relationship(back_populates="user", cascade="all, delete-orphan")
     campaigns: Mapped[list[Campaign]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    tabulacoes: Mapped[list["Tabulacao"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )

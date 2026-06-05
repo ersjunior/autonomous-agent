@@ -8,6 +8,11 @@ import type {
   CampaignUpdatePayload,
 } from "@/lib/types/campaigns";
 import type { Lead } from "@/lib/types/leads";
+import type {
+  Tabulacao,
+  TabulacaoCreatePayload,
+  TabulacaoUpdatePayload,
+} from "@/lib/types/tabulacoes";
 
 async function parseError(res: Response, context: string): Promise<never> {
   throw new Error(await formatApiError(res, context));
@@ -153,6 +158,46 @@ export async function deleteLead(id: string): Promise<void> {
   const res = await apiFetch(`/api/v1/leads/${id}`, { method: "DELETE" });
   if (!res.ok) {
     await parseError(res, "Erro ao excluir lead");
+  }
+}
+
+export async function fetchTabulacoes(): Promise<Tabulacao[]> {
+  const res = await apiFetch("/api/v1/tabulacoes/");
+  if (!res.ok) {
+    await parseError(res, "Erro ao listar tabulações");
+  }
+  return res.json();
+}
+
+export async function createTabulacao(payload: TabulacaoCreatePayload): Promise<Tabulacao> {
+  const res = await apiFetch("/api/v1/tabulacoes/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    await parseError(res, "Erro ao criar tabulação");
+  }
+  return res.json();
+}
+
+export async function updateTabulacao(
+  id: string,
+  payload: TabulacaoUpdatePayload,
+): Promise<Tabulacao> {
+  const res = await apiFetch(`/api/v1/tabulacoes/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    await parseError(res, "Erro ao atualizar tabulação");
+  }
+  return res.json();
+}
+
+export async function deleteTabulacao(id: string): Promise<void> {
+  const res = await apiFetch(`/api/v1/tabulacoes/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    await parseError(res, "Erro ao excluir tabulação");
   }
 }
 

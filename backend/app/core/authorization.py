@@ -17,7 +17,7 @@ IMPORT_LEAD_DELETE_DETAIL = "Leads de base importada são somente leitura"
 
 
 def record_owner_id(record: Any) -> uuid.UUID:
-    """Resolve owner user_id for Agent, Channel, Campaign, Lead, or LeadBase."""
+    """Resolve owner user_id for Agent, Channel, Tabulacao, Campaign, Lead, or LeadBase."""
     if isinstance(record, LeadBase):
         campaign = record.campaign
         if campaign is None:

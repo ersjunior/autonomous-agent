@@ -14,6 +14,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.lead import Lead
 from app.models.lead_base import LeadBase
@@ -31,7 +32,9 @@ FIXED_COLUMNS: list[tuple[str, str]] = [
 
 DEVOLUTIVA_COLUMNS: list[str] = [
     "Data Acionamento",
-    "Status Acionamento",
+    "Status operacional",
+    "Tabulação",
+    "Categoria Tabulação",
     "Canal Atendimento",
     "Data Último Contato",
     "Devolutiva",
@@ -92,6 +95,7 @@ async def _load_latest_interactions_by_lead(
 
     result = await session.execute(
         select(LeadInteraction)
+        .options(selectinload(LeadInteraction.tabulacao))
         .where(LeadInteraction.lead_id.in_(lead_ids))
         .order_by(
             LeadInteraction.lead_id,
@@ -137,9 +141,19 @@ def _build_workbook(
             col_index += 1
 
         interaction = latest_by_lead.get(lead.id)
+        tab_nome = ""
+        tab_categoria = ""
+        if interaction and interaction.tabulacao:
+            tab_nome = interaction.tabulacao.nome
+            tab_categoria = interaction.tabulacao.categoria or ""
+        elif interaction and interaction.tabulacao_id:
+            tab_nome = "—"
+
         devolutiva_values = [
             _format_datetime(interaction.data_acionamento) if interaction else "",
             _status_label(interaction.status if interaction else "pendente"),
+            tab_nome,
+            tab_categoria,
             _channel_label(interaction.channel_type if interaction else ""),
             _format_datetime(interaction.data_ultimo_contato) if interaction else "",
             interaction.devolutiva if interaction and interaction.devolutiva else "",

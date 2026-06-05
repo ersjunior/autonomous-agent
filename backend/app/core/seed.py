@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.models.agent import Agent, AgentMode
 from app.models.channel import Channel, ChannelType
+from app.models.tabulacao import Tabulacao, TabulacaoCategoria
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,24 @@ SEED_CHANNEL_NAMES = (
 SEED_AGENT_NAMES = (
     "Agente_Ativo",
     "Agente_Receptivo",
+)
+
+SEED_TABULACAO_CODIGOS = (
+    "SIP:200",
+    "SIP:486",
+    "SIP:480",
+    "SIP:487",
+    "SIP:404",
+    "SIP:603",
+    "SIP:408",
+    "SIP:484",
+    "NEG:ABANDONO",
+    "NEG:NUM_ERRADO",
+    "NEG:AUSENTE",
+    "NEG:DESLIGOU",
+    "NEG:SUCESSO",
+    "NEG:VENDA",
+    "NEG:RECUSADO",
 )
 
 AGENT_ATIVO_DESCRIPTION = (
@@ -247,8 +266,80 @@ async def seed_default_agents(db: AsyncSession) -> None:
         logger.exception("seed_default_agents falhou; startup continua")
 
 
+def _seed_tabulacao_specs() -> list[dict]:
+    return [
+        # SIP — telefonia
+        {"codigo": "SIP:200", "nome": "Atendida", "categoria": TabulacaoCategoria.TELEFONIA, "is_terminal": False},
+        {"codigo": "SIP:486", "nome": "Ocupado", "categoria": TabulacaoCategoria.TELEFONIA, "is_terminal": True},
+        {"codigo": "SIP:480", "nome": "Indisponível", "categoria": TabulacaoCategoria.TELEFONIA, "is_terminal": True},
+        {"codigo": "SIP:487", "nome": "Cancelada", "categoria": TabulacaoCategoria.TELEFONIA, "is_terminal": True},
+        {"codigo": "SIP:404", "nome": "Número inexistente", "categoria": TabulacaoCategoria.TELEFONIA, "is_terminal": True},
+        {"codigo": "SIP:603", "nome": "Recusada", "categoria": TabulacaoCategoria.TELEFONIA, "is_terminal": True},
+        {"codigo": "SIP:408", "nome": "Sem resposta/Timeout", "categoria": TabulacaoCategoria.TELEFONIA, "is_terminal": True},
+        {"codigo": "SIP:484", "nome": "Número incompleto", "categoria": TabulacaoCategoria.TELEFONIA, "is_terminal": True},
+        # Negócio
+        {"codigo": "NEG:ABANDONO", "nome": "Abandono", "categoria": TabulacaoCategoria.NEGOCIO, "is_terminal": True},
+        {"codigo": "NEG:NUM_ERRADO", "nome": "Número Errado", "categoria": TabulacaoCategoria.NEGOCIO, "is_terminal": True},
+        {"codigo": "NEG:AUSENTE", "nome": "Cliente Ausente", "categoria": TabulacaoCategoria.NEGOCIO, "is_terminal": True},
+        {"codigo": "NEG:DESLIGOU", "nome": "Desligou", "categoria": TabulacaoCategoria.NEGOCIO, "is_terminal": True},
+        {"codigo": "NEG:SUCESSO", "nome": "Sucesso", "categoria": TabulacaoCategoria.NEGOCIO, "is_terminal": True},
+        {"codigo": "NEG:VENDA", "nome": "Venda", "categoria": TabulacaoCategoria.NEGOCIO, "is_terminal": True},
+        {
+            "codigo": "NEG:RECUSADO",
+            "nome": "Recusado",
+            "categoria": TabulacaoCategoria.NEGOCIO,
+            "is_terminal": True,
+            "descricao": "Cliente recusou explicitamente a oferta (intent cancel).",
+        },
+    ]
+
+
+async def seed_default_tabulacoes(db: AsyncSession) -> None:
+    """Cria catálogo SIP + status de negócio do admin (idempotente por codigo entre is_system)."""
+    try:
+        result = await db.execute(select(User).where(User.email == DEFAULT_ADMIN_EMAIL))
+        admin = result.scalar_one_or_none()
+        if admin is None:
+            logger.warning(
+                "seed_default_tabulacoes: admin %s não encontrado; pulando seed de tabulações",
+                DEFAULT_ADMIN_EMAIL,
+            )
+            return
+
+        created = 0
+        for spec in _seed_tabulacao_specs():
+            existing = await db.execute(
+                select(Tabulacao).where(
+                    Tabulacao.is_system.is_(True),
+                    Tabulacao.codigo == spec["codigo"],
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                continue
+
+            db.add(
+                Tabulacao(
+                    user_id=admin.id,
+                    nome=spec["nome"],
+                    codigo=spec["codigo"],
+                    categoria=spec["categoria"].value,
+                    is_terminal=spec["is_terminal"],
+                    is_system=True,
+                    descricao=spec.get("descricao"),
+                )
+            )
+            created += 1
+
+        if created:
+            await db.commit()
+            logger.info("seed_default_tabulacoes: %d tabulação(ões) padrão criada(s)", created)
+    except Exception:
+        await db.rollback()
+        logger.exception("seed_default_tabulacoes falhou; startup continua")
+
+
 async def ensure_seed_flags(db: AsyncSession) -> None:
-    """Garante is_system=true nos canais e agentes seed (idempotente por nome)."""
+    """Garante is_system=true nos canais, agentes e tabulações seed (idempotente)."""
     try:
         result = await db.execute(select(User).where(User.email == DEFAULT_ADMIN_EMAIL))
         admin = result.scalar_one_or_none()
@@ -280,6 +371,19 @@ async def ensure_seed_flags(db: AsyncSession) -> None:
             if agent is None or agent.is_system:
                 continue
             agent.is_system = True
+            updated += 1
+
+        for codigo in SEED_TABULACAO_CODIGOS:
+            row = await db.execute(
+                select(Tabulacao).where(
+                    Tabulacao.user_id == admin.id,
+                    Tabulacao.codigo == codigo,
+                )
+            )
+            tabulacao = row.scalar_one_or_none()
+            if tabulacao is None or tabulacao.is_system:
+                continue
+            tabulacao.is_system = True
             updated += 1
 
         if updated:

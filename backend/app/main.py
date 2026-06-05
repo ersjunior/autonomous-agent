@@ -18,6 +18,7 @@ from app.core.seed import (
     seed_default_admin,
     seed_default_agents,
     seed_default_channels,
+    seed_default_tabulacoes,
 )
 from app.services.settings_sync import bootstrap_settings
 
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI):
         await seed_default_admin(db)
         await seed_default_channels(db)
         await seed_default_agents(db)
+        await seed_default_tabulacoes(db)
         await ensure_seed_flags(db)
 
     await bootstrap_settings()

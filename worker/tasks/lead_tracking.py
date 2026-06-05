@@ -198,7 +198,7 @@ async def track_inbound_lead_interaction(
     devolutiva = message[:500] if message else None
     new_status = resolve_inbound_status(intent, current.status if current else "pendente")
 
-    return await upsert_lead_interaction(
+    record = await upsert_lead_interaction(
         session,
         lead.id,
         campaign_id,
@@ -208,3 +208,15 @@ async def track_inbound_lead_interaction(
         last_interaction_id=last_interaction_id,
         touch_inbound=True,
     )
+
+    from app.services.tabulacao_assignment import maybe_apply_tabulacao_on_transition
+
+    await maybe_apply_tabulacao_on_transition(
+        session,
+        record,
+        intent=intent,
+        status_interno=new_status,
+        channel=channel_lower,
+        conversation_text=message,
+    )
+    return record

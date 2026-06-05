@@ -162,6 +162,16 @@ async def close_lead_no_answer(
     await session.flush()
     release_slot_for_lead(str(record.lead_id), record.channel_type)
 
+    from app.services.tabulacao_assignment import maybe_apply_tabulacao_on_transition
+
+    await maybe_apply_tabulacao_on_transition(
+        session,
+        record,
+        status_interno="nao_atendido",
+        channel=record.channel_type,
+        conversation_text=record.devolutiva,
+    )
+
 
 def is_voice_video_channel(channel_type: str) -> bool:
     return normalize_channel_type(channel_type) in VOICE_VIDEO_CHANNELS
