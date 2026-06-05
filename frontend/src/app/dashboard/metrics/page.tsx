@@ -16,7 +16,7 @@ import {
 } from "recharts";
 import { Alert } from "@/components/ui/Alert";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { apiDownload, apiFetch, getCampaignMetrics } from "@/lib/api";
+import { apiDownload, apiFetch, getCampaignMetrics, getQueueMetrics } from "@/lib/api";
 import type { LeadBaseListResponse } from "@/lib/types/leads";
 import {
   CHANNEL_COLORS,
@@ -24,6 +24,7 @@ import {
   STATUS_COLORS,
   STATUS_LABELS,
   type MetricsResponse,
+  type QueueMetricsResponse,
 } from "@/lib/types/metrics";
 
 interface Campaign {
@@ -45,6 +46,8 @@ export default function MetricsPage() {
   const [loadingMetrics, setLoadingMetrics] = useState(false);
   const [downloadingDevolutiva, setDownloadingDevolutiva] = useState(false);
   const [error, setError] = useState("");
+  const [queueMetrics, setQueueMetrics] = useState<QueueMetricsResponse | null>(null);
+  const [loadingQueueMetrics, setLoadingQueueMetrics] = useState(true);
 
   const loadCampaigns = useCallback(async () => {
     const token = localStorage.getItem("access_token");
@@ -129,9 +132,29 @@ export default function MetricsPage() {
     }
   }, []);
 
+  const loadQueueMetrics = useCallback(async () => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      return;
+    }
+
+    setLoadingQueueMetrics(true);
+    try {
+      const res = await getQueueMetrics(1);
+      if (res.ok) {
+        setQueueMetrics(await res.json());
+      }
+    } catch {
+      setQueueMetrics(null);
+    } finally {
+      setLoadingQueueMetrics(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadCampaigns();
-  }, [loadCampaigns]);
+    loadQueueMetrics();
+  }, [loadCampaigns, loadQueueMetrics]);
 
   useEffect(() => {
     if (selectedCampaignId) {
@@ -158,6 +181,23 @@ export default function MetricsPage() {
         fill: STATUS_COLORS[key] ?? "#94a3b8",
       }));
   }, [metrics]);
+
+  const queueChannelChartData = useMemo(() => {
+    if (!queueMetrics) {
+      return [];
+    }
+
+    return Object.entries(queueMetrics.por_canal)
+      .filter(([, ch]) => ch.total_atendidos > 0 || ch.total_enfileirados > 0)
+      .map(([key, ch]) => ({
+        key,
+        name: CHANNEL_LABELS[key] ?? key,
+        atendidos: ch.total_atendidos,
+        enfileirados: ch.total_enfileirados,
+        nivel_servico: Math.round(ch.nivel_servico * 1000) / 10,
+        fill: CHANNEL_COLORS[key] ?? "#64748b",
+      }));
+  }, [queueMetrics]);
 
   const channelChartData = useMemo(() => {
     if (!metrics) {
@@ -343,6 +383,95 @@ export default function MetricsPage() {
           </div>
         </>
       )}
+
+      <section className="mt-10 border-t border-border pt-8">
+        <h2 className="mb-2 text-xl font-semibold text-foreground">Fila de atendimento</h2>
+        <p className="mb-6 text-sm text-muted-foreground">
+          Métricas do atendimento receptivo (últimas 24h). Abandono aplica-se apenas a
+          voz — ainda sem inbound de voz, a taxa tende a zero.
+        </p>
+
+        {loadingQueueMetrics ? (
+          <p className="text-muted-foreground">Carregando métricas da fila...</p>
+        ) : !queueMetrics ? (
+          <div className="glass-card p-6 text-sm text-muted-foreground">
+            Não foi possível carregar as métricas da fila.
+          </div>
+        ) : (
+          <>
+            <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="glass-card p-5">
+                <p className="text-sm text-muted-foreground">Tempo médio de espera</p>
+                <p className="mt-2 text-3xl font-semibold text-foreground">
+                  {queueMetrics.tempo_medio_espera.toFixed(1)}s
+                </p>
+              </div>
+              <div className="glass-card p-5">
+                <p className="text-sm text-muted-foreground">
+                  Nível de serviço (até {queueMetrics.service_level_target_seconds}s)
+                </p>
+                <p className="mt-2 text-3xl font-semibold text-green-500">
+                  {formatPercent(queueMetrics.nivel_servico)}
+                </p>
+              </div>
+              <div className="glass-card p-5">
+                <p className="text-sm text-muted-foreground">Taxa de abandono</p>
+                <p className="mt-2 text-3xl font-semibold text-foreground">
+                  {queueMetrics.total_abandonados === 0
+                    ? "—"
+                    : formatPercent(queueMetrics.taxa_abandono)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {queueMetrics.total_abandonados === 0
+                    ? "Sem registros de abandono no período"
+                    : "Somente voz"}
+                </p>
+              </div>
+              <div className="glass-card p-5">
+                <p className="text-sm text-muted-foreground">Tamanho da fila (agora)</p>
+                <p className="mt-2 text-3xl font-semibold text-foreground">
+                  {queueMetrics.tamanho_fila_atual}
+                </p>
+              </div>
+              <div className="glass-card p-5">
+                <p className="text-sm text-muted-foreground">Total atendidos</p>
+                <p className="mt-2 text-3xl font-semibold text-blue-500">
+                  {queueMetrics.total_atendidos}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {queueMetrics.total_enfileirados} enfileirados
+                </p>
+              </div>
+            </div>
+
+            <div className="glass-card p-5">
+              <h3 className="mb-4 text-lg font-semibold text-foreground">Por canal</h3>
+              {queueChannelChartData.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Sem atendimentos receptivos registrados no período.
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={queueChannelChartData}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                    <XAxis dataKey="name" />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="atendidos" name="Atendidos" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar
+                      dataKey="enfileirados"
+                      name="Enfileirados"
+                      fill="#94a3b8"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </>
+        )}
+      </section>
     </>
   );
 }

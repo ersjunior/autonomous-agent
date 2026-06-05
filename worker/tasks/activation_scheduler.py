@@ -35,7 +35,6 @@ from app.services.activation_service import (
     resolve_channel_window_params,
 )
 from app.services.activation_slots import (
-    bind_lead_slot,
     count_active_slots,
     enqueue_priority,
     is_dispatch_inflight,
@@ -43,8 +42,11 @@ from app.services.activation_slots import (
     pop_priority_leads,
     priority_queue_size,
     remove_from_priority,
-    slot_ttl_seconds,
-    try_acquire_slot,
+)
+from app.services.capacity_service import (
+    OutboundCapacityHandle,
+    bind_outbound_capacity,
+    try_acquire_outbound_capacity,
 )
 from worker.celery_app import celery
 from worker.tasks.outbound_campaign import send_campaign_followup, send_campaign_message
@@ -97,16 +99,20 @@ def _enqueue_dispatch(
     candidate: DispatchCandidate,
     channel: str,
     agent_id: uuid.UUID,
-    token: str,
+    handle: OutboundCapacityHandle,
 ) -> None:
     aid = str(agent_id)
     lid = str(candidate.lead_id)
     cid = str(candidate.campaign_id)
+    bind_outbound_capacity(lid, channel, handle)
     if candidate.followup:
-        send_campaign_followup.delay(lid, cid, channel, slot_token=token, agent_id=aid)
+        send_campaign_followup.delay(
+            lid, cid, channel, slot_token=handle.slot_token, agent_id=aid
+        )
     else:
-        send_campaign_message.delay(lid, cid, channel, slot_token=token, agent_id=aid)
-    bind_lead_slot(lid, channel, aid, token, ttl_seconds=slot_ttl_seconds(channel))
+        send_campaign_message.delay(
+            lid, cid, channel, slot_token=handle.slot_token, agent_id=aid
+        )
 
 
 async def _build_candidates_for_activation(
@@ -255,8 +261,8 @@ async def _process_agent_channel_group(
             stats["priority_enqueued"] = stats.get("priority_enqueued", 0) + 1
             continue
 
-        token = try_acquire_slot(aid, channel, slot_limit)
-        if token is None:
+        handle = try_acquire_outbound_capacity(aid, channel, params)
+        if handle is None:
             enqueue_priority(aid, channel, cid, lid, score=now_score, followup=candidate.followup)
             ch_stats["skipped_slots"] += 1
             ch_stats["priority_enqueued"] += 1
@@ -268,7 +274,7 @@ async def _process_agent_channel_group(
             followup_marked = True
 
         mark_dispatch_inflight(cid, lid, channel)
-        _enqueue_dispatch(candidate, channel, agent_id, token)
+        _enqueue_dispatch(candidate, channel, agent_id, handle)
         free_slots -= 1
         ch_stats["slots_active"] = count_active_slots(aid, channel)
 

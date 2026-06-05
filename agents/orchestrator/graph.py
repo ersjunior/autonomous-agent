@@ -23,6 +23,21 @@ _short_term_memory = ShortTermMemory()
 _long_term_memory = LongTermMemory()
 
 
+async def reset_worker_async_clients() -> None:
+    """
+    Recria clientes async globais após ``asyncio.run`` em tasks Celery (prefork).
+
+    O Redis de ``ShortTermMemory`` fica ligado ao event loop da execução anterior;
+    sem reset, a task seguinte no mesmo worker pode falhar com loop fechado.
+    """
+    global _short_term_memory
+    try:
+        await _short_term_memory._redis.aclose()
+    except Exception:
+        pass
+    _short_term_memory = ShortTermMemory()
+
+
 async def identify_intent(state: AgentState) -> AgentState:
     memory = _short_term_memory
     history = await memory.get_history(state["user_id"])

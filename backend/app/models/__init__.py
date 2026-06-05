@@ -11,6 +11,7 @@ from app.models.interaction import Interaction
 from app.models.lead import Lead
 from app.models.lead_base import LeadBase, LeadBaseChannel
 from app.models.lead_interaction import LeadInteraction
+from app.models.queue_entry import QueueEntry, QueueEntryStatus
 from app.models.user import User
 
 __all__ = [
@@ -29,5 +30,7 @@ __all__ = [
     "LeadBase",
     "LeadBaseChannel",
     "LeadInteraction",
+    "QueueEntry",
+    "QueueEntryStatus",
     "User",
 ]

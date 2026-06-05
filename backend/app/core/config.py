@@ -95,6 +95,44 @@ class Settings(BaseSettings):
     # WhatsApp/Telegram: TTL de segurança do holder; liberação principal ao encerrar conversa.
     chat_slot_ttl_seconds: int = 24 * 3600  # alinhado a active_conversation_timeout_hours (24h)
 
+    # R-A / R-C — capacidade global ponderada (ativo + receptivo compartilham teto)
+    max_weighted_capacity: int = 50  # legado; usado se override=0 e estimativa falhar
+    max_weighted_capacity_override: int = 0  # >0 força teto manual; 0 = derivado do hardware
+    channel_weight_whatsapp: int = 1
+    channel_weight_telegram: int = 1
+    channel_weight_voice: int = 3
+    channel_weight_video: int = 4
+
+    # R-C — estimativa de capacidade (unidades abstratas de recurso por canal simultâneo)
+    channel_cost_whatsapp: float = 1.0
+    channel_cost_telegram: float = 1.0
+    channel_cost_voice: float = 3.0
+    channel_cost_video: float = 5.0
+    capacity_cpu_units_per_core: float = 10.0
+    capacity_mb_per_unit: float = 512.0
+    gpu_capacity_boost: float = 1.15
+    default_aht_seconds: int = 180
+    capacity_history_days: int = 7
+    erlang_target_service_level: float = 0.80
+
+    # R-A — fila receptiva
+    receptive_queue_payload_ttl_seconds: int = 24 * 3600
+    receptive_queue_beat_seconds: int = 30
+
+    # R-B — métricas de fila / abandono (voz) / SLA
+    service_level_target_seconds: int = 20
+    queue_abandon_timeout_seconds: int = 60
+
+    def resolved_channel_weights(self) -> dict[str, int]:
+        from app.core.activation_defaults import DEFAULT_CHANNEL_WEIGHTS
+
+        base = dict(DEFAULT_CHANNEL_WEIGHTS)
+        base["whatsapp"] = self.channel_weight_whatsapp
+        base["telegram"] = self.channel_weight_telegram
+        base["voice"] = self.channel_weight_voice
+        base["video"] = self.channel_weight_video
+        return base
+
     # Comportamento do agente (gerenciável via UI / app_settings)
     intent_temperature: float = 0.0
     response_temperature: float = 0.7

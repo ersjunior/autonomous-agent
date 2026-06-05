@@ -29,6 +29,7 @@ from app.models.lead_base import LeadBase
 from app.core.activation_cadence_text import FOLLOWUP_TRIGGER_MESSAGE
 from app.core.activation_defaults import channel_family, normalize_channel_type
 from app.services.activation_slots import release_slot
+from app.services.capacity_service import release_outbound_capacity_for_lead
 from worker.celery_app import celery
 from worker.tasks.conversation_routing import agent_personality_context, agent_routing_metadata
 from worker.tasks.lead_tracking import upsert_lead_interaction
@@ -318,12 +319,18 @@ def _release_slot_after_dispatch(
     slot_token: str | None,
     *,
     delivery_ok: bool,
+    lead_id: str | None = None,
 ) -> None:
-    """Libera slot conforme Camada D (token opcional = compatibilidade)."""
-    if not slot_token or not agent_id or not channel_type:
+    """Libera slot + peso global outbound (R-C) conforme Camada D."""
+    if not channel_type:
         return
     channel = normalize_channel_type(channel_type)
     family = channel_family(channel)
+    if not delivery_ok and lead_id:
+        release_outbound_capacity_for_lead(lead_id, channel)
+        return
+    if not slot_token or not agent_id:
+        return
     if family == "voice_video":
         if not delivery_ok:
             release_slot(agent_id, channel, slot_token)
@@ -424,6 +431,7 @@ async def _send_campaign_message(
             channel_type,
             slot_token,
             delivery_ok=delivery_ok,
+            lead_id=lead_id,
         )
 
         return {
@@ -455,7 +463,9 @@ def send_campaign_message(
             )
         )
     except Exception as exc:
-        _release_slot_after_dispatch(agent_id, channel_type, slot_token, delivery_ok=False)
+        _release_slot_after_dispatch(
+            agent_id, channel_type, slot_token, delivery_ok=False, lead_id=lead_id
+        )
         raise self.retry(exc=exc, countdown=60) from exc
 
 
@@ -481,5 +491,7 @@ def send_campaign_followup(
             )
         )
     except Exception as exc:
-        _release_slot_after_dispatch(agent_id, channel_type, slot_token, delivery_ok=False)
+        _release_slot_after_dispatch(
+            agent_id, channel_type, slot_token, delivery_ok=False, lead_id=lead_id
+        )
         raise self.retry(exc=exc, countdown=60) from exc

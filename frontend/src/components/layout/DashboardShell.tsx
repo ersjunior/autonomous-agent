@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/campaigns", label: "Campanhas", icon: "megaphone" },
   { href: "/dashboard/activation", label: "Acionamento", icon: "activation" },
   { href: "/dashboard/metrics", label: "Métricas", icon: "chart" },
+  { href: "/dashboard/capacity", label: "Capacidade", icon: "capacity" },
   { href: "/dashboard/monitoring", label: "Monitoramento", icon: "activity" },
   { href: "/dashboard/settings", label: "Configurações", icon: "settings" },
 ] as const;
@@ -80,6 +81,15 @@ function NavIcon({ name }: { name: (typeof NAV_ITEMS)[number]["icon"] }) {
           <path d="M7 16V9" />
           <path d="M12 16V5" />
           <path d="M17 16v-4" />
+        </svg>
+      );
+    case "capacity":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="2" y="7" width="20" height="14" rx="2" />
+          <path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
+          <path d="M12 12v4" />
+          <path d="M8 12h8" />
         </svg>
       );
     case "activity":

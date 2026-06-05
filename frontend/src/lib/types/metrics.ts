@@ -38,3 +38,28 @@ export const CHANNEL_COLORS: Record<string, string> = {
   telegram: "#0088cc",
   voice: "#8b5cf6",
 };
+
+export interface ChannelQueueMetrics {
+  total_enfileirados: number;
+  total_atendidos: number;
+  total_abandonados: number;
+  tempo_medio_espera: number;
+  taxa_abandono: number;
+  nivel_servico: number;
+  tamanho_fila_atual: number;
+}
+
+export interface QueueMetricsResponse {
+  period_days: number;
+  service_level_target_seconds: number;
+  total_enfileirados: number;
+  total_atendidos: number;
+  total_abandonados: number;
+  tempo_medio_espera: number;
+  taxa_abandono: number;
+  nivel_servico: number;
+  tamanho_fila_atual: number;
+  por_canal: Record<string, ChannelQueueMetrics>;
+  abandono_apenas_voz: boolean;
+  abandono_disponivel_inbound: boolean;
+}

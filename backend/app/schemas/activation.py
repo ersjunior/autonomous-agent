@@ -38,8 +38,15 @@ class MessagingParams(BaseModel):
     minutos_segunda_mensagem: int = Field(ge=0, default=20)
     horario_inicio: str = "09:00"
     horario_fim: str = "20:00"
+    receptivo_horario_inicio: str = "00:00"
+    receptivo_horario_fim: str = "23:59"
 
-    @field_validator("horario_inicio", "horario_fim")
+    @field_validator(
+        "horario_inicio",
+        "horario_fim",
+        "receptivo_horario_inicio",
+        "receptivo_horario_fim",
+    )
     @classmethod
     def validate_time(cls, value: str) -> str:
         return _validate_hhmm(value)

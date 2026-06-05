@@ -29,6 +29,8 @@ celery.conf.update(
         "worker.tasks.status_sweep",
         "worker.tasks.voice_cleanup",
         "worker.tasks.activation_scheduler",
+        "worker.tasks.receptive_queue",
+        "worker.tasks.queue_abandon_sweep",
     ),
     beat_schedule={
         "gerar-devolutivas-diarias": {
@@ -48,6 +50,16 @@ celery.conf.update(
         "process-active-activations": {
             "task": "worker.tasks.activation_scheduler.process_active_activations",
             "schedule": crontab(minute="*/5"),
+        },
+        # R-A: fila receptiva — dequeue FIFO quando libera capacidade global+slot
+        "process-receptive-queue": {
+            "task": "worker.tasks.receptive_queue.process_receptive_queue",
+            "schedule": float(settings.receptive_queue_beat_seconds),
+        },
+        # R-B: abandono na fila — só VOZ (sem inbound de voz hoje, no-op em mensageria)
+        "sweep-queue-abandonment": {
+            "task": "worker.tasks.queue_abandon_sweep.sweep_queue_abandonment",
+            "schedule": crontab(minute="*/2"),
         },
     },
 )

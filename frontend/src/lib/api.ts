@@ -172,6 +172,14 @@ export async function getLeadBaseMetrics(leadBaseId: string): Promise<Response> 
   return apiFetch(`/api/v1/lead-bases/${leadBaseId}/metrics`);
 }
 
+export async function getQueueMetrics(days = 1): Promise<Response> {
+  return apiFetch(`/api/v1/metrics/queue?days=${days}`);
+}
+
+export async function getCapacity(): Promise<Response> {
+  return apiFetch("/api/v1/capacity");
+}
+
 export async function getSettings(): Promise<Response> {
   return apiFetch("/api/v1/settings");
 }

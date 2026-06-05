@@ -23,6 +23,17 @@ _MESSAGING_DEFAULTS: dict[str, Any] = {
     "minutos_segunda_mensagem": 20,
     "horario_inicio": "09:00",
     "horario_fim": "20:00",
+    # Janela do atendimento receptivo (R-A); 00:00–23:59 = 24/7
+    "receptivo_horario_inicio": "00:00",
+    "receptivo_horario_fim": "23:59",
+}
+
+# Pesos na capacidade global ponderada (R-A; R-C refinará via hardware)
+DEFAULT_CHANNEL_WEIGHTS: dict[str, int] = {
+    "video": 4,
+    "voice": 3,
+    "whatsapp": 1,
+    "telegram": 1,
 }
 
 SYSTEM_CHANNEL_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -45,6 +56,15 @@ def channel_family(channel_type: str) -> str:
     if normalized in MESSAGING_CHANNELS:
         return "messaging"
     raise ValueError(f"Unsupported channel type: {channel_type}")
+
+
+def channel_weight(channel_type: str) -> int:
+    """Peso do canal no teto global (config sobrescreve defaults)."""
+    from app.core.config import settings
+
+    normalized = normalize_channel_type(channel_type)
+    weights = settings.resolved_channel_weights()
+    return int(weights.get(normalized, DEFAULT_CHANNEL_WEIGHTS.get(normalized, 1)))
 
 
 def default_params_for_channel(channel_type: str) -> dict[str, Any]:

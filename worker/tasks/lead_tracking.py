@@ -47,11 +47,17 @@ async def upsert_lead_interaction(
     now = datetime.now(timezone.utc)
 
     result = await session.execute(
-        select(LeadInteraction).where(
+        select(LeadInteraction)
+        .where(
             LeadInteraction.lead_id == lead_id,
             LeadInteraction.campaign_id == campaign_id,
             LeadInteraction.channel_type == channel,
         )
+        .order_by(
+            LeadInteraction.data_ultimo_contato.desc().nulls_last(),
+            LeadInteraction.created_at.desc(),
+        )
+        .limit(1)
     )
     record = result.scalar_one_or_none()
 
@@ -73,10 +79,17 @@ async def upsert_lead_interaction(
             new_status in TERMINAL_STATUSES and prev_status not in TERMINAL_STATUSES
         )
         record.status = status
-        if becoming_terminal and normalize_channel_type(channel) in MESSAGING_CHANNELS:
+        if becoming_terminal:
             from app.services.activation_slots import release_slot_for_lead
+            from app.services.capacity_service import (
+                release_outbound_capacity_for_lead,
+                release_receptive_capacity_for_lead,
+            )
 
             release_slot_for_lead(str(lead_id), channel)
+            if normalize_channel_type(channel) in MESSAGING_CHANNELS:
+                release_receptive_capacity_for_lead(str(lead_id), channel)
+            release_outbound_capacity_for_lead(str(lead_id), channel)
     if devolutiva is not None:
         record.devolutiva = devolutiva
     if last_interaction_id is not None:
@@ -178,14 +191,9 @@ async def track_inbound_lead_interaction(
     channel_lower = channel.lower()
     last_interaction_id = await get_latest_interaction_id(session, user_id)
 
-    existing = await session.execute(
-        select(LeadInteraction).where(
-            LeadInteraction.lead_id == lead.id,
-            LeadInteraction.campaign_id == campaign_id,
-            LeadInteraction.channel_type == channel_lower,
-        )
-    )
-    current = existing.scalar_one_or_none()
+    from worker.tasks.conversation_routing import get_latest_lead_interaction
+
+    current = await get_latest_lead_interaction(session, lead.id, channel_lower)
 
     devolutiva = message[:500] if message else None
     new_status = resolve_inbound_status(intent, current.status if current else "pendente")

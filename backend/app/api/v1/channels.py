@@ -189,6 +189,10 @@ async def whatsapp_webhook(
     Body: str = Form(""),
     From: str = Form(""),
     To: str = Form(""),
+    MessageSid: str = Form(""),
 ):
-    twiml = await whatsapp.handle_webhook({"Body": Body, "From": From, "To": To})
+    """Inbound WhatsApp: enfileira Celery e responde TwiML vazio (resposta via API no worker)."""
+    twiml = await whatsapp.handle_webhook(
+        {"Body": Body, "From": From, "To": To, "MessageSid": MessageSid}
+    )
     return Response(content=twiml, media_type="application/xml")
