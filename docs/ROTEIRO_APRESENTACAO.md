@@ -15,7 +15,8 @@
 | Campanhas | http://localhost:3000/dashboard/campaigns |
 | Leads | http://localhost:3000/dashboard/leads |
 | Configurações | http://localhost:3000/dashboard/settings |
-| Métricas | http://localhost:3000/dashboard/metrics |
+| Métricas (incl. fila receptiva) | http://localhost:3000/dashboard/metrics |
+| Capacidade (Erlang + estimativa) | http://localhost:3000/dashboard/capacity |
 | Monitoramento (eventos do grafo) | http://localhost:3000/dashboard/monitoring |
 | API Swagger | http://localhost:8000/docs |
 
@@ -164,6 +165,63 @@ docker exec autonomous-agent-backend python /tmp/validate_phase4_routing.py
 
 ---
 
+## 5b. Demo ao vivo — Atendimento receptivo: filas + métricas + Erlang (~3–4 min) ★ teoria de filas
+
+### O que fazer
+
+**1. Prova automatizada da fila (terminal)**
+
+```bash
+docker exec -e MAX_WEIGHTED_CAPACITY_OVERRIDE=2 autonomous-agent-worker \
+  python /workspace/backend/scripts/validate_layer_ra_receptive.py
+```
+
+- Passou: com `MAX_WEIGHTED_CAPACITY` baixo, 3º contato entra na fila, mensagem de espera, após liberar capacidade o Beat atende **FIFO** (`[OK]` em fila/processador).
+
+**2. Métricas de call center (navegador)**
+
+- http://localhost:3000/dashboard/metrics — rolar até **Fila de atendimento**  
+- Mostrar: tempo médio de espera, **nível de serviço** (alvo em segundos, ex. 20s), taxa de abandono (mensagem honesta se zero: *só voz, sem inbound de voz ainda*).
+
+**3. Capacidade e Erlang C (navegador)**
+
+- http://localhost:3000/dashboard/capacity  
+- Mostrar: CPU/RAM do **container** (estimativa), teto global, barra **ativo vs receptivo**, λ/AHT observados, **nível de serviço previsto** e canais necessários para 80/20.
+
+**4. (Opcional) APIs no Swagger**
+
+- `GET /api/v1/metrics/queue?days=1`  
+- `GET /api/v1/capacity`
+
+**5. Scripts de regressão (mencionar, não precisa rodar todos ao vivo)**
+
+- `validate_layer_rb_queue.py` — `QueueEntry`, SLA, API de fila  
+- `validate_layer_rc_capacity.py` — Erlang C (ex.: A=10 Erlangs, N=14 → SL ≈ 87%), outbound no mesmo teto global
+
+### O que falar
+
+> "Além do roteamento ACTIVE/RECEPTIVE, implementamos **teoria de filas de call center**: capacidade **ponderada compartilhada** entre campanha ativa e receptivo, fila **FIFO** no Redis com histórico em `queue_entries`, e métricas clássicas — tempo de espera, **nível de serviço** configurável e abandono **só para voz** (estrutura pronta; mensageria não abandona). O webhook **não** roda o LLM na thread HTTP: enfileira Celery e responde pelo worker, como um contact center real."
+
+> "A aba **Capacidade** usa **psutil** no container e coeficientes por canal para uma **estimativa** de quantos atendimentos simultâneos cabem — não é benchmark de hardware. O **Erlang C** dimensiona: dado λ (chegadas/h do histórico) e AHT, qual SLA previsto temos e quantos 'agentes' precisaríamos para 80% em 20 segundos. Isso é **planejamento**; quem manda no runtime é o Redis e o scheduler."
+
+### Plano B
+
+- Screenshots das abas Métricas (fila) e Capacidade.  
+- Saída salva de `validate_layer_ra_receptive.py` em `docs/demo-assets/`.  
+- README — seção **Atendimento receptivo** + diagrama Mermaid do inbound.
+
+### Perguntas prováveis (filas / Erlang) — respostas honestas
+
+| Pergunta | Resposta sugerida |
+|----------|------------------|
+| **Por que Erlang C?** | É o modelo clássico de filas M/M/c com espera; permite traduzir volume (λ) e tempo de atendimento (AHT) em **probabilidade de espera** e **nível de serviço** — útil para dimensionar equipe/canais antes de gastar infra. No projeto fica em `erlang.py` e na API `/capacity`; **não** substitui o controle da fila em tempo real. |
+| **Como medem nível de serviço?** | **Operacional (R-B):** % de `QueueEntry` **ANSWERED** com `wait_seconds` ≤ `SERVICE_LEVEL_TARGET_SECONDS` (default 20s). **Planejamento (R-C):** fórmula Erlang C com o mesmo alvo T e `ERLANG_TARGET_SERVICE_LEVEL` (80%). |
+| **A capacidade é real ou estimada?** | **Runtime:** teto `MAX_WEIGHTED_CAPACITY` (pesos por canal) no Redis — isso é **real** no sentido de que bloqueia fila/outbound. **Aba Capacidade:** **estimativa** a partir de CPU/RAM visíveis ao container Docker + `CHANNEL_COST_*`; honestamente não mede GPU do host nem carga de LLM por mensagem. |
+| **Abandono na fila?** | Só **voz** (desligou esperando). WhatsApp/Telegram: espera ou atendimento, sem `ABANDONED`. Sem inbound de voz, a taxa na UI tende a zero — deixamos explícito na interface. |
+| **Inbound síncrono no webhook?** | **Não.** Webhook/polling enfileira `process_inbound_message`; grafo + envio no worker. Evita timeout do Twilio e unifica com Telegram. |
+
+---
+
 ## 6. Demo ao vivo — Modelo de propriedade (sistema vs usuário) (~2 min)
 
 ### O que fazer (navegador + API)
@@ -230,16 +288,18 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 ## 9. Aplicação de negócio (~1 min)
 
 - **Campanhas** — `Agente_Ativo` no `agent_id`; aviso se RECEPTIVE; **Iniciar** (se Twilio configurado).
-- **Métricas / devolutiva** — uma tela.
+- **Métricas** — campanha/base + **Fila de atendimento** (SLA).
+- **Capacidade** — estimativa + Erlang (1 slide se faltar tempo na 5b).
+- **Devolutiva** — download Excel.
 
 ### O que falar
-> "A camada operacional **dispara** o mesmo grafo; `LeadInteraction` e devolutiva Excel fecham o ciclo para o gestor."
+> "A camada operacional **dispara** o mesmo grafo; receptivo com **fila** quando o contact center enche; `LeadInteraction`, métricas de fila e devolutiva Excel fecham o ciclo para o gestor."
 
 ---
 
 ## 10. Fechamento (~1 min)
 
-> "Entregamos **RAG ativo** (script + grafo), **roteamento por dono da conversa** (ACTIVE/RECEPTIVE), **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py` e `validate_phase4_routing.py` são evidência de regressão para a defesa."
+> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **dimensionamento Erlang C**, **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py` e `validate_layer_ra/rb/rc` são evidência de regressão para a defesa."
 
 ---
 
@@ -290,6 +350,15 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 ### Escalabilidade?
 > "API stateless, Celery horizontal; gargalos GPU Ollama/SadTalker."
 
+### Por que Erlang C num sistema de IA?
+> "O gargalo operacional é **concorrência de atendimentos**, não só tokens. Erlang C traduz histórico (λ, AHT) em SLA **previsto** e headroom — mesma linguagem de call center que o gestor entende. A IA decide o texto; a fila decide **quando** há slot."
+
+### Nível de serviço — duas leituras?
+> "**R-B (realizado):** % atendidos na fila dentro de T segundos nos `queue_entries`. **R-C (previsto):** Erlang com capacidade N atual. Podem divergir enquanto λ/AHT ainda usam default — deixamos `aht_source` explícito na API."
+
+### Capacidade real vs estimada?
+> "**Real no runtime:** pesos no Redis (`MAX_WEIGHTED_CAPACITY`, compartilhado ativo+receptivo). **Estimativa na aba Capacidade:** psutil + `CHANNEL_COST_*` no container — útil para planejar, não para substituir monitoramento de produção."
+
 ---
 
 ## Plano B — resumo rápido
@@ -300,6 +369,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 | Ollama / grafo | Log + resposta pré-gravada |
 | **RAG** | **`docs/demo-assets/validate-rag-output.txt`** |
 | **Roteamento** | **`docs/demo-assets/validate-phase4-routing-output.txt`** + flowchart README |
+| **Fila receptiva / Erlang** | Saída `validate_layer_ra_receptive.py` + screenshots Métricas/Capacidade |
 | Voz / Avatar | `voz-demo.mp3` / `avatar-demo.mp4` |
 | Propriedade UI | Screenshots agentes/canais + print 403 |
 | Campanha real | Métricas de base antiga |
@@ -315,10 +385,11 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 - [ ] `redis-cli DEL chat:RAGTEST`
 - [ ] Scripts copiados no container; saídas salvas em `docs/demo-assets/` (Plano B)
 - [ ] Campanha existente no DB (para cenários B–D do routing)
-- [ ] Browser: Settings, Agentes, Canais, README
+- [ ] Browser: Settings, Agentes, Canais, Métricas (fila), Capacidade, README
+- [ ] `validate_layer_ra_receptive.py` ensaiado (MAX_WEIGHTED_CAPACITY_OVERRIDE=2)
 - [ ] (Opcional) `user2@test.com` para isolamento
 - [ ] MP3/MP4 fallback
 
 ---
 
-*Alinhado ao README, `validate_rag.py`, `validate_phase4_routing.py`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`.*
+*Alinhado ao README (Atendimento receptivo), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`, head Alembic `h9i0j1k2l3m4`.*

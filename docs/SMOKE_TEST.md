@@ -64,7 +64,16 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 - [ ] **Migrations em head**  
   - `docker exec autonomous-agent-backend alembic current`  
-  - Passou: revisão **`g8h9i0j1k2l3`** (head)
+  - Passou: revisão **`h9i0j1k2l3m4`** (head)
+
+- [ ] **Tabela `queue_entries` (R-B)**  
+  ```bash
+  docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
+    "SELECT typname FROM pg_type WHERE typname='queue_entry_status';"
+  docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
+    "\\d queue_entries"
+  ```  
+  - Passou: enum `WAITING`, `ANSWERED`, `ABANDONED` e tabela `queue_entries`
 
 - [ ] **Embedding 768**  
   ```bash
@@ -108,6 +117,18 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 - [ ] **Configurações** — http://localhost:3000/dashboard/settings — abas OK; badge provider ativo
 
+- [ ] **`GET /api/v1/metrics/queue` (R-B)**  
+  - Login → token → `GET http://localhost:8000/api/v1/metrics/queue?days=1` com `Authorization: Bearer <token>`  
+  - Passou: HTTP **200**, JSON com `nivel_servico`, `tempo_medio_espera`, `tamanho_fila_atual`, `service_level_target_seconds`
+
+- [ ] **`GET /api/v1/capacity` (R-C)**  
+  - `GET http://localhost:8000/api/v1/capacity` com mesmo token  
+  - Passou: HTTP **200**, `resources` (cpu/ram), `estimate`, `erlang`, `usage.global_usage`
+
+- [ ] **UI — Métricas e Capacidade**  
+  - http://localhost:3000/dashboard/metrics — seção **Fila de atendimento** carrega  
+  - http://localhost:3000/dashboard/capacity — recursos + Erlang + uso global
+
 ---
 
 ## 6. Testes funcionais — IA (scripts de prova)
@@ -150,6 +171,39 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
   ```bash
   docker exec autonomous-agent-worker python -c "import asyncio; from agents.orchestrator.router import route_message; print(asyncio.run(route_message('teste','telegram','SMOKE'))['response'][:200])"
   ```
+
+---
+
+## 6b. Atendimento receptivo (R-A / R-B / R-C)
+
+- [ ] **Webhook inbound enfileira Celery (não LLM síncrono no HTTP)**  
+  - WhatsApp: handler enfileira `process_inbound_message.delay` e responde TwiML vazio (sem texto do grafo no webhook).  
+  - Conferir logs do worker após mensagem de teste: task `process_inbound_message` executada.
+
+- [ ] **`validate_layer_ra_receptive.py`**  
+  ```bash
+  docker exec -e MAX_WEIGHTED_CAPACITY_OVERRIDE=2 autonomous-agent-worker \
+    python /workspace/backend/scripts/validate_layer_ra_receptive.py
+  ```  
+  - Passou: fila FIFO, capacidade global, processador Beat (linhas `[OK]`)
+
+- [ ] **`validate_layer_rb_queue.py`**  
+  ```bash
+  docker exec -e MAX_WEIGHTED_CAPACITY_OVERRIDE=2 autonomous-agent-worker \
+    python /workspace/backend/scripts/validate_layer_rb_queue.py
+  ```  
+  - Passou: `QueueEntry`, SLA, `GET /metrics/queue`
+
+- [ ] **`validate_layer_rc_capacity.py`**  
+  ```bash
+  docker exec autonomous-agent-worker \
+    python /workspace/backend/scripts/validate_layer_rc_capacity.py
+  ```  
+  - Passou: psutil, Erlang C referência, outbound bloqueado com global cheio, `GET /capacity`
+
+- [ ] **Celery Beat — fila receptiva**  
+  - Container `autonomous-agent-celery-beat` em execução  
+  - Logs mencionam `process-receptive-queue` / `sweep-queue-abandonment` (opcional: grep nos logs)
 
 ---
 
@@ -212,8 +266,10 @@ Abas abertas:
 1. http://localhost:3000/dashboard/settings  
 2. http://localhost:3000/dashboard/agents  
 3. http://localhost:3000/dashboard/channels  
-4. README → Regras de negócio + flowchart  
-5. http://localhost:8000/docs  
+4. http://localhost:3000/dashboard/metrics (seção Fila de atendimento)  
+5. http://localhost:3000/dashboard/capacity  
+6. README → Atendimento receptivo + Regras de negócio  
+7. http://localhost:8000/docs  
 
 ---
 
@@ -230,7 +286,7 @@ Abas abertas:
 | Campanha RECEPTIVE não envia | Regra de negócio | **Esperado** — cenário E do script |
 | Lead IMPORT editável | `source` errado na base | Reimportar; checar API `LeadBaseResponse.source` |
 | UI sem selo | Frontend desatualizado | Rebuild frontend; hard refresh |
-| `alembic current` antigo | Migração pendente | `make migrate` até `g8h9i0j1k2l3` |
+| `alembic current` antigo | Migração pendente | `make migrate` até `h9i0j1k2l3m4` |
 | SadTalker unhealthy | Sem GPU | MP4 em `docs/demo-assets/` |
 | Coqui `model_loaded: false` | Build/startup | Aguardar; `reference.wav` |
 | 401 na UI | JWT expirado | Login de novo |
@@ -254,4 +310,4 @@ Plano B acionado:
 
 ---
 
-*Alinhado ao README, `validate_rag.py`, `validate_phase4_routing.py`, `conversation_routing.py`, `authorization.py`, lifespan em `main.py` / `seed.py`, head Alembic `g8h9i0j1k2l3`.*
+*Alinhado ao README (seção Atendimento receptivo), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `conversation_routing.py`, `authorization.py`, lifespan em `main.py` / `seed.py`, head Alembic `h9i0j1k2l3m4`.*
