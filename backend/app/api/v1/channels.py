@@ -5,8 +5,10 @@ import uuid
 import xml.sax.saxutils
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, status
-from fastapi.responses import FileResponse, Response
+from typing import Any
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -196,3 +198,31 @@ async def whatsapp_webhook(
         {"Body": Body, "From": From, "To": To, "MessageSid": MessageSid}
     )
     return Response(content=twiml, media_type="application/xml")
+
+
+@router.post("/webhooks/telegram")
+async def telegram_webhook(request: Request):
+    """
+    Inbound Telegram (TELEGRAM_MODE=webhook).
+
+    Telegram POSTa o Update JSON; processamos via Application.process_update
+    (mesma lógica do polling). Em modo polling, retorna 200 sem processar.
+    """
+    if not settings.is_telegram_webhook_mode():
+        return JSONResponse({"ok": True, "ignored": "TELEGRAM_MODE is not webhook"})
+
+    if not settings.telegram_bot_token:
+        raise HTTPException(status_code=503, detail="TELEGRAM_BOT_TOKEN not configured")
+
+    data: dict[str, Any] = await request.json()
+    update_id = data.get("update_id")
+    if update_id is not None:
+        from worker.tasks.inbound_handler import try_claim_inbound_dedup
+
+        if not try_claim_inbound_dedup("telegram", str(update_id)):
+            return JSONResponse({"ok": True, "deduplicated": True})
+
+    from agents.channels.telegram.handler import process_webhook_update
+
+    await process_webhook_update(data, settings.telegram_bot_token)
+    return JSONResponse({"ok": True})

@@ -23,6 +23,7 @@ x-app-env: &app-env
     TUNNEL_MODE: ${TUNNEL_MODE:-temporary}
     TUNNEL_URL_FILE: ${TUNNEL_URL_FILE:-/shared/tunnel_url.txt}
     TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
     ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
     ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
     DID_API_KEY: ${DID_API_KEY:-}
@@ -187,6 +188,27 @@ services:
       - tunnel_data:/shared:ro
     working_dir: /workspace/backend
     command: celery -A worker.celery_app worker --loglevel=info
+
+  # TUN-2 — polling Telegram (NÃO usar com TELEGRAM_MODE=webhook — conflito 409).
+  # Ativar: docker compose --profile telegram-polling up -d telegram-polling
+  telegram-polling:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    container_name: autonomous-agent-telegram-polling
+    <<: *app-env
+    profiles: ["telegram-polling"]
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - ../../backend:/workspace/backend
+      - ../../agents:/workspace/agents
+      - ../../worker:/workspace/worker
+      - ../../infra/docker/telegram-polling/entrypoint.sh:/entrypoint.sh:ro
+    working_dir: /workspace/backend
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    restart: unless-stopped
 
   celery-beat:
     build:

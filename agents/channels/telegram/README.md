@@ -26,7 +26,33 @@ O backend lê esse valor via `app.core.config.Settings.telegram_bot_token`.
 
 ## Docker Compose
 
-Inclua `TELEGRAM_BOT_TOKEN` no `.env` usado pelo `docker compose`. O serviço backend recebe as variáveis do `.env` correspondente.
+Inclua `TELEGRAM_BOT_TOKEN` e `TELEGRAM_MODE` no `.env`.
+
+| `TELEGRAM_MODE` | Inbound | Como subir |
+|-----------------|---------|------------|
+| `polling` (padrão) | `getUpdates` | Profile `telegram-polling` **ou** comando manual abaixo |
+| `webhook` | POST no backend | Automático (`setWebhook` no startup) + túnel/URL pública (TUN-1) |
+
+**Não rode polling e webhook ao mesmo tempo** — a API do Telegram retorna 409 se `setWebhook` estiver ativo e você iniciar `run_polling`.
+
+### Polling (profile opcional)
+
+```bash
+# Requer TELEGRAM_MODE=polling no .env
+docker compose --env-file .env \
+  -f infra/docker/docker-compose.yml \
+  -f infra/docker/docker-compose.dev.yml \
+  --profile telegram-polling up -d telegram-polling
+```
+
+### Webhook
+
+```env
+TELEGRAM_MODE=webhook
+PUBLIC_BASE_URL=   # vazio se usar túnel temporary (TUN-1)
+```
+
+O backend registra `{PUBLIC_BASE_URL}/api/v1/channels/webhooks/telegram` via `setWebhook` no startup.
 
 ## Uso no código
 

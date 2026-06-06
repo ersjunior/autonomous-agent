@@ -23,9 +23,13 @@ def log_resolved_public_urls() -> None:
 
     if base:
         _emit(f"TUN-1 URL pública resolvida ({mode}): {base}")
-        webhook = settings.whatsapp_webhook_url()
-        if webhook:
-            _emit(f"TUN-1 Webhook WhatsApp (Twilio Messaging): {webhook}")
+        whatsapp = settings.whatsapp_webhook_url()
+        if whatsapp:
+            _emit(f"TUN-1 Webhook WhatsApp (Twilio Messaging): {whatsapp}")
+        if settings.is_telegram_webhook_mode():
+            telegram = settings.telegram_webhook_url()
+            if telegram:
+                _emit(f"TUN-2 Webhook Telegram (setWebhook): {telegram}")
         return
 
     if mode == "temporary":

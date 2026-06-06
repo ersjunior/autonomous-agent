@@ -46,6 +46,8 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: Optional[str] = None
+    # polling (default): getUpdates em processo separado; webhook: POST na API FastAPI
+    telegram_mode: str = "polling"  # polling | webhook
 
     # ElevenLabs (TTS)
     elevenlabs_api_key: Optional[str] = None
@@ -230,6 +232,19 @@ class Settings(BaseSettings):
         if not base:
             return None
         return f"{base}/api/v1/channels/webhooks/whatsapp"
+
+    def telegram_webhook_url(self) -> str | None:
+        """URL registrada via setWebhook (TELEGRAM_MODE=webhook)."""
+        base = self.resolve_public_base_url()
+        if not base:
+            return None
+        return f"{base}/api/v1/channels/webhooks/telegram"
+
+    def is_telegram_webhook_mode(self) -> bool:
+        return (self.telegram_mode or "polling").strip().lower() == "webhook"
+
+    def is_telegram_polling_mode(self) -> bool:
+        return (self.telegram_mode or "polling").strip().lower() == "polling"
 
     def resolve_twilio_pstn_number(self) -> str:
         """Número PSTN de origem (+55...), nunca com prefixo whatsapp:."""
