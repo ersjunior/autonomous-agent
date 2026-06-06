@@ -21,11 +21,10 @@ jobs:
         run: pip install -r backend/requirements.txt
 
       - name: Run backend tests
+        working-directory: backend
         env:
-          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend
-        run: |
-          pip install pytest pytest-asyncio
-          pytest tests/ -v --tb=short || true
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/backend:${{ github.workspace }}/worker
+        run: pytest tests/unit -v --tb=short
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

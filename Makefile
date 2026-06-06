@@ -71,7 +71,7 @@ shell-backend:
 	$(COMPOSE) exec backend bash
 
 test:
-	$(COMPOSE) exec -T worker sh -c "pip install -q pytest && PYTHONPATH=/workspace:/workspace/backend:/workspace/worker pytest /workspace/backend /workspace/agents /workspace/worker -v" || [ $$? -eq 5 ]
+	$(COMPOSE) exec -T backend pytest tests/unit -v
 
 lint:
 	$(COMPOSE) exec -T worker sh -c "pip install -q ruff && ruff check /workspace/backend /workspace/agents /workspace/worker"

@@ -1,0 +1,22 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--cov=app",
+    "--cov=agents.channels.phone",
+    "--cov-report=term-missing:skip-covered",
+]
+markers = [
+    "unit: testes unitários puros (sem banco, Redis ou rede)",
+]
+
+[tool.coverage.run]
+source = ["app", "agents.channels.phone"]
+omit = ["tests/*", "alembic/*", "scripts/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
