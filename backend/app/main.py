@@ -13,6 +13,7 @@ from sqlalchemy import text
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, engine
+from app.core.tunnel_log import log_resolved_public_urls
 from app.core.seed import (
     ensure_seed_flags,
     seed_default_admin,
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
         await ensure_seed_flags(db)
 
     await bootstrap_settings()
+    log_resolved_public_urls()
 
     yield
     await engine.dispose()

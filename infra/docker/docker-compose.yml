@@ -20,6 +20,8 @@ x-app-env: &app-env
     TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
     TWILIO_VOICE_NUMBER: ${TWILIO_VOICE_NUMBER:-}
     PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    TUNNEL_MODE: ${TUNNEL_MODE:-temporary}
+    TUNNEL_URL_FILE: ${TUNNEL_URL_FILE:-/shared/tunnel_url.txt}
     TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
     ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
     ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
@@ -111,8 +113,26 @@ services:
       - ../../infra/docker/coqui-tts/voices:/voices:rw
       - ../../infra/docker/sadtalker/avatars:/avatars:rw
       - kb_uploads:/workspace/kb_uploads:rw
+      - tunnel_data:/shared:rw
     working_dir: /workspace/backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  cloudflared:
+    build:
+      context: ./cloudflared
+      dockerfile: Dockerfile
+    container_name: autonomous-agent-cloudflared
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      TUNNEL_MODE: ${TUNNEL_MODE:-temporary}
+      TUNNEL_URL_FILE: ${TUNNEL_URL_FILE:-/shared/tunnel_url.txt}
+      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+      CLOUDFLARED_BACKEND_URL: http://backend:8000
+    volumes:
+      - tunnel_data:/shared:rw
 
   frontend:
     build:
@@ -164,6 +184,7 @@ services:
       - ../../infra/docker/coqui-tts/voices:/voices:rw
       - ../../infra/docker/sadtalker/avatars:/avatars:rw
       - kb_uploads:/workspace/kb_uploads:rw
+      - tunnel_data:/shared:ro
     working_dir: /workspace/backend
     command: celery -A worker.celery_app worker --loglevel=info
 
@@ -296,4 +317,5 @@ volumes:
   devolutivas:
   voice_audio:
   avatar_video:
+  tunnel_data:
   kb_uploads:

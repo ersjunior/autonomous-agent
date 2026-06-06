@@ -1,5 +1,7 @@
 """Application configuration."""
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -35,6 +37,12 @@ class Settings(BaseSettings):
 
     # URL pública do backend (ngrok, domínio, IP, Cloudflare Tunnel) — sem barra final
     public_base_url: Optional[str] = None
+
+    # TUN-1 — Cloudflare Tunnel (docker-compose serviço cloudflared)
+    # temporary: URL lida de tunnel_url_file (quick tunnel *.trycloudflare.com)
+    # named: PUBLIC_BASE_URL fixa no .env + CLOUDFLARE_TUNNEL_TOKEN no serviço cloudflared
+    tunnel_mode: str = "temporary"  # temporary | named
+    tunnel_url_file: str = "/shared/tunnel_url.txt"
 
     # Telegram
     telegram_bot_token: Optional[str] = None
@@ -172,14 +180,56 @@ class Settings(BaseSettings):
     def resolved_kb_top_k(self) -> int:
         return self.rag_top_k if self.kb_top_k <= 0 else self.kb_top_k
 
+    def _read_tunnel_url_file(self) -> str | None:
+        path = Path(self.tunnel_url_file)
+        if not path.is_file():
+            return None
+        raw = path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return None
+        return raw.rstrip("/")
+
+    def resolve_public_base_url(self) -> str | None:
+        """
+        Resolve PUBLIC_BASE_URL para Twilio (voz outbound, URLs no TwiML).
+
+        Prioridade:
+          1. ``public_base_url`` no .env (manual ou named) — sempre vence.
+          2. ``tunnel_mode=temporary`` — lê ``tunnel_url_file`` (quick tunnel).
+          3. Caso contrário, None.
+        """
+        env_url = (self.public_base_url or "").strip()
+        if env_url:
+            return env_url.rstrip("/")
+
+        mode = (self.tunnel_mode or "temporary").strip().lower()
+        if mode == "temporary":
+            return self._read_tunnel_url_file()
+        return None
+
     def require_public_base_url(self) -> str:
         """Base URL pública exigida para Twilio buscar TwiML de voz outbound."""
-        raw = (self.public_base_url or "").strip()
-        if not raw:
+        url = self.resolve_public_base_url()
+        if url:
+            return url
+
+        mode = (self.tunnel_mode or "temporary").strip().lower()
+        if mode == "temporary":
             raise ValueError(
-                "PUBLIC_BASE_URL não configurada — necessária para Twilio Voice buscar o TwiML"
+                "PUBLIC_BASE_URL indisponível — túnel temporário ainda não publicou a URL "
+                f"em {self.tunnel_url_file}. Aguarde o serviço cloudflared subir."
             )
-        return raw.rstrip("/")
+        raise ValueError(
+            "PUBLIC_BASE_URL não configurada — necessária para Twilio "
+            "(defina no .env em TUNNEL_MODE=named ou manual)."
+        )
+
+    def whatsapp_webhook_url(self) -> str | None:
+        """URL para cadastrar no console Twilio (Messaging webhook)."""
+        base = self.resolve_public_base_url()
+        if not base:
+            return None
+        return f"{base}/api/v1/channels/webhooks/whatsapp"
 
     def resolve_twilio_pstn_number(self) -> str:
         """Número PSTN de origem (+55...), nunca com prefixo whatsapp:."""
