@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, Pencil, Play, Trash2 } from "lucide-react";
+import { Eye, Pencil, Play, Square, Trash2 } from "lucide-react";
 import type { RecordActions as Actions } from "@/lib/protection";
 
 interface RecordActionsProps {
@@ -9,7 +9,9 @@ interface RecordActionsProps {
   onEdit?: () => void;
   onDelete?: () => void;
   onStart?: () => void;
+  onStop?: () => void;
   startLoading?: boolean;
+  stopLoading?: boolean;
   deleteLoading?: boolean;
 }
 
@@ -22,7 +24,9 @@ export function RecordActionsBar({
   onEdit,
   onDelete,
   onStart,
+  onStop,
   startLoading = false,
+  stopLoading = false,
   deleteLoading = false,
 }: RecordActionsProps) {
   return (
@@ -59,6 +63,18 @@ export function RecordActionsBar({
           onClick={onStart}
         >
           <Play className="h-4 w-4" />
+        </button>
+      )}
+      {onStop && actions.canEdit && (
+        <button
+          type="button"
+          className={iconBtn}
+          title="Parar campanha"
+          aria-label="Parar campanha"
+          disabled={stopLoading}
+          onClick={onStop}
+        >
+          <Square className="h-4 w-4" />
         </button>
       )}
       {actions.canDelete && onDelete && (

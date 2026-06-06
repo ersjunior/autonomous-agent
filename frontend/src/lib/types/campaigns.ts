@@ -26,3 +26,8 @@ export interface CampaignStartResponse {
   status: string;
   leads_dispatched: number;
 }
+
+export interface CampaignStopResponse {
+  status: string;
+  activations_stopped: number;
+}

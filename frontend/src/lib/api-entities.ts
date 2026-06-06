@@ -5,6 +5,7 @@ import type {
   Campaign,
   CampaignCreatePayload,
   CampaignStartResponse,
+  CampaignStopResponse,
   CampaignUpdatePayload,
 } from "@/lib/types/campaigns";
 import type { Lead } from "@/lib/types/leads";
@@ -139,6 +140,22 @@ export async function startCampaign(id: string): Promise<CampaignStartResponse> 
   const res = await apiFetch(`/api/v1/campaigns/${id}/start`, { method: "POST" });
   if (!res.ok) {
     await parseError(res, "Erro ao iniciar campanha");
+  }
+  return res.json();
+}
+
+export async function stopCampaign(id: string): Promise<CampaignStopResponse> {
+  const res = await apiFetch(`/api/v1/campaigns/${id}/stop`, { method: "POST" });
+  if (!res.ok) {
+    await parseError(res, "Erro ao parar campanha");
+  }
+  return res.json();
+}
+
+export async function fetchLeads(): Promise<Lead[]> {
+  const res = await apiFetch("/api/v1/leads/");
+  if (!res.ok) {
+    await parseError(res, "Erro ao listar leads");
   }
   return res.json();
 }

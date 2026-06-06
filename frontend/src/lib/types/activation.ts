@@ -53,3 +53,64 @@ export type ActivationStartResult = {
   leads_dispatched: number;
   activation: Activation;
 };
+
+export type TestDispatchPayload = {
+  lead_id: string;
+  agent_id: string;
+  channel_type: string;
+};
+
+export type TestDispatchResult = {
+  status: "sucesso" | "erro";
+  channel: string;
+  recipient: string | null;
+  response: string | null;
+  error?: string | null;
+  lead_interaction_id?: string | null;
+};
+
+export type ActivationHistoryItem = {
+  id: string;
+  lead_id: string;
+  lead_nome: string;
+  campaign_id: string;
+  campaign_name: string;
+  channel_type: string;
+  status: string;
+  tentativas: number;
+  data_acionamento: string | null;
+  data_ultimo_contato: string | null;
+  data_ultima_tentativa: string | null;
+  tabulacao_codigo: string | null;
+  tabulacao_nome: string | null;
+  tabulacao_aplicada_em: string | null;
+  is_terminal: boolean;
+  is_human_mode: boolean;
+};
+
+export type ActivationHistoryList = {
+  items: ActivationHistoryItem[];
+  total: number;
+  skip: number;
+  limit: number;
+};
+
+export type ActivationHistoryFilters = {
+  campaign_id?: string;
+  channel_type?: string;
+  status?: string;
+  open_only?: boolean;
+};
+
+export type FinalizeInteractionPayload = {
+  tabulacao_codigo: string;
+  status_interno?: string;
+};
+
+export type FinalizeInteractionResult = {
+  ok: boolean;
+  lead_interaction_id: string;
+  status: string;
+  tabulacao_codigo: string;
+  message: string | null;
+};

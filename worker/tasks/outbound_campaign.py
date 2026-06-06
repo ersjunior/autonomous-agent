@@ -237,6 +237,7 @@ async def _send_on_channel(
     channel_type: str,
     *,
     followup: bool = False,
+    agent_override: Agent | None = None,
 ) -> dict | None:
     channel = channel_type.lower()
     recipient = _resolve_recipient(lead, channel)
@@ -257,7 +258,7 @@ async def _send_on_channel(
         )
         return None
 
-    agent = campaign.agent
+    agent = agent_override if agent_override is not None else campaign.agent
     if agent is None:
         raise ValueError(f"Campaign {campaign.id} has no agent")
 
@@ -319,6 +320,40 @@ async def _send_on_channel(
             return None
 
     return {"channel": channel, "recipient": recipient, "response": response, "followup": followup}
+
+
+async def _send_test_dispatch(
+    session: AsyncSession,
+    lead: Lead,
+    campaign: Campaign,
+    channel_type: str,
+    agent: Agent,
+) -> dict:
+    """
+    Disparo ad-hoc síncrono: um canal, agente explícito, sem janela/cadência/scheduler.
+    """
+    channel = normalize_channel_type(channel_type)
+    result = await _send_on_channel(
+        session,
+        lead,
+        campaign,
+        channel,
+        followup=False,
+        agent_override=agent,
+    )
+    if result is None:
+        return {
+            "channel": channel,
+            "recipient": _resolve_recipient(lead, channel),
+            "response": None,
+            "error": "Falha no disparo (sem destinatário, resposta vazia ou erro de entrega)",
+        }
+    return {
+        "channel": result["channel"],
+        "recipient": result["recipient"],
+        "response": result.get("response"),
+        "error": None,
+    }
 
 
 def _release_slot_after_dispatch(

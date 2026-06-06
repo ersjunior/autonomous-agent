@@ -7,6 +7,7 @@ import {
   fetchAgents,
   fetchCampaigns,
   startCampaign,
+  stopCampaign,
   updateCampaign,
 } from "@/lib/api-entities";
 import { actionsFor } from "@/lib/protection";
@@ -40,6 +41,7 @@ export default function CampaignsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Campaign | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [startingId, setStartingId] = useState<string | null>(null);
+  const [stoppingId, setStoppingId] = useState<string | null>(null);
 
   async function loadData() {
     const token = localStorage.getItem("access_token");
@@ -143,6 +145,23 @@ export default function CampaignsPage() {
       setError(err instanceof Error ? err.message : "Erro ao iniciar campanha.");
     } finally {
       setStartingId(null);
+    }
+  }
+
+  async function handleStop(campaign: Campaign) {
+    setStoppingId(campaign.id);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await stopCampaign(campaign.id);
+      setSuccess(
+        `Campanha pausada. ${result.activations_stopped} canal(is) desligado(s).`,
+      );
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao parar campanha.");
+    } finally {
+      setStoppingId(null);
     }
   }
 
@@ -251,6 +270,7 @@ export default function CampaignsPage() {
                 const canStart =
                   actions.canEdit &&
                   (campaign.status === "draft" || campaign.status === "paused");
+                const canStop = actions.canEdit && campaign.status === "active";
                 return (
                   <tr key={campaign.id} className="transition hover:bg-muted/30">
                     <td className="px-6 py-4 text-sm">
@@ -286,7 +306,9 @@ export default function CampaignsPage() {
                         onEdit={() => openCampaign(campaign, "edit")}
                         onDelete={() => setDeleteTarget(campaign)}
                         onStart={canStart ? () => handleStart(campaign) : undefined}
+                        onStop={canStop ? () => handleStop(campaign) : undefined}
                         startLoading={startingId === campaign.id}
+                        stopLoading={stoppingId === campaign.id}
                       />
                     </td>
                   </tr>

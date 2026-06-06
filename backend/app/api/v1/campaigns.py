@@ -20,6 +20,7 @@ from app.schemas.campaign import (
     CampaignCreate,
     CampaignResponse,
     CampaignStartResponse,
+    CampaignStopResponse,
     CampaignUpdate,
 )
 from app.schemas.metrics import MetricsResponse
@@ -49,6 +50,7 @@ def _to_campaign_response(campaign: Campaign) -> CampaignResponse:
         status=campaign.status,
         channel_types=[channel.channel_type for channel in campaign.campaign_channels],
         leads_count=campaign.leads_count,
+        is_system=campaign.is_system,
         created_at=campaign.created_at,
     )
 
@@ -225,6 +227,29 @@ async def start_campaign(
     await db.commit()
 
     return CampaignStartResponse(status="started", leads_dispatched=dispatched)
+
+
+@router.post("/{campaign_id}/stop", response_model=CampaignStopResponse)
+async def stop_campaign(
+    campaign_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CampaignStopResponse:
+    campaign = await _get_campaign(campaign_id, user, db)
+    raise_if_cannot_edit(campaign, user)
+
+    if campaign.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Campaign cannot be stopped from status '{campaign.status}'",
+        )
+
+    channel_count = len(campaign.campaign_channels)
+    await set_all_campaign_activations_running(db, campaign, is_running=False)
+    campaign.status = "paused"
+    await db.commit()
+
+    return CampaignStopResponse(status="paused", activations_stopped=channel_count)
 
 
 @router.delete("/{campaign_id}", status_code=status.HTTP_204_NO_CONTENT)

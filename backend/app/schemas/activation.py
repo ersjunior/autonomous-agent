@@ -99,3 +99,57 @@ class ActivationStartResponse(BaseModel):
     dispatched_now: int = 0
     reason: str | None = None
     activation: ActivationResponse
+
+
+class TestDispatchRequest(BaseModel):
+    lead_id: UUID
+    agent_id: UUID
+    channel_type: str
+
+
+class TestDispatchResponse(BaseModel):
+    status: Literal["sucesso", "erro"]
+    channel: str
+    recipient: str | None = None
+    response: str | None = None
+    error: str | None = None
+    lead_interaction_id: UUID | None = None
+
+
+class ActivationHistoryItem(BaseModel):
+    id: UUID
+    lead_id: UUID
+    lead_nome: str
+    campaign_id: UUID
+    campaign_name: str
+    channel_type: str
+    status: str
+    tentativas: int
+    data_acionamento: datetime | None = None
+    data_ultimo_contato: datetime | None = None
+    data_ultima_tentativa: datetime | None = None
+    tabulacao_codigo: str | None = None
+    tabulacao_nome: str | None = None
+    tabulacao_aplicada_em: datetime | None = None
+    is_terminal: bool
+    is_human_mode: bool = False
+
+
+class ActivationHistoryListResponse(BaseModel):
+    items: list[ActivationHistoryItem]
+    total: int
+    skip: int
+    limit: int
+
+
+class FinalizeInteractionRequest(BaseModel):
+    tabulacao_codigo: str = Field(..., min_length=1)
+    status_interno: str | None = None
+
+
+class FinalizeInteractionResponse(BaseModel):
+    ok: bool
+    lead_interaction_id: UUID
+    status: str
+    tabulacao_codigo: str
+    message: str | None = None

@@ -35,3 +35,8 @@ class CampaignResponse(BaseModel):
 class CampaignStartResponse(BaseModel):
     status: str
     leads_dispatched: int
+
+
+class CampaignStopResponse(BaseModel):
+    status: str
+    activations_stopped: int
