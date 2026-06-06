@@ -64,7 +64,10 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 - [ ] **Migrations em head**  
   - `docker exec autonomous-agent-backend alembic current`  
-  - Passou: revisão **`i0j1k2l3m4n5`** (head)
+  - Passou: revisão **`k2l3m4n5o6p7`** (head — KB: `j1k2l3m4n5o6` + progresso `k2l3m4n5o6p7`)
+
+- [ ] **Sem migration nova nos ajustes operacionais recentes**  
+  - Parar campanha, teste ad-hoc, histórico de acionamentos e histórico de atendimentos **não** adicionam revisão Alembic — head permanece **`k2l3m4n5o6p7`**
 
 - [ ] **Tabela `tabulacoes` (T-2)**  
   ```bash
@@ -263,8 +266,12 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
   - Passou: `{ "reactivated": true }` e contato some de `/handoff/active`
 
 - [ ] **UI — Monitoramento / Modo humano**  
-  - http://localhost:3000/dashboard/monitoring — seção **Modo humano** com lista e botão **Devolver ao bot**  
+  - http://localhost:3000/dashboard/monitoring — aba **Tempo real**: seção **Modo humano** + feed WebSocket  
   - (Opcional ao vivo) Escalar contato → aparece na lista; reativar → próxima mensagem atendida pelo bot
+
+- [ ] **UI — Monitoramento / Histórico de atendimentos**  
+  - Aba **Histórico de atendimentos**: tabela paginada; **Abrir conversa** → modal com thread user/assistant  
+  - Passou: inbound sem `data_acionamento` pode aparecer (diferente do histórico de Acionamento)
 
 - [ ] **Comportamento verificável (manual ou scripts)**  
   | Cenário | Esperado |
@@ -276,7 +283,47 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
   | Nova msg em modo humano | Sem LLM; msg ocasional no 1º envio; throttle na 2ª imediata |
   | Reativação ou TTL | Bot volta a atender normalmente |
 
-> **Alembic:** feature B-1/B-2 **não** adiciona migration — `NEG:ESCALADO` entra via **seed** (`seed_default_tabulacoes`). Head permanece **`i0j1k2l3m4n5`**.
+> **Alembic:** feature B-1/B-2 **não** adiciona migration — `NEG:ESCALADO` entra via **seed** (`seed_default_tabulacoes`).
+
+---
+
+## 6e. Operação de campanha e supervisão (ajustes recentes)
+
+> **Alembic:** estes itens **não** criam migration — head **`k2l3m4n5o6p7`**.
+
+- [ ] **`POST /api/v1/campaigns/{id}/stop`** — campanha ativa  
+  - Login admin → iniciar campanha → `POST …/stop`  
+  - Passou: HTTP **200**, `status=paused`, `activations_stopped` ≥ 0; ativações `is_running=false`
+
+- [ ] **`POST /api/v1/activation/test-dispatch`** — disparo síncrono  
+  - Body: `{ lead_id, agent_id, channel_type }` (agente ACTIVE)  
+  - Passou: HTTP **200**, `status` em `sucesso`/`erro`, campo `response` ou `error` preenchido
+
+- [ ] **`GET /api/v1/activation/history`** — histórico outbound paginado  
+  - `?skip=0&limit=50` com token  
+  - Passou: `{ items, total, skip, limit }`; itens com `data_acionamento` (sem inbound puro)
+
+- [ ] **`GET /api/v1/monitoring/attendance-history`** — histórico de atendimentos  
+  - Passou: HTTP **200**, JSON paginado; pode incluir inbound e órfãos (admin)
+
+- [ ] **Abrir conversa** — thread de mensagens  
+  - `GET /api/v1/monitoring/attendance/{lead_interaction_id}/messages` ou `GET …/contact-messages?channel=&contact_user_id=`  
+  - Passou: `messages[]` com `role` `user`/`assistant` em ordem cronológica
+
+- [ ] **Scripts `validate_*` (4 novos)**  
+  ```bash
+  docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_campaign_stop.py
+  docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_test_dispatch.py
+  docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_activation_history.py
+  docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_attendance_history.py
+  ```  
+  - Passou: todos com **0 FAIL**
+
+- [ ] **UI — Acionamento (3 abas)**  
+  - http://localhost:3000/dashboard/activation — Motor | Teste de acionamento | Histórico de acionamentos
+
+- [ ] **Normalização WhatsApp (thread única)**  
+  - Conversa com mensagens em `+55…` e `whatsapp:+55…` → **Abrir conversa** mostra thread unificada (ver `validate_attendance_history.py`)
 
 ---
 
@@ -356,10 +403,11 @@ Abas abertas:
 3. http://localhost:3000/dashboard/channels  
 4. http://localhost:3000/dashboard/metrics (seção Fila de atendimento)  
 5. http://localhost:3000/dashboard/capacity  
-6. http://localhost:3000/dashboard/monitoring (Modo humano + feed de eventos)  
-7. http://localhost:3000/dashboard/tabulacoes  
-8. README → Atendimento receptivo + Comportamento do Agente Receptivo + Tabulação  
-8. http://localhost:8000/docs  
+6. http://localhost:3000/dashboard/activation (Teste de acionamento + Histórico)  
+7. http://localhost:3000/dashboard/monitoring (Tempo real + Histórico de atendimentos)  
+8. http://localhost:3000/dashboard/tabulacoes  
+9. README → Campanhas (parar) + Acionamento (3 abas) + Monitoramento (2 abas)  
+10. http://localhost:8000/docs  
 
 ---
 
@@ -376,7 +424,7 @@ Abas abertas:
 | Campanha RECEPTIVE não envia | Regra de negócio | **Esperado** — cenário E do script |
 | Lead IMPORT editável | `source` errado na base | Reimportar; checar API `LeadBaseResponse.source` |
 | UI sem selo | Frontend desatualizado | Rebuild frontend; hard refresh |
-| `alembic current` antigo | Migração pendente | `make migrate` até `i0j1k2l3m4n5` |
+| `alembic current` antigo | Migração pendente | `make migrate` até `k2l3m4n5o6p7` |
 | SadTalker unhealthy | Sem GPU | MP4 em `docs/demo-assets/` |
 | Coqui `model_loaded: false` | Build/startup | Aguardar; `reference.wav` |
 | 401 na UI | JWT expirado | Login de novo |
@@ -400,4 +448,4 @@ Plano B acionado:
 
 ---
 
-*Alinhado ao README (Atendimento receptivo + Comportamento do Agente Receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `conversation_routing.py`, `authorization.py`, lifespan em `main.py` / `seed.py`, head Alembic `i0j1k2l3m4n5` (sem migration nova em B-1/B-2; `NEG:ESCALADO` via seed).*
+*Alinhado ao README (Campanhas parar/retomar, Acionamento 3 abas, Monitoramento 2 abas, Atendimento receptivo, Tabulação), scripts `validate_*` listados, head Alembic **`k2l3m4n5o6p7`** (ajustes operacionais recentes sem migration nova).*

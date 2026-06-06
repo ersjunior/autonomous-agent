@@ -18,10 +18,13 @@
 | Métricas (incl. fila receptiva) | http://localhost:3000/dashboard/metrics |
 | Capacidade (Erlang + estimativa) | http://localhost:3000/dashboard/capacity |
 | Tabulações | http://localhost:3000/dashboard/tabulacoes |
-| Monitoramento (eventos + modo humano) | http://localhost:3000/dashboard/monitoring |
+| Acionamento (motor + teste + histórico outbound) | http://localhost:3000/dashboard/activation |
+| Monitoramento (tempo real + histórico de atendimentos) | http://localhost:3000/dashboard/monitoring |
 | API Swagger | http://localhost:8000/docs |
 
 **Diagramas e regras:** seções *Destaques de IA*, *Arquitetura* e *Regras de negócio* do [README.md](../README.md).
+
+**Sumário:** 1 Abertura → 2 Arquitetura → 3 Cérebro local → 4 RAG → **5** Roteamento ATIVO/RECEPTIVO → **5b** Fila + Erlang → **5c** Comportamento receptivo / handoff → **5d** Tabulação / status → **5e** Teste de acionamento → **5f** Ciclo operacional → 6 Propriedade → 7 Voz → 8 Avatar → 9 Negócio → 10 Fechamento.
 
 ---
 
@@ -270,7 +273,7 @@ docker exec autonomous-agent-worker \
 
 - Saída de `validate_receptive_b1.py` e `validate_human_mode_b2.py` em `docs/demo-assets/`.  
 - Screenshot da seção **Modo humano** no Monitoramento.  
-- README — seção **Comportamento do Agente Receptivo** + diagrama Mermaid.
+- README — seção **Comportamento do Agente Receptivo** (5c) + diagrama Mermaid.
 
 ### Perguntas prováveis (comportamento / handoff)
 
@@ -284,7 +287,7 @@ docker exec autonomous-agent-worker \
 
 ---
 
-## 5c. Demo ao vivo — Tabulação / status de atendimento (~2 min) ★ call center + IA
+## 5d. Demo ao vivo — Tabulação / status (~2 min) ★ call center + IA
 
 ### O que fazer
 
@@ -324,7 +327,42 @@ docker exec autonomous-agent-backend \
 ### Plano B
 
 - Screenshot da aba Tabulações + saída de `validate_tabulacao_t2.py` em `docs/demo-assets/`.  
-- README — seção **Tabulação / Status de Atendimento**.
+- README — seção **Tabulação / Status de Atendimento** (5d).
+
+---
+
+## 5e. Demo ao vivo — Teste de acionamento ★ melhor recurso para banca (~2–3 min)
+
+**Por quê:** resposta **síncrona na tela** — sem depender de campanha rodando, janela ou cadência. Ideal para **Telegram** (token no `.env`, lead com `telegram_id`).
+
+### O que fazer
+1. http://localhost:3000/dashboard/activation → aba **Teste de acionamento**
+2. Agente **ACTIVE** (ex.: `Agente_Ativo`), lead com contato válido, canal **telegram** ou **whatsapp**
+3. **Disparar** → aguardar resposta do LLM (dezenas de segundos)
+4. Mostrar bloco **Resultado** com texto gerado
+
+### O que falar
+> "É o mesmo grafo LangGraph da produção, mas em modo **demonstração**: um disparo, um canal, capacidade global respeitada. Na banca, o Telegram costuma ser o caminho mais estável — a resposta aparece na hora, sem abrir Swagger."
+
+### Plano B
+- Saída de `validate_test_dispatch.py` ou screenshot da aba com resultado prévio
+
+---
+
+## 5f. Demo ao vivo — Ciclo operacional completo (~3–4 min)
+
+### Sequência sugerida
+1. **Iniciar campanha** — `/dashboard/campaigns` → Iniciar (se Twilio/Telegram configurado)
+2. **Monitorar** — `/dashboard/monitoring` → aba **Tempo real** (eventos WebSocket + modo humano se escalar)
+3. **Parar campanha** — **Parar** na campanha ativa → `status=paused`, motor desligado por canal
+4. **Supervisionar** — aba **Histórico de atendimentos** → **Abrir conversa** → thread user/assistant + metadados (início, duração estimada em chat; voz = indisponível)
+5. **Operação outbound** — `/dashboard/activation` → aba **Histórico de acionamentos** → finalizar manual com tabulação (se atendimento aberto)
+
+### O que falar
+> "Não é só chatbot: é **sistema de atendimento** — acionar, monitorar em tempo real, **parar** a operação, **supervisionar** conversas (somente leitura) e **encerrar** acionamentos no painel operacional. Dois históricos distintos: **Acionamento** = outbound de campanha; **Monitoramento** = conversas e mensagens, inclusive inbound receptivo."
+
+### Ponto de honestidade
+> "Duração de **chamada** de voz ainda não temos — falta callback Twilio. Em chat, a duração é **estimada** pela primeira e última mensagem. Unificamos `+55…` e `whatsapp:+55…` na thread para não partir a conversa."
 
 ---
 
@@ -393,19 +431,21 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 
 ## 9. Aplicação de negócio (~1 min)
 
-- **Campanhas** — `Agente_Ativo` no `agent_id`; aviso se RECEPTIVE; **Iniciar** (se Twilio configurado).
+- **Campanhas** — `Agente_Ativo` no `agent_id`; **Iniciar** / **Parar** / retomar.
+- **Acionamento** — 3 abas: motor, teste ad-hoc, histórico outbound.
+- **Monitoramento** — 2 abas: tempo real, histórico de conversas.
 - **Métricas** — campanha/base + **Fila de atendimento** (SLA).
-- **Capacidade** — estimativa + Erlang (1 slide se faltar tempo na 5b).
+- **Capacidade** — estimativa + Erlang (1 slide se faltar tempo na **5b**; ver também **5f**).
 - **Devolutiva** — download Excel (status operacional + tabulação).
 
 ### O que falar
-> "A camada operacional **dispara** o mesmo grafo; receptivo com **fila** quando o contact center enche; `LeadInteraction`, **tabulação call center**, métricas de fila e devolutiva Excel fecham o ciclo para o gestor."
+> "A camada operacional **dispara** o mesmo grafo; receptivo com **fila** quando o contact center enche; `LeadInteraction`, **tabulação call center**, supervisão de conversas, parar campanha e devolutiva Excel fecham o ciclo para o gestor."
 
 ---
 
 ## 10. Fechamento (~1 min)
 
-> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **comportamento receptivo com handoff humano real**, **tabulação híbrida (regras + IA)**, **dimensionamento Erlang C**, **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py` e `validate_tabulacao_t2.py` são evidência de regressão para a defesa."
+> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **comportamento receptivo com handoff humano real** (5c), **tabulação híbrida (regras + IA)** (5d), **ciclo operacional completo** (5f: acionar, testar ao vivo em 5e, parar, supervisionar, finalizar), **dimensionamento Erlang C**, **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `validate_campaign_stop.py`, `validate_test_dispatch.py`, `validate_activation_history.py` e `validate_attendance_history.py` são evidência de regressão para a defesa."
 
 ---
 
@@ -487,9 +527,11 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 | Ollama / grafo | Log + resposta pré-gravada |
 | **RAG** | **`docs/demo-assets/validate-rag-output.txt`** |
 | **Roteamento** | **`docs/demo-assets/validate-phase4-routing-output.txt`** + flowchart README |
-| **Fila receptiva / Erlang** | Saída `validate_layer_ra_receptive.py` + screenshots Métricas/Capacidade |
-| **Comportamento receptivo / handoff** | Saída `validate_receptive_b1.py` + `validate_human_mode_b2.py` + screenshot Modo humano |
-| **Tabulação** | Saída `validate_tabulacao_t2.py` + screenshot `/dashboard/tabulacoes` |
+| **Fila receptiva / Erlang** (5b) | Saída `validate_layer_ra_receptive.py` + screenshots Métricas/Capacidade |
+| **Comportamento receptivo / handoff** (5c) | Saída `validate_receptive_b1.py` + `validate_human_mode_b2.py` + screenshot Modo humano |
+| **Tabulação / status** (5d) | Saída `validate_tabulacao_t2.py` + screenshot `/dashboard/tabulacoes` |
+| **Teste de acionamento** (5e) | Aba Teste em `/dashboard/activation` ou saída `validate_test_dispatch.py` |
+| **Ciclo operacional** (5f) | Screenshots Parar campanha + Histórico de atendimentos (thread aberta) |
 | Voz / Avatar | `voz-demo.mp3` / `avatar-demo.mp4` |
 | Propriedade UI | Screenshots agentes/canais + print 403 |
 | Campanha real | Métricas de base antiga |
@@ -505,13 +547,14 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 - [ ] `redis-cli DEL chat:RAGTEST`
 - [ ] Scripts copiados no container; saídas salvas em `docs/demo-assets/` (Plano B)
 - [ ] Campanha existente no DB (para cenários B–D do routing)
-- [ ] Browser: Settings, Agentes, Canais, Tabulações, Métricas (fila), Capacidade, **Monitoramento (modo humano)**, README
+- [ ] Browser: Settings, Agentes, Canais, **Acionamento (3 abas — demo 5e/5f)**, Tabulações (**5d**), Métricas (fila **5b**), Capacidade, **Monitoramento (2 abas — 5c handoff, 5f supervisão)**, README
 - [ ] `validate_layer_ra_receptive.py` ensaiado (MAX_WEIGHTED_CAPACITY_OVERRIDE=2)
 - [ ] `validate_receptive_b1.py` e `validate_human_mode_b2.py` ensaiados
 - [ ] `validate_tabulacao_t2.py` ensaiado
+- [ ] `validate_campaign_stop.py`, `validate_test_dispatch.py`, `validate_activation_history.py`, `validate_attendance_history.py` ensaiados
 - [ ] (Opcional) `user2@test.com` para isolamento
 - [ ] MP3/MP4 fallback
 
 ---
 
-*Alinhado ao README (Atendimento receptivo + Comportamento do Agente Receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`, head Alembic `i0j1k2l3m4n5` (B-1/B-2 sem migration; `NEG:ESCALADO` via seed).*
+*Alinhado ao README (Campanhas parar/retomar, Acionamento 3 abas, Monitoramento 2 abas, Atendimento receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `validate_campaign_stop.py`, `validate_test_dispatch.py`, `validate_activation_history.py`, `validate_attendance_history.py`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`, head Alembic **`k2l3m4n5o6p7`** (ajustes operacionais recentes sem migration nova; `NEG:ESCALADO` via seed).*
