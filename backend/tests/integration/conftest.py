@@ -270,4 +270,12 @@ def mock_capacity_release(monkeypatch):
         "app.services.capacity_service.release_receptive_capacity_for_lead",
         fake_release_receptive,
     )
+    monkeypatch.setattr(
+        "app.services.activation_history.release_slot_for_lead",
+        fake_release_slot,
+    )
+    monkeypatch.setattr(
+        "app.services.activation_history.release_outbound_capacity_for_lead",
+        fake_release_outbound,
+    )
     return state
