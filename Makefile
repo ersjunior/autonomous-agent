@@ -73,6 +73,15 @@ shell-backend:
 test:
 	$(COMPOSE) exec -T backend pytest tests/unit -v
 
+# Postgres de teste no compose (host interno: postgres:5432).
+TEST_DATABASE_URL ?= postgresql://postgres:postgres@postgres:5432/autonomous_agent_test
+
+test-integration:
+	$(COMPOSE) exec -T \
+		-e TEST_DATABASE_URL=$(TEST_DATABASE_URL) \
+		-e DATABASE_URL=$(TEST_DATABASE_URL) \
+		backend pytest tests/integration -v --tb=short
+
 lint:
 	$(COMPOSE) exec -T worker sh -c "pip install -q ruff && ruff check /workspace/backend /workspace/agents /workspace/worker"
 

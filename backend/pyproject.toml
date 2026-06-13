@@ -11,6 +11,7 @@ addopts = [
 ]
 markers = [
     "unit: testes unitários puros (sem banco, Redis ou rede)",
+    "integration: testes de integração com Postgres real (pgvector + Alembic)",
 ]
 
 [tool.coverage.run]
