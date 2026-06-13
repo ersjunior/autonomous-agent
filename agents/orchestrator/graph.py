@@ -10,40 +10,18 @@ from agents.memory.short_term import ShortTermMemory
 from agents.orchestrator.router import route_after_escalation_check
 from agents.orchestrator.state import AgentState
 from agents.tools.knowledge_base import retrieve_kb_chunks
+from agents.escalation import resolve_should_escalate
 from agents.workers.intent_agent import identify_intent as run_identify_intent
 from agents.workers.response_agent import generate_response as run_generate_response
 
 logger = logging.getLogger(__name__)
 
-# B-1: escalonamento — intent escalate, baixa confiança ou reclamação grave (severity=high).
-ESCALATION_CONFIDENCE_THRESHOLD = 0.5
 EMPTY_RESPONSE_FALLBACK = (
     "Desculpe, não consegui processar sua mensagem agora. Pode reformular?"
 )
 
 _short_term_memory = ShortTermMemory()
 _long_term_memory = LongTermMemory()
-
-
-def resolve_should_escalate(
-    intent: str,
-    confidence: float,
-    complaint_severity: str = "low",
-) -> bool:
-    """
-    Critérios de escalonamento (B-1):
-      a) intent == escalate (pedido explícito de humano ou frustração extrema)
-      b) confidence < ESCALATION_CONFIDENCE_THRESHOLD (incerteza na classificação)
-      c) intent == complaint AND complaint_severity == high (reclamação grave)
-    Reclamações leves (severity=low) não escalam — o bot tenta resolver em generate_response.
-    """
-    if intent == "escalate":
-        return True
-    if confidence < ESCALATION_CONFIDENCE_THRESHOLD:
-        return True
-    if intent == "complaint" and (complaint_severity or "low").lower() == "high":
-        return True
-    return False
 
 
 async def reset_worker_async_clients() -> None:

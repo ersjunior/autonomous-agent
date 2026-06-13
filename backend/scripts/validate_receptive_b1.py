@@ -19,7 +19,7 @@ for p in (_ROOT, _BACKEND, _ROOT / "worker"):
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from agents.orchestrator.graph import resolve_should_escalate
+from agents.escalation import resolve_should_escalate
 from agents.workers.intent_agent import IntentResult
 from agents.workers.response_agent import RECEPTIVE_BEHAVIOR_PROMPT, build_response_messages
 from app.core.database import AsyncSessionLocal
