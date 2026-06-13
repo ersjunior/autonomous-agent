@@ -26,7 +26,7 @@ from app.models.lead import Lead
 from app.models.lead_base import LeadBase, LeadBaseSource
 from app.models.lead_interaction import LeadInteraction
 from app.models.user import User
-from tests.integration.helpers import OwnerContext
+from tests.integration.helpers import OwnerContext, create_owner_context
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEST_DATABASE_URL = (
@@ -162,58 +162,40 @@ async def seeded_catalog(db_session):
 
 @pytest_asyncio.fixture
 async def owner_ctx(seeded_catalog, db_session) -> OwnerContext:
+    return await create_owner_context(db_session)
+
+
+@pytest_asyncio.fixture
+async def second_owner(db_session) -> User:
+    """Segundo usuário para testes de isolamento entre donos."""
     suffix = uuid.uuid4().hex[:8]
     user = User(
-        email=f"int-{suffix}@example.com",
+        email=f"other-{suffix}@example.com",
         hashed_password=hash_password("secret"),
-        full_name="Integration Test Owner",
+        full_name="Other Owner",
     )
     db_session.add(user)
     await db_session.flush()
+    return user
 
-    agent = Agent(
-        user_id=user.id,
-        name=f"Agent_{suffix}",
-        mode=AgentMode.ACTIVE,
-        status="active",
-    )
-    db_session.add(agent)
-    await db_session.flush()
 
-    campaign = Campaign(
-        user_id=user.id,
-        agent_id=agent.id,
-        name=f"Campaign_{suffix}",
-        status="active",
+@pytest_asyncio.fixture
+async def system_seeds(db_session):
+    """Admin + seeds completos (channels, agents, tabulações, flags)."""
+    from app.core.seed import (
+        ensure_seed_flags,
+        seed_default_admin,
+        seed_default_agents,
+        seed_default_channels,
+        seed_default_tabulacoes,
     )
-    db_session.add(campaign)
-    await db_session.flush()
 
-    lead_base = LeadBase(
-        campaign_id=campaign.id,
-        data_recebimento=date.today(),
-        source=LeadBaseSource.MANUAL,
-    )
-    db_session.add(lead_base)
-    await db_session.flush()
-
-    lead = Lead(
-        user_id=user.id,
-        lead_base_id=lead_base.id,
-        id_cliente=f"CLI-{suffix}",
-        nome_cliente="Integration Lead",
-        telefone_1="5511999887766",
-    )
-    db_session.add(lead)
-    await db_session.flush()
-
-    return OwnerContext(
-        user=user,
-        agent=agent,
-        campaign=campaign,
-        lead_base=lead_base,
-        lead=lead,
-    )
+    await seed_default_admin(db_session)
+    await seed_default_channels(db_session)
+    await seed_default_agents(db_session)
+    await seed_default_tabulacoes(db_session)
+    await ensure_seed_flags(db_session)
+    return db_session
 
 
 @pytest_asyncio.fixture
