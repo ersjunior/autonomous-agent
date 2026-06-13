@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import psycopg2
+import pytest
 import pytest_asyncio
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from sqlalchemy import text
@@ -125,3 +126,13 @@ async def db_session(test_engine):
         finally:
             await session.close()
             await trans.rollback()
+
+
+@pytest.fixture(autouse=True)
+def clear_tabulacao_codigo_cache():
+    """Limpa cache de módulo — IDs de transações rollback não podem vazar entre testes."""
+    from app.services import tabulacao_assignment as ta
+
+    ta._codigo_id_cache.clear()
+    yield
+    ta._codigo_id_cache.clear()
