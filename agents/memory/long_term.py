@@ -14,39 +14,22 @@ import uuid
 from datetime import datetime, timezone
 
 import asyncpg
-from pgvector.asyncpg import register_vector
 
+from agents.memory.pgvector_pool import PgVectorPoolHolder, use_pgvector_connection
 from agents.services.embedding_service import embed_text
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-def _asyncpg_database_url(url: str) -> str:
-    if url.startswith("postgresql+asyncpg://"):
-        return url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql://", 1)
-    return url
-
-
-async def _init_connection(conn: asyncpg.Connection) -> None:
-    await register_vector(conn)
-
-
 class LongTermMemory:
     """Persists and retrieves agent interactions with semantic search."""
 
     def __init__(self) -> None:
-        self._pool: asyncpg.Pool | None = None
+        self._pool_holder = PgVectorPoolHolder()
 
     async def _get_pool(self) -> asyncpg.Pool:
-        if self._pool is None:
-            self._pool = await asyncpg.create_pool(
-                _asyncpg_database_url(settings.database_url),
-                init=_init_connection,
-            )
-        return self._pool
+        return await self._pool_holder.get_pool(settings.database_url)
 
     async def _embed(self, text: str) -> list[float]:
         return await embed_text(text)
@@ -57,11 +40,12 @@ class LongTermMemory:
         message: str,
         response: str,
         intent: str,
+        *,
+        conn: asyncpg.Connection | None = None,
     ) -> None:
         embedding = await self._embed(f"{message}\n{response}")
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
+        async with use_pgvector_connection(self._get_pool, conn) as db_conn:
+            await db_conn.execute(
                 """
                 INSERT INTO interactions (
                     id, user_id, message, response, intent, embedding, created_at
@@ -84,6 +68,7 @@ class LongTermMemory:
         limit: int | None = None,
         *,
         query_embedding: list[float] | None = None,
+        conn: asyncpg.Connection | None = None,
     ) -> list[dict]:
         """Busca interações passadas do mesmo ``user_id`` por similaridade semântica.
 
@@ -91,6 +76,7 @@ class LongTermMemory:
             user_id: Identificador do contato (isolamento obrigatório entre clientes).
             query: Texto da mensagem atual (embedding gerado se ``query_embedding`` omitido).
             query_embedding: Vetor pré-calculado da query (evita segundo embed na mesma volta).
+            conn: Conexão asyncpg opcional (testes transacionais); ``None`` usa pool próprio.
         """
         top_k = settings.rag_top_k if limit is None else limit
         if top_k <= 0:
@@ -100,9 +86,8 @@ class LongTermMemory:
         fetch_limit = top_k * 3 if threshold > 0 else top_k
 
         embedding = query_embedding if query_embedding is not None else await self._embed(query)
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
+        async with use_pgvector_connection(self._get_pool, conn) as db_conn:
+            rows = await db_conn.fetch(
                 """
                 SELECT id, user_id, message, response, intent, created_at,
                        (embedding <=> $2) AS distance,

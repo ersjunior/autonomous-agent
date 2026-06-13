@@ -26,6 +26,8 @@ from app.models.lead import Lead
 from app.models.lead_base import LeadBase, LeadBaseSource
 from app.models.lead_interaction import LeadInteraction
 from app.models.user import User
+from pgvector.asyncpg import register_vector
+
 from tests.integration.helpers import OwnerContext, create_owner_context
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -137,6 +139,16 @@ async def db_session(test_engine):
         finally:
             await session.close()
             await trans.rollback()
+
+
+@pytest_asyncio.fixture
+async def pgvector_conn(db_session):
+    """asyncpg.Connection da mesma transação que db_session (rollback isola)."""
+    sa_conn = await db_session.connection()
+    raw = await sa_conn.get_raw_connection()
+    asyncpg_conn = raw.driver_connection
+    await register_vector(asyncpg_conn)
+    yield asyncpg_conn
 
 
 @pytest.fixture(autouse=True)

@@ -16,39 +16,22 @@ import uuid
 from typing import Any
 
 import asyncpg
-from pgvector.asyncpg import register_vector
 
+from agents.memory.pgvector_pool import PgVectorPoolHolder, use_pgvector_connection
 from agents.services.embedding_service import embed_text
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-def _asyncpg_database_url(url: str) -> str:
-    if url.startswith("postgresql+asyncpg://"):
-        return url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql://", 1)
-    return url
-
-
-async def _init_connection(conn: asyncpg.Connection) -> None:
-    await register_vector(conn)
-
-
 class KnowledgeBaseRetriever:
     """Busca semântica em kb_chunks com join em kb_documents para escopo e status."""
 
     def __init__(self) -> None:
-        self._pool: asyncpg.Pool | None = None
+        self._pool_holder = PgVectorPoolHolder()
 
     async def _get_pool(self) -> asyncpg.Pool:
-        if self._pool is None:
-            self._pool = await asyncpg.create_pool(
-                _asyncpg_database_url(settings.database_url),
-                init=_init_connection,
-            )
-        return self._pool
+        return await self._pool_holder.get_pool(settings.database_url)
 
     @staticmethod
     def _parse_owner(owner_user_id: str | uuid.UUID | None) -> uuid.UUID | None:
@@ -69,6 +52,7 @@ class KnowledgeBaseRetriever:
         *,
         threshold: float | None = None,
         query_embedding: list[float] | None = None,
+        conn: asyncpg.Connection | None = None,
     ) -> list[dict[str, Any]]:
         """Busca chunks por similaridade cosseno (padrão de ``LongTermMemory.get_similar``)."""
         top_k = settings.resolved_kb_top_k() if limit is None else limit
@@ -85,9 +69,8 @@ class KnowledgeBaseRetriever:
             query_embedding if query_embedding is not None else await embed_text(query)
         )
 
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
+        async with use_pgvector_connection(self._get_pool, conn) as db_conn:
+            rows = await db_conn.fetch(
                 """
                 SELECT c.id, c.document_id, c.owner_user_id, c.chunk_index, c.content,
                        c.created_at,

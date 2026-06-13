@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
+import asyncpg
 from sqlalchemy import select
 
 from app.core.config import settings
@@ -13,6 +14,7 @@ from app.core.security import hash_password
 from app.models.agent import Agent, AgentMode
 from app.models.campaign import Campaign
 from app.models.interaction import Interaction
+from app.models.knowledge import KBDocument, KBSourceType
 from app.models.lead import Lead
 from app.models.lead_base import LeadBase, LeadBaseSource
 from app.models.lead_interaction import LeadInteraction
@@ -176,6 +178,43 @@ async def create_activation_records(
     return records
 
 
+def unit_vector(axis: int, dim: int | None = None) -> list[float]:
+    """Vetor unitário ortogonal — eixo ``axis`` com 1.0, demais 0.0."""
+    size = dim if dim is not None else settings.embedding_dimensions
+    vector = [0.0] * size
+    vector[axis % size] = 1.0
+    return vector
+
+
+async def seed_interaction_with_embedding(
+    conn: asyncpg.Connection,
+    *,
+    user_id: str,
+    message: str,
+    response: str,
+    embedding: list[float],
+    intent: str = "question",
+) -> uuid.UUID:
+    """Insere Interaction via asyncpg (vetores reais para testes pgvector)."""
+    row_id = uuid.uuid4()
+    await conn.execute(
+        """
+        INSERT INTO interactions (
+            id, user_id, message, response, intent, embedding, created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """,
+        row_id,
+        user_id,
+        message,
+        response,
+        intent,
+        embedding,
+        datetime.now(timezone.utc),
+    )
+    return row_id
+
+
 async def create_interaction_record(
     session,
     *,
@@ -183,19 +222,76 @@ async def create_interaction_record(
     message: str = "Mensagem do cliente",
     response: str = "Resposta do agente",
     intent: str = "question",
+    embedding: list[float] | None = None,
     created_at: datetime | None = None,
+    conn: asyncpg.Connection | None = None,
 ) -> Interaction:
-    """Insere Interaction com embedding dummy (histórico não usa similaridade)."""
-    dims = settings.embedding_dimensions
+    """Insere Interaction — ORM com embedding dummy, ou asyncpg se ``conn`` + vetor custom."""
+    if conn is not None and embedding is not None:
+        row_id = await seed_interaction_with_embedding(
+            conn,
+            user_id=user_id,
+            message=message,
+            response=response,
+            embedding=embedding,
+            intent=intent,
+        )
+        result = await session.get(Interaction, row_id)
+        assert result is not None
+        return result
+
     row = Interaction(
         user_id=user_id,
         message=message,
         response=response,
         intent=intent,
-        embedding=[0.0] * dims,
+        embedding=embedding if embedding is not None else [0.0] * settings.embedding_dimensions,
     )
     if created_at is not None:
         row.created_at = created_at
     session.add(row)
     await session.flush()
     return row
+
+
+async def seed_kb_document_with_chunks(
+    session,
+    conn: asyncpg.Connection,
+    *,
+    user_id: uuid.UUID,
+    owner_user_id: uuid.UUID,
+    is_system: bool,
+    status: str,
+    chunks: list[tuple[str, list[float]]],
+    title: str = "Test KB doc",
+) -> KBDocument:
+    """Cria KBDocument via ORM e KBChunks via asyncpg (mesma transação)."""
+    doc = KBDocument(
+        user_id=user_id,
+        title=title,
+        source_type=KBSourceType.MANUAL.value,
+        status=status,
+        is_system=is_system,
+        chunk_count=len(chunks),
+    )
+    session.add(doc)
+    await session.flush()
+
+    for index, (content, vector) in enumerate(chunks):
+        await conn.execute(
+            """
+            INSERT INTO kb_chunks (
+                id, document_id, owner_user_id, chunk_index, content, embedding, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            uuid.uuid4(),
+            doc.id,
+            owner_user_id,
+            index,
+            content,
+            vector,
+            datetime.now(timezone.utc),
+        )
+    await session.flush()
+    return doc
