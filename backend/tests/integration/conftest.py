@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import uuid
+from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -16,6 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.database import _async_database_url
+from app.core.security import hash_password
+from app.core.seed import seed_default_admin, seed_default_tabulacoes
+from app.models.agent import Agent, AgentMode
+from app.models.campaign import Campaign
+from app.models.lead import Lead
+from app.models.lead_base import LeadBase, LeadBaseSource
+from app.models.lead_interaction import LeadInteraction
+from app.models.user import User
+from tests.integration.helpers import OwnerContext
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEST_DATABASE_URL = (
@@ -136,3 +147,145 @@ def clear_tabulacao_codigo_cache():
     ta._codigo_id_cache.clear()
     yield
     ta._codigo_id_cache.clear()
+
+
+# --- Factories compartilhadas (Etapas 1+) ---
+
+
+@pytest_asyncio.fixture
+async def seeded_catalog(db_session):
+    """Admin + catálogo system NEG:* / SIP:* (seed idempotente)."""
+    await seed_default_admin(db_session)
+    await seed_default_tabulacoes(db_session)
+    return db_session
+
+
+@pytest_asyncio.fixture
+async def owner_ctx(seeded_catalog, db_session) -> OwnerContext:
+    suffix = uuid.uuid4().hex[:8]
+    user = User(
+        email=f"int-{suffix}@example.com",
+        hashed_password=hash_password("secret"),
+        full_name="Integration Test Owner",
+    )
+    db_session.add(user)
+    await db_session.flush()
+
+    agent = Agent(
+        user_id=user.id,
+        name=f"Agent_{suffix}",
+        mode=AgentMode.ACTIVE,
+        status="active",
+    )
+    db_session.add(agent)
+    await db_session.flush()
+
+    campaign = Campaign(
+        user_id=user.id,
+        agent_id=agent.id,
+        name=f"Campaign_{suffix}",
+        status="active",
+    )
+    db_session.add(campaign)
+    await db_session.flush()
+
+    lead_base = LeadBase(
+        campaign_id=campaign.id,
+        data_recebimento=date.today(),
+        source=LeadBaseSource.MANUAL,
+    )
+    db_session.add(lead_base)
+    await db_session.flush()
+
+    lead = Lead(
+        user_id=user.id,
+        lead_base_id=lead_base.id,
+        id_cliente=f"CLI-{suffix}",
+        nome_cliente="Integration Lead",
+        telefone_1="5511999887766",
+    )
+    db_session.add(lead)
+    await db_session.flush()
+
+    return OwnerContext(
+        user=user,
+        agent=agent,
+        campaign=campaign,
+        lead_base=lead_base,
+        lead=lead,
+    )
+
+
+@pytest_asyncio.fixture
+async def lead_interaction(owner_ctx: OwnerContext, db_session) -> LeadInteraction:
+    """LI pré-existente em em_andamento (útil para tabulação)."""
+    li = LeadInteraction(
+        lead_id=owner_ctx.lead.id,
+        campaign_id=owner_ctx.campaign.id,
+        channel_type="whatsapp",
+        status="em_andamento",
+        tentativas=1,
+        data_acionamento=datetime.now(timezone.utc),
+    )
+    db_session.add(li)
+    await db_session.flush()
+    await db_session.refresh(li, attribute_names=["campaign_id"])
+    li.campaign = owner_ctx.campaign
+    return li
+
+
+@pytest.fixture
+def mock_classify(monkeypatch):
+    """Mock de classify_tabulacao (LLM) — state['return_value'] controla o código."""
+    state: dict = {"return_value": "NEG:NUM_ERRADO", "calls": []}
+
+    async def fake_classify(text: str, catalog: list[dict[str, str]]) -> str | None:
+        state["calls"].append(
+            {
+                "text": text,
+                "catalog_codigos": [row["codigo"] for row in catalog],
+            }
+        )
+        return state["return_value"]
+
+    monkeypatch.setattr(
+        "app.services.tabulacao_assignment.classify_tabulacao",
+        fake_classify,
+    )
+    return state
+
+
+@pytest.fixture
+def mock_capacity_release(monkeypatch):
+    """Mock das liberações Redis ao atingir status terminal (upsert_lead_interaction)."""
+    state: dict = {
+        "slot_calls": [],
+        "outbound_calls": [],
+        "receptive_calls": [],
+    }
+
+    def fake_release_slot(lead_id: str, channel: str) -> bool:
+        state["slot_calls"].append((lead_id, channel))
+        return True
+
+    def fake_release_outbound(lead_id: str, channel: str) -> bool:
+        state["outbound_calls"].append((lead_id, channel))
+        return True
+
+    def fake_release_receptive(lead_id: str, channel: str) -> bool:
+        state["receptive_calls"].append((lead_id, channel))
+        return True
+
+    monkeypatch.setattr(
+        "app.services.activation_slots.release_slot_for_lead",
+        fake_release_slot,
+    )
+    monkeypatch.setattr(
+        "app.services.capacity_service.release_outbound_capacity_for_lead",
+        fake_release_outbound,
+    )
+    monkeypatch.setattr(
+        "app.services.capacity_service.release_receptive_capacity_for_lead",
+        fake_release_receptive,
+    )
+    return state

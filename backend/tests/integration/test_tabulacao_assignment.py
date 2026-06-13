@@ -3,146 +3,17 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
-from datetime import date, datetime, timezone
 
 import pytest
-import pytest_asyncio
 
-from app.core.security import hash_password
-from app.core.seed import seed_default_admin, seed_default_tabulacoes
-from app.models.agent import Agent, AgentMode
-from app.models.campaign import Campaign
-from app.models.lead import Lead
-from app.models.lead_base import LeadBase, LeadBaseSource
-from app.models.lead_interaction import LeadInteraction
 from app.models.tabulacao import Tabulacao, TabulacaoCategoria
-from app.models.user import User
 from app.services.tabulacao_assignment import (
     apply_tabulacao,
     maybe_apply_tabulacao_on_transition,
 )
+from tests.integration.helpers import OwnerContext, tabulacao_codigo_for
 
 pytestmark = pytest.mark.integration
-
-
-@dataclass
-class OwnerContext:
-    user: User
-    agent: Agent
-    campaign: Campaign
-    lead_base: LeadBase
-    lead: Lead
-
-
-async def _codigo_for(session, lead_interaction: LeadInteraction) -> str | None:
-    await session.refresh(lead_interaction, attribute_names=["tabulacao_id"])
-    if lead_interaction.tabulacao_id is None:
-        return None
-    tab = await session.get(Tabulacao, lead_interaction.tabulacao_id)
-    return tab.codigo if tab else None
-
-
-@pytest_asyncio.fixture
-async def seeded_catalog(db_session):
-    """Admin + catálogo system NEG:* / SIP:* (seed idempotente)."""
-    await seed_default_admin(db_session)
-    await seed_default_tabulacoes(db_session)
-    return db_session
-
-
-@pytest_asyncio.fixture
-async def owner_ctx(seeded_catalog, db_session) -> OwnerContext:
-    suffix = uuid.uuid4().hex[:8]
-    user = User(
-        email=f"tab-{suffix}@example.com",
-        hashed_password=hash_password("secret"),
-        full_name="Tabulação Test Owner",
-    )
-    db_session.add(user)
-    await db_session.flush()
-
-    agent = Agent(
-        user_id=user.id,
-        name=f"Agent_{suffix}",
-        mode=AgentMode.ACTIVE,
-        status="active",
-    )
-    db_session.add(agent)
-    await db_session.flush()
-
-    campaign = Campaign(
-        user_id=user.id,
-        agent_id=agent.id,
-        name=f"Campaign_{suffix}",
-        status="active",
-    )
-    db_session.add(campaign)
-    await db_session.flush()
-
-    lead_base = LeadBase(
-        campaign_id=campaign.id,
-        data_recebimento=date.today(),
-        source=LeadBaseSource.MANUAL,
-    )
-    db_session.add(lead_base)
-    await db_session.flush()
-
-    lead = Lead(
-        user_id=user.id,
-        lead_base_id=lead_base.id,
-        id_cliente=f"CLI-{suffix}",
-        nome_cliente="Lead Tabulação",
-        telefone_1="5511999887766",
-    )
-    db_session.add(lead)
-    await db_session.flush()
-
-    return OwnerContext(
-        user=user,
-        agent=agent,
-        campaign=campaign,
-        lead_base=lead_base,
-        lead=lead,
-    )
-
-
-@pytest_asyncio.fixture
-async def lead_interaction(owner_ctx: OwnerContext, db_session) -> LeadInteraction:
-    li = LeadInteraction(
-        lead_id=owner_ctx.lead.id,
-        campaign_id=owner_ctx.campaign.id,
-        channel_type="whatsapp",
-        status="em_andamento",
-        tentativas=1,
-        data_acionamento=datetime.now(timezone.utc),
-    )
-    db_session.add(li)
-    await db_session.flush()
-    await db_session.refresh(li, attribute_names=["campaign_id"])
-    li.campaign = owner_ctx.campaign
-    return li
-
-
-@pytest.fixture
-def mock_classify(monkeypatch):
-    """Mock de classify_tabulacao (LLM) — state['return_value'] controla o código."""
-    state: dict = {"return_value": "NEG:NUM_ERRADO", "calls": []}
-
-    async def fake_classify(text: str, catalog: list[dict[str, str]]) -> str | None:
-        state["calls"].append(
-            {
-                "text": text,
-                "catalog_codigos": [row["codigo"] for row in catalog],
-            }
-        )
-        return state["return_value"]
-
-    monkeypatch.setattr(
-        "app.services.tabulacao_assignment.classify_tabulacao",
-        fake_classify,
-    )
-    return state
 
 
 # --- 1. Regras intent/status ---
@@ -158,7 +29,7 @@ async def test_rule_purchase_maps_to_neg_venda(lead_interaction, db_session) -> 
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "NEG:VENDA"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "NEG:VENDA"
     assert lead_interaction.tabulacao_origem == "INTENT"
     assert lead_interaction.tabulacao_aplicada_em is not None
 
@@ -173,7 +44,7 @@ async def test_rule_cancel_maps_to_neg_recusado(lead_interaction, db_session) ->
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "NEG:RECUSADO"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "NEG:RECUSADO"
     assert lead_interaction.tabulacao_origem == "INTENT"
     assert lead_interaction.tabulacao_aplicada_em is not None
 
@@ -187,7 +58,7 @@ async def test_rule_nao_atendido_maps_to_neg_ausente(lead_interaction, db_sessio
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "NEG:AUSENTE"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "NEG:AUSENTE"
     assert lead_interaction.tabulacao_origem == "INTENT"
 
 
@@ -203,7 +74,7 @@ async def test_sip_busy_maps_to_sip_486(lead_interaction, db_session) -> None:
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "SIP:486"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "SIP:486"
     assert lead_interaction.tabulacao_origem == "SIP"
     assert lead_interaction.tabulacao_aplicada_em is not None
 
@@ -220,7 +91,7 @@ async def test_escalation_maps_to_neg_escalado(lead_interaction, db_session) -> 
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "NEG:ESCALADO"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "NEG:ESCALADO"
     assert lead_interaction.tabulacao_origem == "ESCALATION"
 
 
@@ -235,7 +106,7 @@ async def test_escalation_precedes_sip(lead_interaction, db_session) -> None:
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "NEG:ESCALADO"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "NEG:ESCALADO"
     assert lead_interaction.tabulacao_origem == "ESCALATION"
 
 
@@ -257,7 +128,7 @@ async def test_ia_classifies_when_rules_do_not_resolve(
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "NEG:NUM_ERRADO"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "NEG:NUM_ERRADO"
     assert lead_interaction.tabulacao_origem == "IA"
     assert len(mock_classify["calls"]) == 1
 
@@ -278,7 +149,7 @@ async def test_ia_not_called_when_rule_resolves(
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "NEG:VENDA"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "NEG:VENDA"
     assert lead_interaction.tabulacao_origem == "INTENT"
     assert mock_classify["calls"] == []
 
@@ -295,7 +166,7 @@ async def test_maybe_apply_on_terminal_transition(lead_interaction, db_session) 
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "NEG:AUSENTE"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "NEG:AUSENTE"
 
 
 async def test_maybe_apply_skips_non_classification_transition(
@@ -322,7 +193,7 @@ async def test_maybe_apply_on_escalation(lead_interaction, db_session) -> None:
     )
 
     assert applied is True
-    assert await _codigo_for(db_session, lead_interaction) == "NEG:ESCALADO"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "NEG:ESCALADO"
 
 
 # --- 6. Lookup system vs owner ---
@@ -410,6 +281,6 @@ async def test_apply_overwrites_existing_tabulacao(lead_interaction, db_session)
     )
     assert second is True
     assert lead_interaction.tabulacao_id != first_id
-    assert await _codigo_for(db_session, lead_interaction) == "SIP:486"
+    assert await tabulacao_codigo_for(db_session, lead_interaction) == "SIP:486"
     assert lead_interaction.tabulacao_origem == "SIP"
     assert lead_interaction.tabulacao_origem != first_origem
