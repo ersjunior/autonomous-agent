@@ -24,6 +24,7 @@ import {
   uploadAvatarImage,
   uploadVoiceSample,
 } from "@/lib/api";
+import { fetchTunnelStatus } from "@/lib/api-tunnel";
 import type {
   AvatarImageInfo,
   AvatarImageUploadResponse,
@@ -37,7 +38,9 @@ import type {
 } from "@/lib/types/settings";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
+import { CopyButton } from "@/components/ui/CopyButton";
 import { PageHeader } from "@/components/ui/PageHeader";
+import type { TunnelStatusLevel, TunnelStatusResponse } from "@/lib/types/tunnel";
 
 const SECRET_MASK = "********";
 const DEFAULT_TEST_TEXT =
@@ -78,7 +81,39 @@ const AGENT_CATEGORIES = new Set(["agent"]);
 const AUDIO_CATEGORIES = new Set(["stt", "tts"]);
 const AVATAR_CATEGORIES = new Set(["avatar"]);
 
-type TabId = "llm" | "agent" | "audio" | "video";
+type TabId = "llm" | "agent" | "audio" | "video" | "tunnel";
+
+const TUNNEL_STATUS_LABELS: Record<TunnelStatusLevel, string> = {
+  aguardando: "Aguardando URL pública",
+  configurado: "URL configurada (não verificada)",
+  verificado: "Túnel verificado",
+  inacessivel: "URL configurada, mas inacessível",
+};
+
+function tunnelStatusBadgeVariant(
+  status: TunnelStatusLevel,
+): "default" | "success" | "warning" | "muted" {
+  if (status === "verificado") {
+    return "success";
+  }
+  if (status === "inacessivel") {
+    return "warning";
+  }
+  if (status === "configurado") {
+    return "default";
+  }
+  return "muted";
+}
+
+function publicBaseUrlSourceLabel(source: TunnelStatusResponse["public_base_url_source"]): string {
+  if (source === "env") {
+    return ".env (PUBLIC_BASE_URL)";
+  }
+  if (source === "tunnel_file") {
+    return "arquivo do túnel (tunnel_url.txt)";
+  }
+  return "—";
+}
 
 function formatValue(value: string | number | null | undefined): string {
   if (value === null || value === undefined) {
@@ -281,6 +316,29 @@ export default function SettingsPage() {
   const [testVideoUrl, setTestVideoUrl] = useState<string | null>(null);
   const testVideoObjectUrl = useRef<string | null>(null);
 
+  const [tunnelStatus, setTunnelStatus] = useState<TunnelStatusResponse | null>(null);
+  const [tunnelLoading, setTunnelLoading] = useState(false);
+  const [tunnelError, setTunnelError] = useState("");
+
+  const loadTunnelStatus = useCallback(async () => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      window.location.href = "/";
+      return;
+    }
+
+    setTunnelLoading(true);
+    setTunnelError("");
+    try {
+      setTunnelStatus(await fetchTunnelStatus());
+    } catch (err) {
+      setTunnelError(err instanceof Error ? err.message : "Erro ao carregar status do túnel.");
+      setTunnelStatus(null);
+    } finally {
+      setTunnelLoading(false);
+    }
+  }, []);
+
   const loadSettings = useCallback(async () => {
     const token = localStorage.getItem("access_token");
     if (!token) {
@@ -412,6 +470,12 @@ export default function SettingsPage() {
       loadAvatarImageInfo();
     }
   }, [activeTab, loading, loadAvatarImageInfo]);
+
+  useEffect(() => {
+    if (activeTab === "tunnel") {
+      void loadTunnelStatus();
+    }
+  }, [activeTab, loadTunnelStatus]);
 
   const visibleCategories = useMemo(() => {
     const allowed =
@@ -724,9 +788,214 @@ export default function SettingsPage() {
         >
           Avatar / Vídeo
         </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium ${
+            activeTab === "tunnel"
+              ? "border-b-2 border-primary text-primary"
+              : "text-muted-foreground"
+          }`}
+          onClick={() => setActiveTab("tunnel")}
+        >
+          Túnel & Webhooks
+        </button>
       </div>
 
-      {loading ? (
+      {activeTab === "tunnel" ? (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              URL pública, modos e webhooks para colar no Twilio/Telegram. Somente leitura —
+              não configura provedores automaticamente.
+            </p>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={tunnelLoading}
+              onClick={() => void loadTunnelStatus()}
+            >
+              {tunnelLoading ? "Atualizando..." : "Atualizar"}
+            </button>
+          </div>
+
+          {tunnelError && <Alert>{tunnelError}</Alert>}
+
+          {tunnelLoading && !tunnelStatus ? (
+            <p className="text-sm text-muted-foreground">Carregando status do túnel...</p>
+          ) : tunnelStatus ? (
+            <>
+              <div className="glass-card space-y-4 p-6">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Status:</span>
+                  <Badge variant={tunnelStatusBadgeVariant(tunnelStatus.status)}>
+                    {TUNNEL_STATUS_LABELS[tunnelStatus.status]}
+                  </Badge>
+                </div>
+                {tunnelStatus.status !== "verificado" && (
+                  <p className="text-xs text-muted-foreground">
+                    A URL pública ainda não foi confirmada como alcançável (health probe em{" "}
+                    <code className="text-foreground">/health</code>).
+                  </p>
+                )}
+                {tunnelStatus.health_probe.attempted && (
+                  <p className="text-xs text-muted-foreground">
+                    Última verificação: HTTP {tunnelStatus.health_probe.status_code ?? "—"}
+                    {tunnelStatus.health_probe.latency_ms != null
+                      ? ` · ${tunnelStatus.health_probe.latency_ms} ms`
+                      : ""}
+                    {tunnelStatus.health_probe.error
+                      ? ` · ${tunnelStatus.health_probe.error}`
+                      : ""}
+                  </p>
+                )}
+              </div>
+
+              {tunnelStatus.env_tunnel_url_diverges && (
+                <Alert variant="warning">
+                  A URL no <code>.env</code> pode estar desatualizada; o túnel gerou outra (
+                  <span className="font-mono text-xs">
+                    {tunnelStatus.tunnel_url_file_raw}
+                  </span>
+                  ). Remova ou atualize <code>PUBLIC_BASE_URL</code> no <code>.env</code> para
+                  usar a URL do quick tunnel.
+                </Alert>
+              )}
+
+              <div className="glass-card space-y-4 p-6">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                  URL pública
+                </h3>
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Resolvida: </span>
+                    <code className="break-all text-foreground">
+                      {tunnelStatus.public_base_url_resolved ?? "—"}
+                    </code>
+                    {tunnelStatus.public_base_url_resolved && (
+                      <div className="mt-2">
+                        <CopyButton text={tunnelStatus.public_base_url_resolved} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-muted-foreground">Modo do túnel:</span>
+                    <Badge>{tunnelStatus.tunnel_mode}</Badge>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Fonte: </span>
+                    {publicBaseUrlSourceLabel(tunnelStatus.public_base_url_source)}
+                  </div>
+                  {tunnelStatus.public_base_url_env && (
+                    <div>
+                      <span className="text-muted-foreground">PUBLIC_BASE_URL no .env: </span>
+                      <code className="break-all">{tunnelStatus.public_base_url_env}</code>
+                    </div>
+                  )}
+                  {tunnelStatus.tunnel_mode === "temporary" && (
+                    <div>
+                      <span className="text-muted-foreground">Arquivo do túnel: </span>
+                      {tunnelStatus.tunnel_url_file_exists
+                        ? `encontrado (${tunnelStatus.tunnel_url_file})`
+                        : `aguardando cloudflared gravar em ${tunnelStatus.tunnel_url_file}`}
+                      {tunnelStatus.tunnel_url_file_raw && (
+                        <div className="mt-1 font-mono text-xs text-muted-foreground">
+                          Conteúdo: {tunnelStatus.tunnel_url_file_raw}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="glass-card space-y-4 p-6">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                  Modo Telegram
+                </h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge>{tunnelStatus.telegram_mode}</Badge>
+                </div>
+                {tunnelStatus.telegram_mode === "polling" ? (
+                  <Alert variant="info">
+                    Inbound via <code>getUpdates</code> — inicie o serviço{" "}
+                    <code>telegram-polling</code> (profile Docker{" "}
+                    <code>--profile telegram-polling</code>). Não use webhook do Telegram neste
+                    modo.
+                  </Alert>
+                ) : (
+                  <div className="space-y-3 text-sm">
+                    {tunnelStatus.telegram_webhook_url ? (
+                      <>
+                        <div>
+                          <span className="text-muted-foreground">Webhook Telegram: </span>
+                          <code className="break-all">{tunnelStatus.telegram_webhook_url}</code>
+                        </div>
+                        <CopyButton text={tunnelStatus.telegram_webhook_url} />
+                      </>
+                    ) : (
+                      <p className="text-muted-foreground">
+                        Webhook indisponível — aguarde a URL pública do túnel.
+                      </p>
+                    )}
+                    {tunnelStatus.telegram_webhook_registered != null && (
+                      <p>
+                        Registrado no Telegram:{" "}
+                        <Badge
+                          variant={
+                            tunnelStatus.telegram_webhook_registered ? "success" : "warning"
+                          }
+                        >
+                          {tunnelStatus.telegram_webhook_registered ? "sim" : "não"}
+                        </Badge>
+                        {tunnelStatus.telegram_webhook_registered_url && (
+                          <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                            {tunnelStatus.telegram_webhook_registered_url}
+                          </span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="glass-card space-y-4 p-6">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                  Webhooks (copiar)
+                </h3>
+                {tunnelStatus.whatsapp_webhook_url ? (
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">WhatsApp (Twilio)</p>
+                      <code className="mt-1 block break-all text-sm">
+                        {tunnelStatus.whatsapp_webhook_url}
+                      </code>
+                    </div>
+                    <CopyButton text={tunnelStatus.whatsapp_webhook_url} />
+                    <p className="text-xs text-muted-foreground">
+                      Console Twilio → Messaging → seu número → &quot;A message comes in&quot; →
+                      Webhook → HTTP POST → cole esta URL.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Webhook WhatsApp indisponível até a URL pública ser resolvida.
+                  </p>
+                )}
+                {tunnelStatus.telegram_mode === "webhook" && tunnelStatus.telegram_webhook_url && (
+                  <div className="space-y-3 border-t border-border pt-4">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Telegram</p>
+                      <code className="mt-1 block break-all text-sm">
+                        {tunnelStatus.telegram_webhook_url}
+                      </code>
+                    </div>
+                    <CopyButton text={tunnelStatus.telegram_webhook_url} />
+                  </div>
+                )}
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : loading ? (
         <p className="text-sm text-muted-foreground">Carregando configurações...</p>
       ) : (
         <form onSubmit={handleSave} className="space-y-8">

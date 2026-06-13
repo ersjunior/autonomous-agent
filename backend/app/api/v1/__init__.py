@@ -17,6 +17,7 @@ from app.api.v1 import (
     monitoring,
     settings,
     tabulacoes,
+    tunnel,
 )
 
 api_router = APIRouter()
@@ -29,6 +30,7 @@ api_router.include_router(leads.router)
 api_router.include_router(campaigns.router)
 api_router.include_router(metrics.router)
 api_router.include_router(capacity.router)
+api_router.include_router(tunnel.router)
 api_router.include_router(monitoring.router)
 api_router.include_router(handoff.router)
 api_router.include_router(knowledge.router)
