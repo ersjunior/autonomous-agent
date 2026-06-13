@@ -27,13 +27,53 @@ from app.models.lead_base import LeadBase, LeadBaseSource
 from app.models.lead_interaction import LeadInteraction
 from app.models.user import User
 from pgvector.asyncpg import register_vector
+import redis
 
+from app.core.config import settings
 from tests.integration.helpers import OwnerContext, create_owner_context
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEST_DATABASE_URL = (
     "postgresql://postgres:postgres@localhost:5432/autonomous_agent_test"
 )
+
+# Padrões Redis usados por handoff, capacidade, slots e settings_version (sem rollback).
+REDIS_CLEANUP_PATTERNS = (
+    "human_mode:*",
+    "human_mode_notified:*",
+    "global_capacity_holder:*",
+    "outbound_capacity:*",
+    "contact_capacity:*",
+    "lead_capacity_user:*",
+    "slots_set:*",
+    "slot_holder:*",
+    "priority_queue:*",
+    "lead_slot:*",
+    "campaign_inflight:*",
+)
+REDIS_CLEANUP_KEYS = (
+    "settings_version",
+    "global_capacity_usage",
+    "global_capacity_holders",
+)
+
+
+def flush_redis_test_keys() -> None:
+    """Remove chaves de teste — Postgres faz rollback, Redis não."""
+    client = redis.from_url(settings.redis_url, decode_responses=True)
+    for key in REDIS_CLEANUP_KEYS:
+        client.delete(key)
+    for pattern in REDIS_CLEANUP_PATTERNS:
+        for key in client.scan_iter(pattern, count=500):
+            client.delete(key)
+
+
+@pytest.fixture
+def clean_redis():
+    """Isola Redis entre testes de integração (before + after)."""
+    flush_redis_test_keys()
+    yield
+    flush_redis_test_keys()
 
 
 def _sync_database_url(url: str) -> str:

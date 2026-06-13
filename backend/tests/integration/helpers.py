@@ -12,11 +12,11 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.security import hash_password
 from app.models.agent import Agent, AgentMode
-from app.models.campaign import Campaign
+from app.models.campaign import Campaign, CampaignChannel
 from app.models.interaction import Interaction
 from app.models.knowledge import KBDocument, KBSourceType
 from app.models.lead import Lead
-from app.models.lead_base import LeadBase, LeadBaseSource
+from app.models.lead_base import LeadBase, LeadBaseChannel, LeadBaseSource
 from app.models.lead_interaction import LeadInteraction
 from app.models.tabulacao import Tabulacao
 from app.models.user import User
@@ -295,3 +295,46 @@ async def seed_kb_document_with_chunks(
         )
     await session.flush()
     return doc
+
+
+async def add_campaign_channel(
+    session,
+    campaign_id: uuid.UUID,
+    channel_type: str = "whatsapp",
+) -> CampaignChannel:
+    row = CampaignChannel(campaign_id=campaign_id, channel_type=channel_type.lower())
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def add_lead_base_channel(
+    session,
+    lead_base_id: uuid.UUID,
+    channel_type: str = "whatsapp",
+) -> LeadBaseChannel:
+    row = LeadBaseChannel(lead_base_id=lead_base_id, channel_type=channel_type.lower())
+    session.add(row)
+    await session.flush()
+    return row
+
+
+def set_human_mode_timestamps(
+    channel: str,
+    user_id: str,
+    *,
+    escalated_at: str | None = None,
+    human_assumed_at: str | None = None,
+) -> None:
+    """Atualiza timestamps no payload Redis (testes de sweep H-2)."""
+    from app.services.human_handoff import (
+        _write_human_mode_payload,
+        get_human_mode_payload,
+    )
+
+    payload = get_human_mode_payload(channel, user_id) or {}
+    if escalated_at is not None:
+        payload["escalated_at"] = escalated_at
+    if human_assumed_at is not None:
+        payload["human_assumed_at"] = human_assumed_at
+    _write_human_mode_payload(channel, user_id, payload)
