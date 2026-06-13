@@ -2,6 +2,7 @@
 
 **Do operador ao agente: atendimento omnichannel com IA multi-agente, modelos locais e voz/avatar sintéticos.**
 
+[![CI](https://github.com/ersjunior/autonomous-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ersjunior/autonomous-agent/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-15-000000.svg)](https://nextjs.org/)
