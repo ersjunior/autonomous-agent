@@ -34,6 +34,7 @@ O dashboard Next.js cobre campanhas **ativas** (outbound multi-canal), importaç
 | [Tabulação / Status de Atendimento](#tabulação--status-de-atendimento) (neste README) | Catálogo call center, atribuição híbrida (regras + IA + SIP futuro), devolutiva Excel |
 | [docs/ROTEIRO_APRESENTACAO.md](docs/ROTEIRO_APRESENTACAO.md) | Roteiro de demonstração para a banca (~15–20 min), com foco em IA aplicada |
 | [docs/SMOKE_TEST.md](docs/SMOKE_TEST.md) | Checklist de verificação antes da apresentação (comandos e troubleshooting) |
+| [docs/TESTING.md](docs/TESTING.md) | Suíte de testes: pirâmide em 3 camadas, infraestrutura, CI e comandos |
 | [infra/docker/sadtalker/README.md](infra/docker/sadtalker/README.md) | Notas do serviço SadTalker (GPU, build, API `/generate`) |
 | [docs/demo-assets/README.md](docs/demo-assets/README.md) | Pasta para MP3/MP4/screenshots de fallback (Plano B da demo; arquivos não versionados) |
 
@@ -826,6 +827,30 @@ flowchart TB
 
 ---
 
+## Testes
+
+O badge [![CI](https://github.com/ersjunior/autonomous-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ersjunior/autonomous-agent/actions/workflows/ci.yml) no topo reflete a pipeline em três jobs (unitários, integração+API, build do frontend).
+
+A suíte segue uma **pirâmide em 3 camadas**: lógica pura no topo, serviços com Postgres/pgvector e Redis no meio, contratos HTTP na base — **128 unitários + 103 integração + 212 API = 443 testes** (`pytest --collect-only`, jun/2026).
+
+| Camada | O que cobre | Tecnologia | Nº |
+|--------|-------------|------------|-----|
+| **Unitários** | Erlang C, janela de acionamento, tabulação, normalização de contato, telefone, chunking KB, capacidade, escalonamento | pytest, sem I/O | 128 |
+| **Integração** | Seeds, ownership, tracking, fila, históricos, RAG/pgvector, handoff DB, settings | Postgres real + pgvector + Redis + Alembic | 103 |
+| **API** | Auth, CRUD, ciclo de campanha, acionamento, monitoramento, handoff, knowledge, agregados | `AsyncClient` + overrides de `get_db` / auth | 212 |
+
+```bash
+make test                              # unitários (rápido, sem banco)
+make test-integration                  # integração (Postgres + Redis no compose)
+docker exec autonomous-agent-backend pytest tests/ -v --tb=short   # suíte completa
+```
+
+No CI: job de unitários isolado; job de integração sobe **pgvector/pg16** e **redis:7-alpine** e roda integração + API; job separado faz `npm run build` do frontend.
+
+Detalhes da infraestrutura, fixtures, markers e bugs já encontrados pela suíte: **[docs/TESTING.md](docs/TESTING.md)**.
+
+---
+
 ## Modelo de dados
 
 Entidades principais (`backend/app/models/`):
@@ -1079,7 +1104,8 @@ autonomous-agent/
 | `make migrate` | `alembic upgrade head` |
 | `make pull-models` | `llama3.1` + `nomic-embed-text` |
 | `make logs` | Logs em tempo real |
-| `make test` | pytest |
+| `make test` | pytest unitários (`tests/unit`) |
+| `make test-integration` | pytest integração (`tests/integration`; exige Postgres + Redis) |
 
 ---
 
