@@ -1,8 +1,10 @@
-"""Fixtures compartilhadas — crescerá nas camadas 2 (integração) e 3 (e2e)."""
+"""Fixtures compartilhadas — Camadas 2 (integração) e 3 (API)."""
 
 from __future__ import annotations
 
 import pytest
+
+pytest_plugins = ["tests.db_fixtures"]
 
 
 @pytest.fixture
