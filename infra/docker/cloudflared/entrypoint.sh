@@ -36,7 +36,7 @@ run_named() {
     exit 1
   fi
   echo "[cloudflared] Modo named — use PUBLIC_BASE_URL fixa do .env (sem captura de URL)"
-  exec cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" --no-autoupdate
+  exec cloudflared --no-autoupdate tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN"
 }
 
 run_temporary() {
