@@ -6,7 +6,6 @@ Itens em aberto, funcionalidades parcialmente implementadas e trabalhos futuros.
 
 | Item | Estado | Observação |
 |---|---|---|
-| TTS em português (Coqui) na demonstração | A validar em produção | O outbound já tenta Coqui (XTTS-v2, `pt`) primeiro, com fallback para voz padrão Twilio (Polly pt-BR); falta validar a qualidade na demo real, dependente da amostra de referência |
 | Inbound de voz ao vivo | Parcial | O manipulador de chamada e o STT (faster-whisper) existem, mas não estão conectados ao Twilio Media Streams (transcrição bidirecional em tempo real) |
 | Abandono real da fila de voz | Estrutural | O sweep de abandono existe, mas sem inbound de voz ao vivo a taxa fica próxima de zero na prática |
 
@@ -46,6 +45,7 @@ Há stubs previstos no código para componentes que hoje são tratados de forma 
 
 Para referência, alguns marcos já entregues:
 
+- **Validação do TTS Coqui (português):** pipeline outbound validado de ponta a ponta. Correções aplicadas — voz de referência ajustada para o formato ideal do XTTS-v2 (mono, 24 kHz, normalizada), resolvendo o timbre robótico; confirmado que a pronúncia correta depende dos acentos no texto enviado ao modelo; e o `COQUI_BASE_URL` passou a apontar para a porta interna correta do Docker. A geração de áudio em português está funcional no fluxo real (incluindo a compressão de telefonia).
 - **Remoção do canal de vídeo:** o sistema foi consolidado em três canais (Telegram, WhatsApp, Voz); a stack de avatar (SadTalker/D-ID) foi removida, liberando GPU, e o valor correspondente foi retirado do enum de canais no banco.
 - **URL pública fixa:** túnel Cloudflare em modo `named` com domínio próprio, eliminando a necessidade de reconfigurar webhooks a cada reinício.
 - **Indicador "digitando...":** implementado para Telegram e WhatsApp.
