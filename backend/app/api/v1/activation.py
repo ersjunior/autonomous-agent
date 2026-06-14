@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -389,7 +389,7 @@ async def get_activation_history(
     limit: int = 50,
     campaign_id: uuid.UUID | None = None,
     channel_type: str | None = None,
-    status: str | None = None,
+    status_filter: str | None = Query(None, alias="status"),
     open_only: bool = False,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -413,8 +413,8 @@ async def get_activation_history(
         normalized_channel = _validate_channel_type_param(channel_type)
 
     normalized_status: str | None = None
-    if status is not None and status.strip():
-        normalized_status = status.strip().lower()
+    if status_filter is not None and status_filter.strip():
+        normalized_status = status_filter.strip().lower()
         if normalized_status not in HISTORY_STATUS_VALUES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
