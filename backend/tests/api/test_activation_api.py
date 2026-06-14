@@ -676,6 +676,43 @@ async def test_test_dispatch_success_returns_contract(
     assert len(mock_test_dispatch_stack["deliver_calls"]) == 1
 
 
+async def test_test_dispatch_dispatch_exception_returns_200_with_error(
+    auth_client,
+    owner_ctx,
+    db_session,
+    clean_redis,
+    monkeypatch,
+) -> None:
+    """Falha no LLM/entrega retorna 200 + status=erro (não HTTP 500 após rollback)."""
+    await add_lead_base_channel(db_session, owner_ctx.lead_base.id, "whatsapp")
+    err_msg = (
+        "Client error '404 Not Found' for url 'http://ollama:11434/api/chat'"
+    )
+
+    async def failing_route_message(*_args, **_kwargs):
+        raise RuntimeError(err_msg)
+
+    monkeypatch.setattr(
+        "worker.tasks.outbound_campaign.route_message",
+        failing_route_message,
+    )
+
+    payload = {
+        "lead_id": str(owner_ctx.lead.id),
+        "agent_id": str(owner_ctx.agent.id),
+        "channel_type": "whatsapp",
+    }
+    response = await auth_client.post(f"{ACTIVATION}/test-dispatch", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "erro"
+    assert body["channel"] == "whatsapp"
+    assert body["recipient"] == "5511999887766"
+    assert err_msg in body["error"]
+    assert body["response"] is None
+    assert body["lead_interaction_id"] is None
+
+
 async def test_test_dispatch_receptive_agent_returns_400(
     auth_client,
     owner_ctx,

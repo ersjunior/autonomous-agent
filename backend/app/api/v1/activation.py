@@ -318,9 +318,10 @@ async def test_dispatch(
             detail="Capacidade de atendimento cheia, tente novamente",
         )
 
+    lead_id_str = str(lead.id)
     bound = False
     try:
-        bind_outbound_capacity(str(lead.id), normalized, capacity_handle)
+        bind_outbound_capacity(lead_id_str, normalized, capacity_handle)
         bound = True
 
         dispatch_result = await _send_test_dispatch(
@@ -378,9 +379,9 @@ async def test_dispatch(
         )
     finally:
         if bound:
-            release_outbound_capacity_for_lead(str(lead.id), normalized)
+            release_outbound_capacity_for_lead(lead_id_str, normalized)
         else:
-            release_outbound_handle(capacity_handle, str(lead.id), normalized)
+            release_outbound_handle(capacity_handle, lead_id_str, normalized)
 
 
 @router.get("/activation/history", response_model=ActivationHistoryListResponse)
