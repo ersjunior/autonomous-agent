@@ -18,9 +18,8 @@ alwaysApply: false
 | `ollama` | `ollama/ollama:latest` | 11434 | `ollama list` |
 | `faster-whisper` | build `infra/docker/faster-whisper` | `WHISPER_PORT`→8001 | `/health` |
 | `coqui-tts` | build `infra/docker/coqui-tts` | `COQUI_PORT`→8002 | `/health` |
-| `sadtalker` | build `infra/docker/sadtalker` | `SADTALKER_PORT`→8003 | `/health` (`model_loaded`+`gpu`) |
 
-**GPU (NVIDIA):** `ollama` e `sadtalker` usam `deploy.resources.reservations.devices` (driver `nvidia`). Requer NVIDIA Container Toolkit. `coqui-tts` e `faster-whisper` permanecem CPU nesta versão (ver TODOs no compose).
+**GPU (NVIDIA):** `ollama` usa `deploy.resources.reservations.devices` (driver `nvidia`). Requer NVIDIA Container Toolkit. `coqui-tts` e `faster-whisper` permanecem CPU nesta versão (ver TODOs no compose).
 
 A stack open source (`ollama`, `faster-whisper`, `coqui-tts`) é o **modo padrão** e sobe sempre — não há mais `profiles: [opensource]` no compose base. As portas de host de Whisper/Coqui são parametrizáveis (`WHISPER_PORT`/`COQUI_PORT`) para evitar conflito com outros serviços locais; a porta interna do container continua 8001/8002 (e as URLs internas `http://faster-whisper:8001` / `http://coqui-tts:8002` não mudam).
 
@@ -85,7 +84,6 @@ REDIS_URL=redis://localhost:16379/0
 LLM_PROVIDER=ollama          # ollama (padrão) | openai
 STT_PROVIDER=faster_whisper  # faster_whisper (padrão) | openai
 TTS_PROVIDER=coqui           # coqui (padrão) | elevenlabs
-AVATAR_PROVIDER=did          # did | sadtalker
 EMBEDDING_DIMENSIONS=768     # 768 com Ollama (padrão) | 1536 com OpenAI
 
 # OpenAI — OPCIONAL (só se LLM_PROVIDER=openai ou STT_PROVIDER=openai)
@@ -103,7 +101,7 @@ WHISPER_MODEL=large-v3
 # Coqui (se TTS_PROVIDER=coqui)
 COQUI_BASE_URL=http://coqui-tts:8002
 
-# Twilio, Telegram, ElevenLabs, D-ID — ver .env.example
+# Twilio, Telegram, ElevenLabs — ver .env.example
 ```
 
 Dentro dos containers, `DATABASE_URL` e URLs de serviço usam hostnames Docker (`postgres`, `redis`, `ollama`, etc.) — definidos no `docker-compose.yml`, não no `.env` do host.

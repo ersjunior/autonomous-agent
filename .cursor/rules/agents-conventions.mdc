@@ -21,9 +21,7 @@ alwaysApply: false
 | `agents/channels/whatsapp/twilio_client.py` | ✅ Outbound messages |
 | `agents/channels/voice/handler.py` | ✅ STT → Agente → TTS |
 | `agents/channels/voice/tts_stt.py` | ✅ ProviderFactory STT/TTS |
-| `agents/channels/video/handler.py` | ✅ Avatar via ProviderFactory |
-| `agents/channels/video/avatar_client.py` | ✅ D-ID API client (legado) |
-| `agents/provider_factory.py` | ✅ Factory LLM/STT/TTS/Avatar via env |
+| `agents/provider_factory.py` | ✅ Factory LLM/STT/TTS via env |
 | `agents/providers/base.py` | ✅ Interfaces abstratas |
 | `agents/providers/llm/openai_provider.py` | ✅ GPT-4o + embeddings OpenAI |
 | `agents/providers/llm/ollama_provider.py` | ✅ Ollama chat + nomic-embed-text |
@@ -31,8 +29,6 @@ alwaysApply: false
 | `agents/providers/stt/faster_whisper_provider.py` | ✅ faster-whisper local |
 | `agents/providers/tts/elevenlabs_provider.py` | ✅ ElevenLabs TTS |
 | `agents/providers/tts/coqui_provider.py` | ✅ Coqui XTTS-v2 |
-| `agents/providers/avatar/did_provider.py` | ✅ D-ID avatar |
-| `agents/providers/avatar/sadtalker_provider.py` | ✅ SadTalker avatar |
 | `agents/memory/short_term.py` | ✅ Redis TTL 3600s — integrado no grafo |
 | `agents/memory/long_term.py` | ✅ PostgreSQL + pgvector — integrado no grafo |
 | `worker/tasks/outbound_campaign.py` | ✅ Modo ATIVO — campanhas WhatsApp/Telegram |
@@ -45,7 +41,7 @@ alwaysApply: false
 ```python
 class AgentState(TypedDict):
     message: str                    # texto da mensagem do usuário
-    channel: str                    # "telegram" | "whatsapp" | "voice" | "video"
+    channel: str                    # "telegram" | "whatsapp" | "voice"
     user_id: str                    # identificador único do usuário no canal
     intent: str                     # greeting|question|complaint|purchase|cancel|escalate|other
     confidence: float               # 0.0 a 1.0
@@ -93,7 +89,7 @@ text = await get_response(msg, channel, user_id, notify_received=True)
 | `get_response(...)` | Wrapper — retorna apenas `response` |
 | `route_after_escalation_check(state)` | Aresta condicional do grafo (`escalate` ou `generate_response`) |
 
-Canais válidos: `telegram`, `whatsapp`, `voice`, `video` (sempre lowercase).
+Canais válidos: `telegram`, `whatsapp`, `voice` (sempre lowercase).
 
 ## Eventos Redis (monitoramento em tempo real)
 
@@ -210,7 +206,6 @@ class IntentResult(BaseModel):
 | Telegram | `update.message.text` | `update.message.reply_text(response)` |
 | WhatsApp | form-data Twilio (`Body`, `From`) | TwiML `<Response><Message>...</Message></Response>` |
 | Voz | `bytes` de áudio | `bytes` de áudio (MP3) |
-| Vídeo | `str` de texto | `talk_id` (str) para polling D-ID |
 
 ## Memória
 
@@ -251,8 +246,6 @@ tts = ProviderFactory.get_tts()
 audio = await tts.synthesize("Olá!", voice_id=None)
 
 audio = await text_to_speech(text)  # Coqui — mesma voz do canal de voz
-avatar = ProviderFactory.get_avatar()
-job = await avatar.create_video(text, avatar_ref="default.png", audio_bytes=audio)
 ```
 
 Variáveis de ambiente (ver `app.core.config.settings`):
@@ -262,9 +255,8 @@ Variáveis de ambiente (ver `app.core.config.settings`):
 | `LLM_PROVIDER` | `openai` \| `ollama` |
 | `STT_PROVIDER` | `openai` \| `faster_whisper` |
 | `TTS_PROVIDER` | `elevenlabs` \| `coqui` |
-| `AVATAR_PROVIDER` | `did` \| `sadtalker` |
 
-Workers (`intent_agent`, `response_agent`), memória (`long_term.embed`) e canais (`voice/tts_stt`, `video/handler`) usam sempre `ProviderFactory` — nunca importar provedores concretos diretamente nos handlers.
+Workers (`intent_agent`, `response_agent`), memória (`long_term.embed`) e canais (`voice/tts_stt`) usam sempre `ProviderFactory` — nunca importar provedores concretos diretamente nos handlers.
 
 ## Não fazer
 

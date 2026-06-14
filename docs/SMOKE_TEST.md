@@ -1,7 +1,7 @@
 # Smoke test pré-apresentação — Autonomous Agent
 
 Checklist objetivo para rodar **no dia da banca** (e no dia anterior).  
-Ambiente: raiz do repositório, `.env` de `.env.example`, Docker com GPU NVIDIA (SadTalker/Ollama).
+Ambiente: raiz do repositório, `.env` de `.env.example`, Docker com GPU NVIDIA (Ollama recomendado).
 
 **Compose (Makefile):**
 
@@ -14,7 +14,7 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 ## 1. Setup inicial
 
 - [ ] **`.env` presente**  
-  - `LLM_PROVIDER=ollama`, `EMBEDDING_DIMENSIONS=768`, `AVATAR_PROVIDER=sadtalker`  
+  - `LLM_PROVIDER=ollama`, `EMBEDDING_DIMENSIONS=768`, `TTS_PROVIDER=coqui`  
   - `ACTIVE_CONVERSATION_TIMEOUT_HOURS=24`, `STATUS_TIMEOUT_HOURS=48`
 
 - [ ] **`make setup` concluído**  
@@ -24,7 +24,7 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 ---
 
-## 2. Containers (10 serviços)
+## 2. Containers (9 serviços)
 
 - [ ] **Todos Up / healthy**  
   - `docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml ps`
@@ -40,9 +40,6 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 | ollama | autonomous-agent-ollama | healthy |
 | faster-whisper | autonomous-agent-faster-whisper | healthy |
 | coqui-tts | autonomous-agent-coqui-tts | healthy |
-| sadtalker | autonomous-agent-sadtalker | healthy |
-
-> Sem GPU: SadTalker pode ficar `unhealthy` — MP4 pré-gravado (`docs/demo-assets/`).
 
 ---
 
@@ -55,8 +52,6 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 - [ ] **faster-whisper** — `curl -s http://localhost:18001/health` (ou porta do `.env`) → 200
 
 - [ ] **Coqui** — `curl -s http://localhost:18002/health` → `"model_loaded": true`
-
-- [ ] **SadTalker** — `curl -s http://localhost:8003/health` → `"status":"ok"`, `"model_loaded":true`
 
 ---
 
@@ -101,7 +96,7 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
   ```  
   - Passou: `vector(768)`
 
-- [ ] **Seeds: 2 agentes + 4 canais (`is_system`)**  
+- [ ] **Seeds: 2 agentes + 3 canais (`is_system`)**  
   ```bash
   docker exec autonomous-agent-postgres psql -U postgres -d autonomous_agent -c \
     "SELECT name, mode::text, is_system FROM agents WHERE name IN ('Agente_Ativo','Agente_Receptivo') ORDER BY name;"
@@ -111,8 +106,8 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
   - **Esperado (agentes):**  
     - `Agente_Ativo` | `ACTIVE` | `t`  
     - `Agente_Receptivo` | `RECEPTIVE` | `t`  
-  - **Esperado (canais, 4 linhas):**  
-    `Telegram_Agent`, `Video_Agent`, `Voice_Agent`, `WhatsApp_Agent` — todos `is_system = t`
+  - **Esperado (canais, 3 linhas):**  
+    `Telegram_Agent`, `Voice_Agent`, `WhatsApp_Agent` — todos `is_system = t`
 
 - [ ] **Seeds: 16 tabulações (`is_system`)**  
   ```bash
@@ -194,11 +189,7 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 - [ ] **reference.wav** — `docker exec autonomous-agent-coqui-tts test -f /voices/reference.wav`
 
-- [ ] **Avatar default.png** — `docker exec autonomous-agent-backend test -f /avatars/default.png`
-
 - [ ] **Teste voz UI** — Settings → Áudio → Gerar e ouvir → MP3
-
-- [ ] **Teste avatar UI** — Settings → Avatar → Gerar vídeo → MP4 (~20–30 s)
 
 - [ ] **Grafo rápido (opcional)**  
   ```bash
@@ -364,7 +355,7 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 
 - [ ] **UI: selo e credenciais mascaradas**  
   - http://localhost:3000/dashboard/agents — seeds com **Padrão do sistema**, só Visualizar  
-  - http://localhost:3000/dashboard/channels — 4 seeds; Visualizar → segredos mascarados (não texto plano do `.env`)
+  - http://localhost:3000/dashboard/channels — 3 seeds; Visualizar → segredos mascarados (não texto plano do `.env`)
 
 - [ ] **Leads: base IMPORT read-only; DELETE da base**  
   - Importar CSV (ou usar base existente `source=IMPORT`) → badge somente leitura; botão editar lead ausente/desabilitado  
@@ -425,7 +416,6 @@ Abas abertas:
 | Lead IMPORT editável | `source` errado na base | Reimportar; checar API `LeadBaseResponse.source` |
 | UI sem selo | Frontend desatualizado | Rebuild frontend; hard refresh |
 | `alembic current` antigo | Migração pendente | `make migrate` até `k2l3m4n5o6p7` |
-| SadTalker unhealthy | Sem GPU | MP4 em `docs/demo-assets/` |
 | Coqui `model_loaded: false` | Build/startup | Aguardar; `reference.wav` |
 | 401 na UI | JWT expirado | Login de novo |
 

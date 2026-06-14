@@ -13,10 +13,10 @@ Todo código de agentes, orquestração LangGraph, workers LLM, canais de mensag
 | Tipo | Pasta |
 |------|-------|
 | Grafo LangGraph / roteamento | `agents/orchestrator/` |
-| Provedores LLM/STT/TTS/Avatar | `agents/providers/<tipo>/` |
+| Provedores LLM/STT/TTS | `agents/providers/<tipo>/` |
 | Factory de provedores | `agents/provider_factory.py` |
 | Workers (intent, response, escalation) | `agents/workers/` |
-| Handlers WhatsApp, Telegram, voz, vídeo | `agents/channels/<canal>/` |
+| Handlers WhatsApp, Telegram, voz | `agents/channels/<canal>/` |
 | Memória (curto/longo prazo) | `agents/memory/` |
 | Tools (CRM, calendário, KB) | `agents/tools/` |
 

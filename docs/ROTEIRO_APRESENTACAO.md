@@ -24,7 +24,7 @@
 
 **Diagramas e regras:** seções *Destaques de IA*, *Arquitetura* e *Regras de negócio* do [README.md](../README.md).
 
-**Sumário:** 1 Abertura → 2 Arquitetura → 3 Cérebro local → 4 RAG → **5** Roteamento ATIVO/RECEPTIVO → **5b** Fila + Erlang → **5c** Comportamento receptivo / handoff → **5d** Tabulação / status → **5e** Teste de acionamento → **5f** Ciclo operacional → 6 Propriedade → 7 Voz → 8 Avatar → 9 Negócio → 10 Fechamento.
+**Sumário:** 1 Abertura → 2 Arquitetura → 3 Cérebro local → 4 RAG → **5** Roteamento ATIVO/RECEPTIVO → **5b** Fila + Erlang → **5c** Comportamento receptivo / handoff → **5d** Tabulação / status → **5e** Teste de acionamento → **5f** Ciclo operacional → 6 Propriedade → 7 Voz → 8 Negócio → 9 Fechamento.
 
 ---
 
@@ -35,7 +35,7 @@
 - Uma frase de posicionamento; não abrir o terminal ainda.
 
 ### O que falar
-> "Este trabalho transforma um fluxo clássico de telemarketing em um **agente de IA autônomo**, omnichannel. Para a banca de **IA aplicada**, o foco é a pilha **multi-agente LangGraph** com **RAG ativo no pgvector**, modelos **locais na GPU** (Ollama, Coqui, SadTalker) e **regras de domínio**: agentes **ATIVO/RECEPTIVO**, **roteamento por dono da conversa** e **proteção sistema vs usuário** (`is_system`, bases IMPORT)."
+> "Este trabalho transforma um fluxo clássico de telemarketing em um **agente de IA autônomo**, omnichannel. Para a banca de **IA aplicada**, o foco é a pilha **multi-agente LangGraph** com **RAG ativo no pgvector**, modelos **locais na GPU** (Ollama, Coqui) e **regras de domínio**: agentes **ATIVO/RECEPTIVO**, **roteamento por dono da conversa** e **proteção sistema vs usuário** (`is_system`, bases IMPORT)."
 
 ### O que a banca vê
 - Problema + contribuição técnica (IA + governança leve).
@@ -372,7 +372,7 @@ docker exec autonomous-agent-backend \
 
 **1. Seeds visíveis (admin)**  
 - http://localhost:3000/dashboard/agents — **Agente_Ativo**, **Agente_Receptivo**: selo **Padrão do sistema**, ações só **Visualizar** (descrição longa no modal).  
-- http://localhost:3000/dashboard/channels — **WhatsApp_Agent**, **Telegram_Agent**, **Voice_Agent**, **Video_Agent**: mesmo selo; **Visualizar** mostra credenciais **mascaradas** (`lib/credentials.ts`).
+- http://localhost:3000/dashboard/channels — **WhatsApp_Agent**, **Telegram_Agent**, **Voice_Agent**: mesmo selo; **Visualizar** mostra credenciais **mascaradas** (`lib/credentials.ts`).
 
 **2. Registro próprio com CRUD**  
 - Criar agente ou canal com nome próprio → **Editar** e **Excluir** habilitados.
@@ -420,16 +420,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 
 ---
 
-## 8. Demo ao vivo — avatar em vídeo (~2 min)
-
-- Settings → **Avatar / Vídeo** → **Gerar e ver vídeo** (~20–30 s), ou MP4/Telegram pré-enviado.
-
-### Plano B
-- `docs/demo-assets/avatar-demo.mp4`
-
----
-
-## 9. Aplicação de negócio (~1 min)
+## 8. Aplicação de negócio (~1 min)
 
 - **Campanhas** — `Agente_Ativo` no `agent_id`; **Iniciar** / **Parar** / retomar.
 - **Acionamento** — 3 abas: motor, teste ad-hoc, histórico outbound.
@@ -443,16 +434,16 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 
 ---
 
-## 10. Fechamento (~1 min)
+## 9. Fechamento (~1 min)
 
-> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **comportamento receptivo com handoff humano real** (5c), **tabulação híbrida (regras + IA)** (5d), **ciclo operacional completo** (5f: acionar, testar ao vivo em 5e, parar, supervisionar, finalizar), **dimensionamento Erlang C**, **proteção is_system/IMPORT**, multimodal local e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `validate_campaign_stop.py`, `validate_test_dispatch.py`, `validate_activation_history.py` e `validate_attendance_history.py` são evidência de regressão para a defesa."
+> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **comportamento receptivo com handoff humano real** (5c), **tabulação híbrida (regras + IA)** (5d), **ciclo operacional completo** (5f: acionar, testar ao vivo em 5e, parar, supervisionar, finalizar), **dimensionamento Erlang C**, **proteção is_system/IMPORT**, voz local (Coqui) e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `validate_campaign_stop.py`, `validate_test_dispatch.py`, `validate_activation_history.py` e `validate_attendance_history.py` são evidência de regressão para a defesa."
 
 ---
 
 ## Perguntas prováveis da banca + respostas
 
 ### Por que IA local?
-> "Reprodutibilidade, custo zero em inferência, dados no ambiente controlado. OpenAI/ElevenLabs/D-ID via `ProviderFactory` quando necessário."
+> "Reprodutibilidade, custo zero em inferência, dados no ambiente controlado. OpenAI/ElevenLabs via `ProviderFactory` quando necessário."
 
 ### Como decidem qual agente atende cada contato?
 > "**Dono da conversa** em `conversation_routing.py`: outbound ACTIVE abre com `data_acionamento`; inbound reutiliza esse ACTIVE enquanto `is_active_conversation_open`; senão RECEPTIVE (ou desconhecido → seed `Agente_Receptivo`). Escopo: última `LeadInteraction` por `(lead_id, channel_type)`."
@@ -491,10 +482,10 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 > "`app_settings` + Redis `settings_version`; worker recarrega sem restart de container."
 
 ### Limitações?
-> "GPU SadTalker; 2 LLM + RAG por mensagem; Twilio trial; Telegram polling manual; cenário E do script precisa de campanha no DB para B–D."
+> "GPU Ollama; 2 LLM + RAG por mensagem; Twilio trial; Telegram polling manual; cenário E do script precisa de campanha no DB para B–D."
 
 ### Escalabilidade?
-> "API stateless, Celery horizontal; gargalos GPU Ollama/SadTalker."
+> "API stateless, Celery horizontal; gargalo principal na GPU do Ollama."
 
 ### Por que Erlang C num sistema de IA?
 > "O gargalo operacional é **concorrência de atendimentos**, não só tokens. Erlang C traduz histórico (λ, AHT) em SLA **previsto** e headroom — mesma linguagem de call center que o gestor entende. A IA decide o texto; a fila decide **quando** há slot."
@@ -532,7 +523,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 | **Tabulação / status** (5d) | Saída `validate_tabulacao_t2.py` + screenshot `/dashboard/tabulacoes` |
 | **Teste de acionamento** (5e) | Aba Teste em `/dashboard/activation` ou saída `validate_test_dispatch.py` |
 | **Ciclo operacional** (5f) | Screenshots Parar campanha + Histórico de atendimentos (thread aberta) |
-| Voz / Avatar | `voz-demo.mp3` / `avatar-demo.mp4` |
+| Voz | `voz-demo.mp3` |
 | Propriedade UI | Screenshots agentes/canais + print 403 |
 | Campanha real | Métricas de base antiga |
 
@@ -553,7 +544,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 - [ ] `validate_tabulacao_t2.py` ensaiado
 - [ ] `validate_campaign_stop.py`, `validate_test_dispatch.py`, `validate_activation_history.py`, `validate_attendance_history.py` ensaiados
 - [ ] (Opcional) `user2@test.com` para isolamento
-- [ ] MP3/MP4 fallback
+- [ ] MP3 fallback (voz)
 
 ---
 

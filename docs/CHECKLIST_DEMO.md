@@ -70,7 +70,7 @@ Devem estar **Up / Healthy** (os essenciais para a demo):
 - `cloudflared`
 - `frontend`
 - `telegram-polling` (subido no passo 1a)
-- `coqui-tts`, `faster-whisper`, `sadtalker` (para voz/avatar)
+- `coqui-tts`, `faster-whisper` (para voz)
 
 ### 2a. Modelos do Ollama corretos
 
@@ -179,8 +179,7 @@ Faça cada um e confirme a resposta **antes** da apresentação.
 
 1. Dispare/receba a ligação conforme seu fluxo de voz.
 2. Esperado: a chamada é atendida e o agente fala.
-3. **Pendência conhecida:** o TTS ainda usa a voz padrão do Twilio (inglês). A troca para
-   Coqui (português) está no roadmap. Mencione isso se for demonstrar voz.
+3. **Outbound voz:** tenta **Coqui XTTS** (português) via `<Play>` MP3; se Coqui/ffmpeg falhar, fallback **Polly pt-BR** (`<Say>`). Mencione o fallback se a demo usar voz.
 
 ### 5d. Teste de acionamento (atalho pelo front)
 

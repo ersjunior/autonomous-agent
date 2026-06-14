@@ -65,7 +65,7 @@ headers: {
 ## Tipos principais
 
 ```typescript
-type ChannelType = "WHATSAPP" | "TELEGRAM" | "VOICE" | "VIDEO"
+type ChannelType = "WHATSAPP" | "TELEGRAM" | "VOICE"
 type AgentMode = "ACTIVE" | "RECEPTIVE"
 type AgentStatus = "draft" | "active" | "paused" | "stopped"
 
@@ -108,9 +108,6 @@ interface Lead {
 
 // Voz
 { phone_numbers: string[], provider: "twilio" }
-
-// Vídeo
-{ avatar_url: string, did_api_key: string }
 ```
 
 ## Padrões de componente
@@ -134,4 +131,4 @@ const [email, setEmail] = useState("")
 
 - Nunca use `<form action="...">` — use handlers `onClick`/`onSubmit` com `preventDefault`
 - Nunca hardcode a URL da API — sempre `process.env.NEXT_PUBLIC_API_URL`
-- Nunca chame a API do OpenAI/Twilio/D-ID diretamente do frontend — sempre via backend
+- Nunca chame a API do OpenAI/Twilio diretamente do frontend — sempre via backend

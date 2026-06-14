@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
 ### Enums compartilhados
 - `AgentMode`: `ACTIVE | RECEPTIVE` — em `models/agent.py`
-- `ChannelType`: `WHATSAPP | TELEGRAM | VOICE | VIDEO` — em `models/channel.py`
+- `ChannelType`: `WHATSAPP | TELEGRAM | VOICE` — em `models/channel.py`
 - Ao usar `ChannelType` em `campaign.py`, use `create_type=False` no Enum para evitar conflito de nome no PostgreSQL
 
 ### Endpoints FastAPI
@@ -79,9 +79,9 @@ async def whatsapp_webhook(Body: str = Form(""), From: str = Form(""), To: str =
 
 `app/core/config.py` expõe:
 
-- `llm_provider`, `stt_provider`, `tts_provider`, `avatar_provider` — seleção comercial vs OSS
+- `llm_provider`, `stt_provider`, `tts_provider` — seleção comercial vs OSS
 - `embedding_dimensions` — dimensão pgvector (`1536` OpenAI, `768` Ollama)
-- URLs dos serviços locais: `ollama_base_url`, `whisper_base_url`, `coqui_base_url`, `sadtalker_base_url`
+- URLs dos serviços locais: `ollama_base_url`, `whisper_base_url`, `coqui_base_url`
 
 Migration `a7b8c9d0e1f2_alter_interactions_embedding_dimensions` adapta a coluna `interactions.embedding` quando `EMBEDDING_DIMENSIONS` muda.
 

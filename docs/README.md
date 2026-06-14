@@ -10,6 +10,33 @@ Documentação técnica do projeto autonomous-agent.
 
 O modo padrão é a stack **open source** (Ollama + faster-whisper + Coqui), sem chaves pagas de LLM/STT/TTS.
 
+## Documentação principal
+
+| Arquivo | Conteúdo |
+|---------|----------|
+| [documentacao.md](documentacao.md) | Visão consolidada do sistema |
+| [arquitetura.md](arquitetura.md) | Arquitetura, fluxos e memória |
+| [stack.md](stack.md) | Stack tecnológica e versões |
+| [backend.md](backend.md) | API FastAPI, auth, settings |
+| [frontend.md](frontend.md) | Dashboard Next.js |
+| [canais.md](canais.md) | Telegram, WhatsApp e Voz |
+| [agentes.md](agentes.md) | LangGraph, RAG, handoff, capacidade |
+| [infra.md](infra.md) | Docker, Makefile, CI, Celery Beat |
+| [configuracao.md](configuracao.md) | Variáveis de ambiente |
+| [scripts.md](scripts.md) | Scripts `validate_*` |
+| [testes.md](testes.md) | Pirâmide de testes (453 testes) |
+| [roadmap.md](roadmap.md) | Pendências e trabalho futuro |
+
+## Apresentação e demo
+
+| Arquivo | Conteúdo |
+|---------|----------|
+| [CHECKLIST_DEMO.md](CHECKLIST_DEMO.md) | Checklist pré-demo ao vivo |
+| [ROTEIRO_APRESENTACAO.md](ROTEIRO_APRESENTACAO.md) | Roteiro de apresentação (TCC) |
+| [SMOKE_TEST.md](SMOKE_TEST.md) | Smoke test pré-apresentação |
+
+## Pastas complementares
+
 | Pasta | Conteúdo |
 |-------|----------|
 | [`architecture/`](architecture/) | Visão geral do sistema, design dos agentes, diagramas |

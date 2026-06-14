@@ -21,8 +21,8 @@ worker/
 ├── Dockerfile
 └── tasks/
     ├── __init__.py
-    ├── outbound_campaign.py ← Modo ATIVO (a implementar)
-    └── inbound_handler.py  ← Modo RECEPTIVO (a implementar)
+    ├── outbound_campaign.py ← Modo ATIVO ✅
+    └── inbound_handler.py  ← Modo RECEPTIVO ✅
 ```
 
 ## Configuração Celery

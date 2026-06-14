@@ -7,12 +7,10 @@ Esta pasta guarda **materiais locais** para a defesa do TCC, caso alguma demo ao
 | Arquivo sugerido | Uso |
 |------------------|-----|
 | `voz-demo.mp3` | Áudio gerado pelo teste de voz (Coqui) na aba Configurações → Áudio |
-| `avatar-demo.mp4` | Vídeo do SadTalker (UI ou envio Telegram) |
 | `diagrama-grafo.png` | Captura do diagrama B (LangGraph) do README |
 | `diagrama-rag.png` | Captura do diagrama D (memória/RAG) |
 | `validate-rag-output.txt` | Saída de `backend/scripts/validate_rag.py` (similaridades + bloco RAG + vazamento) |
 | `validate-phase4-routing-output.txt` | Saída de `backend/scripts/validate_phase4_routing.py` (cenários A–E com `OK=True`) |
-| `telegram-avatar-print.png` | Print do vídeo recebido no Telegram (opcional) |
 
 ## Como gerar antes da banca
 
@@ -22,5 +20,5 @@ Esta pasta guarda **materiais locais** para a defesa do TCC, caso alguma demo ao
 
 ## Versionamento
 
-- `*.mp3`, `*.mp4` e imagens grandes nesta pasta estão no `.gitignore`.
+- `*.mp3` e imagens grandes nesta pasta estão no `.gitignore`.
 - Não commitar tokens, `.env` nem dados reais de clientes.

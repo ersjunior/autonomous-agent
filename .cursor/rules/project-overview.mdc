@@ -17,15 +17,14 @@ TCC: "Do operador ao Agente: Transformando um atendente de telemarketing em um A
 | Camada | Tecnologia |
 |--------|-----------|
 | Backend API | FastAPI (Python 3.12) + SQLAlchemy 2.0 async |
-| Agentes | LangGraph + LangChain + ProviderFactory (LLM/STT/TTS/Avatar) |
-| LLM | OpenAI GPT-4o **ou** Ollama (llama3.1) |
+| Agentes | LangGraph + LangChain + ProviderFactory (LLM/STT/TTS) |
+| LLM | Ollama (llama3.1) **ou** OpenAI GPT-4o (opcional) |
 | Frontend | Next.js 15 + TypeScript + Tailwind CSS |
 | Workers | Celery + Redis |
 | Banco de dados | PostgreSQL 16 + pgvector |
 | Cache | Redis 7 |
-| STT | OpenAI Whisper **ou** faster-whisper (local) |
-| TTS | ElevenLabs **ou** Coqui XTTS-v2 (local) |
-| Avatar | D-ID API **ou** SadTalker |
+| STT | faster-whisper (local) **ou** OpenAI Whisper (opcional) |
+| TTS | Coqui XTTS-v2 (local) **ou** ElevenLabs (opcional) |
 | WhatsApp | Twilio |
 | Telegram | python-telegram-bot |
 | Infra local | Docker Compose (stack open source sobe por padrão) |
@@ -40,11 +39,10 @@ autonomous-agent/
 │   ├── channels/
 │   │   ├── telegram/       ← handler.py ✅
 │   │   ├── whatsapp/       ← handler.py + twilio_client.py ✅
-│   │   ├── voice/          ← handler.py + tts_stt.py ✅
-│   │   └── video/          ← handler.py + avatar_client.py ✅
+│   │   └── voice/          ← handler.py + tts_stt.py ✅
 │   ├── orchestrator/       ← graph.py + router.py ✅
-│   ├── providers/            ← LLM, STT, TTS, Avatar (openai, ollama, coqui…) ✅
-│   ├── provider_factory.py   ← seleção de provedor via env ✅
+│   ├── providers/          ← LLM, STT, TTS (openai, ollama, coqui…) ✅
+│   ├── provider_factory.py ← seleção de provedor via env ✅
 │   ├── workers/            ← intent_agent.py + response_agent.py ✅
 │   ├── memory/             ← short_term.py + long_term.py ✅
 │   └── tools/              ← crm_tool.py + calendar_tool.py + knowledge_base.py
@@ -80,11 +78,10 @@ Seleção via variáveis de ambiente — implementações em `agents/providers/`
 | `LLM_PROVIDER` | `openai` \| `ollama` | `ollama` |
 | `STT_PROVIDER` | `openai` \| `faster_whisper` | `faster_whisper` |
 | `TTS_PROVIDER` | `elevenlabs` \| `coqui` | `coqui` |
-| `AVATAR_PROVIDER` | `did` \| `sadtalker` | `did` |
 | `EMBEDDING_DIMENSIONS` | `1536` (OpenAI) \| `768` (Ollama) | `768` |
 
 A stack open source (`ollama`, `faster-whisper`, `coqui-tts`) é o **modo padrão** e sobe sempre — sem `profiles`.
-Subir com: `make up` (ou `make setup` na 1ª vez). Os serviços comerciais (OpenAI/ElevenLabs/D-ID) são opcionais.
+Subir com: `make up` (ou `make setup` na 1ª vez). Os serviços comerciais (OpenAI/ElevenLabs) são opcionais.
 
 ## Modos de operação do agente
 
@@ -96,19 +93,16 @@ Subir com: `make up` (ou `make setup` na 1ª vez). Os serviços comerciais (Open
 ```env
 OPENAI_API_KEY         # GPT-4o + Whisper (se LLM/STT provider=openai)
 EMBEDDING_DIMENSIONS   # 1536 OpenAI | 768 Ollama
-LLM_PROVIDER           # openai | ollama
-STT_PROVIDER           # openai | faster_whisper
-TTS_PROVIDER           # elevenlabs | coqui
-AVATAR_PROVIDER        # did | sadtalker
+LLM_PROVIDER           # ollama | openai
+STT_PROVIDER           # faster_whisper | openai
+TTS_PROVIDER           # coqui | elevenlabs
 TWILIO_ACCOUNT_SID     # WhatsApp + Voz
 TWILIO_AUTH_TOKEN
 TWILIO_PHONE_NUMBER
 TELEGRAM_BOT_TOKEN     # Telegram
 ELEVENLABS_API_KEY     # TTS (se TTS_PROVIDER=elevenlabs)
 ELEVENLABS_VOICE_ID    # ID da voz (default: 21m00Tcm4TlvDq8ikWAM)
-DID_API_KEY            # Avatar (se AVATAR_PROVIDER=did)
 OLLAMA_BASE_URL        # http://ollama:11434
 WHISPER_BASE_URL       # http://faster-whisper:8001
 COQUI_BASE_URL         # http://coqui-tts:8002
-SADTALKER_BASE_URL     # http://sadtalker:8003
 ```
