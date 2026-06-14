@@ -11,6 +11,16 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+@pytest.fixture(autouse=True)
+def clear_tabulacao_codigo_cache():
+    """Evita IDs de tabulação de transações rollback vazarem da suíte integration."""
+    from app.services import tabulacao_assignment as ta
+
+    ta._codigo_id_cache.clear()
+    yield
+    ta._codigo_id_cache.clear()
+
+
 @pytest_asyncio.fixture
 async def test_app(db_session: AsyncSession):
     """App FastAPI com get_db apontando para a sessão transacional de teste."""
