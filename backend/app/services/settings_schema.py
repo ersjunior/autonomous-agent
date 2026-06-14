@@ -183,6 +183,17 @@ MANAGED_SETTINGS: tuple[SettingFieldSchema, ...] = (
         default_value="0",
     ),
     SettingFieldSchema(
+        key="voice_response_max_tokens",
+        label="Limite de tokens da resposta em voz (0 = sem limite)",
+        category="agent",
+        field_type="number",
+        value_type="int",
+        min_value=0,
+        max_value=512,
+        step=16,
+        default_value="120",
+    ),
+    SettingFieldSchema(
         key="human_handoff_enabled",
         label="Handoff humano ativo (notificar operador no escalonamento)",
         category="agent",

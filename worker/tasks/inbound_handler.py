@@ -97,6 +97,14 @@ async def _deliver_inbound_response(channel: str, user_id: str, response: str) -
             logger.info("Telegram inbound enviado chat_id=%s", user_id)
             return True
 
+        if ch == "voice":
+            # Voz inbound: resposta sai via TwiML/TTS no webhook — não há push ativo.
+            logger.debug(
+                "Voice inbound user_id=%s: entrega via TwiML no webhook (push omitido)",
+                user_id,
+            )
+            return False
+
         logger.warning("Canal inbound não suportado para envio ativo: %s", channel)
         return False
     except Exception:

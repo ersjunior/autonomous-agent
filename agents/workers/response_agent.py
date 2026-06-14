@@ -21,10 +21,45 @@ RECEPTIVE_BEHAVIOR_PROMPT = """Modo RECEPTIVO — como conduzir o atendimento:
   escopo ou sinal de escalonamento), não insista em resolver sozinho — reconheça e indique
   que a conversa será transferida para um atendente humano."""
 
+# Inbound/outbound de voz (telefonia): respostas curtas para TTS e timeout da Twilio.
+VOICE_BEHAVIOR_PROMPT = """Modo VOZ (telefone) — como falar com o cliente:
+- Você está em uma LIGAÇÃO TELEFÔNICA; responda de forma CURTA e objetiva (no máximo 3 a 4 frases).
+- Use linguagem falada natural, direta ao ponto; evite listas, markdown, emojis e parágrafos longos.
+- Prefira frases curtas que soem bem quando lidas em voz alta; vá direto ao que o cliente precisa."""
+
 
 def _resolve_system_prompt() -> str:
     prompt = (settings.agent_system_prompt or "").strip()
     return prompt if prompt else DEFAULT_SYSTEM_PROMPT
+
+
+def _resolve_max_tokens(channel: str) -> int | None:
+    """Limite de tokens para o LLM — cap dedicado em voice, global nos demais canais."""
+    ch = (channel or "").lower()
+    if ch == "voice":
+        cap = settings.voice_response_max_tokens
+        return cap if cap > 0 else None
+    cap = settings.response_max_tokens
+    return cap if cap > 0 else None
+
+
+def trim_voice_response_to_complete_sentence(text: str) -> str:
+    """
+    Garante fim de frase completo para TTS (evita truncamento no meio da palavra/frase).
+
+    Se não houver pontuação de fim de frase, mantém o texto original.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return cleaned
+    if cleaned[-1] in ".!?":
+        return cleaned
+
+    last_idx = max(cleaned.rfind("."), cleaned.rfind("!"), cleaned.rfind("?"))
+    if last_idx == -1:
+        return cleaned
+
+    return cleaned[: last_idx + 1].strip()
 
 
 def _history_to_messages(history: list[dict]) -> list[dict]:
@@ -109,8 +144,8 @@ def build_response_messages(
 
     Ordem dos blocos de sistema:
       1. prompt global → 2. personality → 3. RECEPTIVE (se aplicável)
-      4. KB institucional (precedência factual) → 5. memória de contato
-      6. canal/intent/entidades → 7. histórico → 8. mensagem atual
+      4. VOZ (se canal voice) → 5. KB institucional → 6. memória de contato
+      7. canal/intent/entidades → 8. histórico → 9. mensagem atual
     """
     context = (
         f"Canal: {channel}\n"
@@ -126,6 +161,9 @@ def build_response_messages(
     mode = (agent_mode or "").upper()
     if mode == "RECEPTIVE":
         messages.append({"role": "system", "content": RECEPTIVE_BEHAVIOR_PROMPT})
+
+    if (channel or "").lower() == "voice":
+        messages.append({"role": "system", "content": VOICE_BEHAVIOR_PROMPT})
 
     kb_block = format_kb_context_block(kb_chunks or [])
     if kb_block:
@@ -173,6 +211,13 @@ async def generate_response(
             len(messages),
         )
 
+    if (channel or "").lower() == "voice":
+        logger.debug(
+            "VOICE behavior block injected for channel=%s (messages=%s)",
+            channel,
+            len(messages),
+        )
+
     kb_block = format_kb_context_block(kb_chunks or [])
     if kb_block:
         logger.debug("KB context injected (%s chunks)", len(kb_chunks or []))
@@ -181,9 +226,10 @@ async def generate_response(
     if rag_block:
         logger.debug("RAG memory context injected (%s memories)", len(rag_memories or []))
 
-    max_tokens = (
-        settings.response_max_tokens if settings.response_max_tokens > 0 else None
-    )
+    max_tokens = _resolve_max_tokens(channel)
+    if (channel or "").lower() == "voice" and max_tokens:
+        logger.debug("Voice response max_tokens=%s", max_tokens)
+
     result = await llm.complete(
         messages,
         temperature=settings.response_temperature,
@@ -191,4 +237,9 @@ async def generate_response(
     )
     if not isinstance(result, str):
         logger.warning("Unexpected content type: %s", type(result))
-    return result if isinstance(result, str) else str(result)
+    text = result if isinstance(result, str) else str(result)
+
+    if (channel or "").lower() == "voice":
+        text = trim_voice_response_to_complete_sentence(text)
+
+    return text

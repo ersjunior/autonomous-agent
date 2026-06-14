@@ -242,35 +242,38 @@ services:
       start_period: 30s
 
   faster-whisper:
-    # TODO: GPU opcional — defina WHISPER_DEVICE=cuda no .env quando expor GPU a este serviço
     build:
       context: ./faster-whisper
       dockerfile: Dockerfile
     container_name: autonomous-agent-faster-whisper
+    <<: *gpu
     environment:
+      NVIDIA_VISIBLE_DEVICES: all
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
-      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
-      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
     ports:
       - "${WHISPER_PORT:-8001}:8001"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+      test: ["CMD", "python3", "-c", "import json, urllib.request; r=urllib.request.urlopen('http://localhost:8001/health'); d=json.loads(r.read()); assert d.get('model_loaded') is True"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
 
   coqui-tts:
-    # TODO: GPU opcional para Coqui — hoje install_deps.sh força PyTorch CPU
     build:
       context: ./coqui-tts
       dockerfile: Dockerfile
     container_name: autonomous-agent-coqui-tts
+    <<: *gpu
     environment:
+      NVIDIA_VISIBLE_DEVICES: all
       COQUI_TOS_AGREED: "1"
       COQUI_MODEL: ${COQUI_MODEL:-tts_models/multilingual/multi-dataset/xtts_v2}
       COQUI_VOICE_SAMPLE: ${COQUI_VOICE_SAMPLE:-/voices/reference.wav}
+      COQUI_DEVICE: ${COQUI_DEVICE:-cuda}
     ports:
       - "${COQUI_PORT:-8002}:8002"
     volumes:

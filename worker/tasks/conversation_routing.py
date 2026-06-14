@@ -143,12 +143,15 @@ async def resolve_inbound_agent(
     session: AsyncSession,
     lead: Lead | None,
     channel_type: str,
+    *,
+    force_receptive: bool = False,
 ) -> Agent:
     """
     Inbound routing:
       - Unknown contact (no lead) → Agente_Receptivo (RECEPTIVE) seed.
       - Open active conversation (outbound acionamento + not terminal + not expired)
         → campaign ACTIVE agent if mode matches, else Agente_Ativo seed.
+        (skipped when ``force_receptive=True`` — ex.: ligação PSTN inbound)
       - First contact or closed conversation → campaign RECEPTIVE agent if applicable,
         else Agente_Receptivo seed.
 
@@ -168,7 +171,7 @@ async def resolve_inbound_agent(
 
     interaction = await get_latest_lead_interaction(session, lead.id, channel)
 
-    if is_active_conversation_open(interaction):
+    if not force_receptive and is_active_conversation_open(interaction):
         campaign_agent = (
             interaction.campaign.agent
             if interaction and interaction.campaign
@@ -196,8 +199,10 @@ async def resolve_inbound_agent(
         agent = campaign_agent
     else:
         agent = await _get_system_agent_by_mode(session, AgentMode.RECEPTIVE)
+    routing_reason = "force_receptive" if force_receptive else "closed/new"
     logger.info(
-        "Inbound routing: closed/new conversation lead=%s channel=%s status=%s → %s (%s)",
+        "Inbound routing: %s conversation lead=%s channel=%s status=%s → %s (%s)",
+        routing_reason,
         lead.id,
         channel,
         interaction.status if interaction else "none",

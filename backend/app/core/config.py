@@ -183,6 +183,8 @@ class Settings(BaseSettings):
     kb_top_k: int = 0  # 0 = usa rag_top_k
     kb_similarity_threshold: float = 0.62
     response_max_tokens: int = 0
+    # Limite rígido só para respostas no canal voice (Ollama num_predict). 0 = sem limite.
+    voice_response_max_tokens: int = 120
 
     def resolved_kb_top_k(self) -> int:
         return self.rag_top_k if self.kb_top_k <= 0 else self.kb_top_k
