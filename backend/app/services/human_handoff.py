@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,7 @@ from app.core.config import settings
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.models.agent import Agent
     from app.models.lead import Lead
 
 logger = logging.getLogger(__name__)
@@ -111,6 +113,7 @@ def _human_mode_payload_dict(
     *,
     intent: str | None = None,
     human_notified: bool = False,
+    owner_user_id: str | None = None,
 ) -> dict[str, Any]:
     data: dict[str, Any] = {
         "escalated_at": datetime.now(timezone.utc).isoformat(),
@@ -120,6 +123,8 @@ def _human_mode_payload_dict(
     }
     if intent:
         data["intent"] = intent
+    if owner_user_id:
+        data["owner_user_id"] = str(owner_user_id)
     return data
 
 
@@ -240,18 +245,84 @@ def enter_human_mode(
     *,
     intent: str | None = None,
     human_notified: bool = False,
+    owner_user_id: str | uuid.UUID | None = None,
 ) -> None:
     """Marca contato em modo humano com TTL de segurança."""
     ch = normalize_channel_type(channel)
-    payload = _human_mode_payload_dict(intent=intent, human_notified=human_notified)
+    payload = _human_mode_payload_dict(
+        intent=intent,
+        human_notified=human_notified,
+        owner_user_id=str(owner_user_id) if owner_user_id is not None else None,
+    )
     _write_human_mode_payload(ch, user_id, payload)
     logger.info(
-        "Modo humano ativado channel=%s user=%s redis_ttl=%ss queue_ttl=%ss",
+        "Modo humano ativado channel=%s user=%s owner=%s redis_ttl=%ss queue_ttl=%ss",
         ch,
         user_id,
+        owner_user_id or "—",
         resolved_finalize_ttl_seconds(),
         resolved_queue_ttl_seconds(),
     )
+
+
+async def resolve_handoff_owner(
+    session: AsyncSession,
+    channel: str,
+    contact_user_id: str,
+    *,
+    owner_user_id_from_payload: str | None = None,
+) -> uuid.UUID | None:
+    """
+    Dono do handoff para isolamento de tenant.
+
+    Usa owner_user_id do payload Redis quando presente; senão resolve-on-read via DB
+    (campaign.user_id → lead.user_id → pool receptivo institucional).
+    """
+    if owner_user_id_from_payload:
+        try:
+            return uuid.UUID(str(owner_user_id_from_payload))
+        except (ValueError, TypeError):
+            pass
+
+    payload = get_human_mode_payload(channel, contact_user_id)
+    if payload and payload.get("owner_user_id"):
+        try:
+            return uuid.UUID(str(payload["owner_user_id"]))
+        except (ValueError, TypeError):
+            pass
+
+    from worker.tasks.lead_tracking import find_lead_by_channel_user
+
+    lead = await find_lead_by_channel_user(session, channel, contact_user_id)
+    if lead is not None:
+        if lead.lead_base is not None and lead.lead_base.campaign_id is not None:
+            from app.models.campaign import Campaign
+
+            campaign = await session.get(Campaign, lead.lead_base.campaign_id)
+            if campaign is not None:
+                return campaign.user_id
+        return lead.user_id
+
+    from app.services.attendance_history import get_receptive_pool_owner_id
+
+    return await get_receptive_pool_owner_id(session)
+
+
+async def resolve_handoff_owner_for_escalation(
+    session: AsyncSession,
+    agent: Agent,
+    lead: Lead | None,
+) -> str:
+    """Regra de escrita: campaign.user_id → lead.user_id → agent.user_id (órfão)."""
+    if lead is not None:
+        if lead.lead_base is not None and lead.lead_base.campaign_id is not None:
+            from app.models.campaign import Campaign
+
+            campaign = await session.get(Campaign, lead.lead_base.campaign_id)
+            if campaign is not None:
+                return str(campaign.user_id)
+        return str(lead.user_id)
+    return str(agent.user_id)
 
 
 def _lead_display_name(lead: Lead | None, user_id: str) -> str:
@@ -466,6 +537,7 @@ def list_active_human_mode_contacts() -> list[dict[str, Any]]:
             {
                 "channel": channel,
                 "user_id": uid,
+                "owner_user_id": payload.get("owner_user_id"),
                 "escalated_at": escalated_at.isoformat() if escalated_at else None,
                 "human_assumed_at": assumed_at.isoformat() if assumed_at else None,
                 "assumed_by": payload.get("assumed_by"),

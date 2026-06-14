@@ -28,6 +28,7 @@ from app.services.human_handoff import (
     enter_human_mode,
     handle_escalation_handoff,
     handle_human_mode_inbound,
+    resolve_handoff_owner_for_escalation,
 )
 from app.services.queue_entry_service import (
     record_receptive_answered,
@@ -113,7 +114,8 @@ async def attend_inbound_message(
 
     if escalated:
         intent = result.get("intent", "other") or "other"
-        enter_human_mode(ch, user_id, intent=intent)
+        owner_user_id = await resolve_handoff_owner_for_escalation(session, agent, lead)
+        enter_human_mode(ch, user_id, intent=intent, owner_user_id=owner_user_id)
         await handle_escalation_handoff(
             session,
             channel=ch,

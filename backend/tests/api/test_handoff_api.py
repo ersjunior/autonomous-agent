@@ -1,4 +1,4 @@
-"""Camada 3 — handoff API: active, assume, finalize, reactivate (Redis + DB)."""
+"""Camada 3 — handoff API: active, assume, finalize, reactivate (Redis + DB + tenant)."""
 
 from __future__ import annotations
 
@@ -26,10 +26,20 @@ def _handoff_payload(channel: str, user_id: str) -> dict:
     return {"channel": channel, "user_id": user_id}
 
 
-async def _enter_human_for_lead(owner_ctx: OwnerContext, *, channel: str = "whatsapp") -> str:
-    """Estado de modo humano via serviço real (não Redis cru)."""
+def _handoff_owner_id(owner_ctx: OwnerContext) -> str:
+    """Regra: lead com base+campanha → campaign.user_id."""
+    return str(owner_ctx.campaign.user_id)
+
+
+def _enter_human_for_owner(owner_ctx: OwnerContext, *, channel: str = "whatsapp") -> str:
+    """Estado de modo humano com owner_user_id do tenant."""
     contact = owner_ctx.lead.telefone_1
-    enter_human_mode(channel, contact, intent="escalate")
+    enter_human_mode(
+        channel,
+        contact,
+        intent="escalate",
+        owner_user_id=_handoff_owner_id(owner_ctx),
+    )
     return contact
 
 
@@ -50,7 +60,7 @@ async def test_handoff_active_lists_human_mode_contact(
     owner_ctx,
     clean_redis,
 ) -> None:
-    contact = await _enter_human_for_lead(owner_ctx)
+    contact = _enter_human_for_owner(owner_ctx)
     response = await auth_client.get(f"{HANDOFF}/active")
     assert response.status_code == 200
     body = response.json()
@@ -68,7 +78,7 @@ async def test_handoff_assume_returns_200(
     owner_ctx,
     clean_redis,
 ) -> None:
-    contact = await _enter_human_for_lead(owner_ctx)
+    contact = _enter_human_for_owner(owner_ctx)
     response = await auth_client.post(
         f"{HANDOFF}/assume",
         json=_handoff_payload("whatsapp", contact),
@@ -102,7 +112,7 @@ async def test_handoff_finalize_returns_200_persists_and_clears_redis(
     clean_redis,
     mock_capacity_release,
 ) -> None:
-    contact = await _enter_human_for_lead(owner_ctx)
+    contact = _enter_human_for_owner(owner_ctx)
     response = await auth_client.post(
         f"{HANDOFF}/finalize",
         json={
@@ -135,7 +145,7 @@ async def test_handoff_finalize_invalid_tabulacao_returns_400(
     owner_ctx,
     clean_redis,
 ) -> None:
-    contact = await _enter_human_for_lead(owner_ctx)
+    contact = _enter_human_for_owner(owner_ctx)
     response = await auth_client.post(
         f"{HANDOFF}/finalize",
         json={
@@ -169,7 +179,7 @@ async def test_handoff_finalize_invalid_payload_returns_422(
     owner_ctx,
     clean_redis,
 ) -> None:
-    contact = await _enter_human_for_lead(owner_ctx)
+    contact = _enter_human_for_owner(owner_ctx)
     response = await auth_client.post(
         f"{HANDOFF}/finalize",
         json={"channel": "whatsapp", "user_id": contact},
@@ -185,7 +195,7 @@ async def test_handoff_reactivate_returns_200_clears_redis(
     owner_ctx,
     clean_redis,
 ) -> None:
-    contact = await _enter_human_for_lead(owner_ctx)
+    contact = _enter_human_for_owner(owner_ctx)
     response = await auth_client.post(
         f"{HANDOFF}/reactivate",
         json=_handoff_payload("whatsapp", contact),
@@ -208,61 +218,105 @@ async def test_handoff_reactivate_not_in_human_mode_returns_false(
     assert response.json()["reactivated"] is False
 
 
-# --- Escopo / ownership ---
+# --- Isolamento de tenant ---
 
 
-async def test_handoff_active_no_tenant_filter_owner_sees_all(
+async def test_handoff_active_filters_by_tenant_owner_sees_only_own(
     auth_client,
     owner_ctx,
     db_session,
     clean_redis,
 ) -> None:
-    """
-    Divergência documentada: /handoff/active não filtra por dono do lead —
-    qualquer usuário autenticado vê todas as chaves human_mode:* no Redis.
-    """
-    owner_contact = await _enter_human_for_lead(owner_ctx)
+    owner_contact = _enter_human_for_owner(owner_ctx)
     other_ctx = await create_owner_context(db_session, email_suffix="ho-other")
     other_contact = other_ctx.lead.telefone_1
-    enter_human_mode("telegram", other_contact, intent="escalate")
+    enter_human_mode(
+        "telegram",
+        other_contact,
+        intent="escalate",
+        owner_user_id=str(other_ctx.campaign.user_id),
+    )
 
     response = await auth_client.get(f"{HANDOFF}/active")
     assert response.status_code == 200
     ids = {(r["channel"], r["user_id"]) for r in response.json()}
-    assert ("whatsapp", owner_contact) in ids
-    assert ("telegram", other_contact) in ids
-    assert len(ids) == 2
+    assert ids == {("whatsapp", owner_contact)}
 
 
-async def test_handoff_active_no_tenant_filter_other_user_same_list(
-    other_auth_client,
+async def test_handoff_active_second_owner_sees_only_own(
+    test_app,
+    client,
     owner_ctx,
     db_session,
     clean_redis,
 ) -> None:
-    owner_contact = await _enter_human_for_lead(owner_ctx)
+    _enter_human_for_owner(owner_ctx)
     other_ctx = await create_owner_context(db_session, email_suffix="ho-other2")
     other_contact = other_ctx.lead.telefone_1
-    enter_human_mode("telegram", other_contact, intent="escalate")
+    enter_human_mode(
+        "telegram",
+        other_contact,
+        intent="escalate",
+        owner_user_id=str(other_ctx.campaign.user_id),
+    )
 
-    response = await other_auth_client.get(f"{HANDOFF}/active")
+    from app.core.security import get_current_user
+
+    async def override_get_current_user():
+        return other_ctx.user
+
+    test_app.dependency_overrides[get_current_user] = override_get_current_user
+    try:
+        response = await client.get(f"{HANDOFF}/active")
+    finally:
+        test_app.dependency_overrides.pop(get_current_user, None)
+
     assert response.status_code == 200
     ids = {(r["channel"], r["user_id"]) for r in response.json()}
-    assert ("whatsapp", owner_contact) in ids
-    assert ("telegram", other_contact) in ids
+    assert ids == {("telegram", other_contact)}
 
 
-async def test_handoff_assume_any_authenticated_user_can_act(
+async def test_handoff_assume_foreign_owner_returns_404(
     other_auth_client,
     owner_ctx,
     clean_redis,
 ) -> None:
-    """Assume não valida ownership — basta existir modo humano no Redis."""
-    contact = await _enter_human_for_lead(owner_ctx)
+    contact = _enter_human_for_owner(owner_ctx)
     response = await other_auth_client.post(
         f"{HANDOFF}/assume",
         json=_handoff_payload("whatsapp", contact),
     )
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
-    assert is_assumed("whatsapp", contact)
+    assert response.status_code == 404
+    assert not is_assumed("whatsapp", contact)
+
+
+async def test_handoff_finalize_foreign_owner_returns_404(
+    other_auth_client,
+    owner_ctx,
+    clean_redis,
+) -> None:
+    contact = _enter_human_for_owner(owner_ctx)
+    response = await other_auth_client.post(
+        f"{HANDOFF}/finalize",
+        json={
+            "channel": "whatsapp",
+            "user_id": contact,
+            "tabulacao_codigo": "NEG:SUCESSO",
+        },
+    )
+    assert response.status_code == 404
+    assert is_in_human_mode("whatsapp", contact)
+
+
+async def test_handoff_reactivate_foreign_owner_returns_404(
+    other_auth_client,
+    owner_ctx,
+    clean_redis,
+) -> None:
+    contact = _enter_human_for_owner(owner_ctx)
+    response = await other_auth_client.post(
+        f"{HANDOFF}/reactivate",
+        json=_handoff_payload("whatsapp", contact),
+    )
+    assert response.status_code == 404
+    assert is_in_human_mode("whatsapp", contact)

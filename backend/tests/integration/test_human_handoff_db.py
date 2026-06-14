@@ -38,7 +38,12 @@ async def test_finalize_handoff_lead_applies_tabulacao_and_clears_redis(
     """Lead em modo humano → finalize NEG:SUCESSO → convertido + Redis limpo."""
     phone = owner_ctx.lead.telefone_1
     channel = "whatsapp"
-    enter_human_mode(channel, phone, intent="escalate")
+    enter_human_mode(
+        channel,
+        phone,
+        intent="escalate",
+        owner_user_id=str(owner_ctx.campaign.user_id),
+    )
     assert is_in_human_mode(channel, phone)
 
     ok = await finalize_handoff_lead(
@@ -73,7 +78,12 @@ async def test_assume_human_mode_sets_assumed_at(
     """Escalar → assumir → is_assumed True + human_assumed_at no Redis."""
     phone = owner_ctx.lead.telefone_1
     channel = "whatsapp"
-    enter_human_mode(channel, phone, intent="escalate")
+    enter_human_mode(
+        channel,
+        phone,
+        intent="escalate",
+        owner_user_id=str(owner_ctx.campaign.user_id),
+    )
     assert is_in_human_mode(channel, phone)
     assert not is_assumed(channel, phone)
 
@@ -84,6 +94,7 @@ async def test_assume_human_mode_sets_assumed_at(
     assert payload is not None
     assert payload.get("human_assumed_at")
     assert payload.get("assumed_by") == "operator@test"
+    assert payload.get("owner_user_id") == str(owner_ctx.campaign.user_id)
 
 
 @pytest.mark.asyncio
@@ -122,7 +133,12 @@ async def test_sweep_assumed_timeout_auto_finalizes_abandono(
     """Assumido + human_assumed_at antigo → nao_atendido + NEG:ABANDONO + Redis limpo."""
     phone = owner_ctx.lead.telefone_1
     channel = "whatsapp"
-    enter_human_mode(channel, phone, intent="escalate")
+    enter_human_mode(
+        channel,
+        phone,
+        intent="escalate",
+        owner_user_id=str(owner_ctx.campaign.user_id),
+    )
     assume_human_mode(channel, phone, assumed_by="timeout-test")
     set_human_mode_timestamps(channel, phone, human_assumed_at=OLD_TS)
 
