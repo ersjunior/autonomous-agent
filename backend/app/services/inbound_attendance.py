@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.channels.typing_indicator import channel_typing_indicator
 from agents.orchestrator.router import route_message
 from app.core.activation_defaults import MESSAGING_CHANNELS, normalize_channel_type
 from app.models.agent import Agent, AgentMode
@@ -77,6 +78,7 @@ async def attend_inbound_message(
     lead: Lead | None,
     capacity: ReceptiveCapacityHandle | None = None,
     bind_capacity: bool = True,
+    message_sid: str | None = None,
 ) -> str:
     """
     Roteia pelo grafo, envia resposta e faz tracking.
@@ -92,13 +94,14 @@ async def attend_inbound_message(
         return wait_msg or ""
 
     agent_context = agent_routing_metadata(agent)
-    result = await route_message(
-        message,
-        ch,
-        user_id,
-        notify_received=True,
-        agent_context=agent_context,
-    )
+    async with channel_typing_indicator(ch, user_id, message_sid=message_sid):
+        result = await route_message(
+            message,
+            ch,
+            user_id,
+            notify_received=True,
+            agent_context=agent_context,
+        )
     response_text = result.get("response", "") or ""
     await deliver_channel_text(ch, user_id, response_text)
 
@@ -166,6 +169,7 @@ async def process_receptive_inbound(
             agent=agent,
             lead=lead,
             bind_capacity=False,
+            message_sid=message_sid,
         )
 
     handled, wait_msg = handle_human_mode_inbound(ch, user_id)
@@ -236,6 +240,7 @@ async def process_receptive_inbound(
         lead=lead,
         capacity=capacity,
         bind_capacity=True,
+        message_sid=message_sid,
     )
 
 
@@ -287,6 +292,7 @@ async def attend_from_queue_payload(
         lead=lead,
         capacity=capacity,
         bind_capacity=True,
+        message_sid=payload.message_sid,
     )
 
 

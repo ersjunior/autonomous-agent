@@ -150,6 +150,7 @@ async def _process_inbound_message(
                 agent=agent,
                 lead=lead,
                 bind_capacity=False,
+                message_sid=message_sid,
             )
 
         await session.commit()
