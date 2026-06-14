@@ -111,11 +111,90 @@ def resolve_test_database_url() -> str:
     return test_url
 
 
+def _is_ci_environment() -> bool:
+    return os.environ.get("CI", "").lower() in ("1", "true") or bool(
+        os.environ.get("GITHUB_ACTIONS")
+    )
+
+
+def _test_database_url_explicitly_set() -> bool:
+    return "TEST_DATABASE_URL" in os.environ
+
+
+def _format_test_database_unavailable_message(url: str, exc: BaseException) -> str:
+    host = urlparse(_sync_database_url(url)).hostname or "(desconhecido)"
+    docker_hint = ""
+    if host in ("localhost", "127.0.0.1", "::1"):
+        docker_hint = (
+            "\nDentro do container Docker o host do Postgres é 'postgres', "
+            "não 'localhost'."
+        )
+    return (
+        f"Banco de teste inacessível em {url!r} ({type(exc).__name__}: {exc}).\n"
+        "Rode com TEST_DATABASE_URL apontando para o host correto, por exemplo:\n"
+        "  make test-integration\n"
+        "  -e TEST_DATABASE_URL=postgresql://postgres:postgres@postgres:5432/"
+        "autonomous_agent_test"
+        f"{docker_hint}"
+    )
+
+
+def _handle_test_database_unreachable(url: str, exc: BaseException) -> None:
+    """Falha clara no CI ou com env explícita; skip legível no dev local sem env."""
+    message = _format_test_database_unavailable_message(url, exc)
+    if _is_ci_environment() or _test_database_url_explicitly_set():
+        pytest.fail(message, pytrace=False)
+    pytest.skip(message)
+
+
+_db_probe_checked = False
+_db_probe_available = False
+_db_probe_error: BaseException | None = None
+
+
+def _ensure_test_database_reachable_for_marked_test() -> None:
+    """Checagem única por sessão — só chamada em testes integration/api."""
+    global _db_probe_checked, _db_probe_available, _db_probe_error
+
+    if _db_probe_checked:
+        if not _db_probe_available and _db_probe_error is not None:
+            _handle_test_database_unreachable(
+                resolve_test_database_url(),
+                _db_probe_error,
+            )
+        return
+
+    _db_probe_checked = True
+    sync_url = resolve_test_database_url()
+    admin_url = sync_url.rsplit("/", 1)[0] + "/postgres"
+    try:
+        conn = psycopg2.connect(admin_url, connect_timeout=3)
+        conn.close()
+        _db_probe_available = True
+    except (OSError, psycopg2.OperationalError) as exc:
+        _db_probe_available = False
+        _db_probe_error = exc
+        _handle_test_database_unreachable(sync_url, exc)
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Garante mensagem clara se o Postgres de teste estiver inacessível."""
+    if not (
+        item.get_closest_marker("integration") or item.get_closest_marker("api")
+    ):
+        return
+    _ensure_test_database_reachable_for_marked_test()
+
+
 def _ensure_test_database_exists(sync_url: str) -> None:
     db_name = _database_name(sync_url)
     admin_url = sync_url.rsplit("/", 1)[0] + "/postgres"
 
-    conn = psycopg2.connect(admin_url)
+    try:
+        conn = psycopg2.connect(admin_url, connect_timeout=3)
+    except (OSError, psycopg2.OperationalError) as exc:
+        _handle_test_database_unreachable(sync_url, exc)
+
     conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
     try:
         with conn.cursor() as cur:
