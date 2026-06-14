@@ -28,6 +28,11 @@ async def foreign_lead_id(db_session) -> uuid.UUID:
     return ctx.lead.id
 
 
+async def foreign_lead_base_id(db_session) -> uuid.UUID:
+    ctx = await foreign_owner_context(db_session, suffix="foreign-base")
+    return ctx.lead_base.id
+
+
 async def foreign_channel_id(db_session) -> uuid.UUID:
     ctx = await foreign_owner_context(db_session, suffix="foreign-channel")
     channel = Channel(
