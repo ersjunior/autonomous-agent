@@ -48,7 +48,12 @@ class STTProvider(ABC):
 
     @abstractmethod
     async def transcribe(
-        self, audio_bytes: bytes, language: str = "pt"
+        self,
+        audio_bytes: bytes,
+        language: str = "pt",
+        *,
+        filename: str = "audio.mp3",
+        content_type: str = "audio/mpeg",
     ) -> str:
         """
         Transcribe raw audio bytes to plain text.

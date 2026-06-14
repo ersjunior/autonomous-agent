@@ -22,6 +22,10 @@ DEFAULT_AGENT_SYSTEM_PROMPT = textwrap.dedent(
     """
 ).strip()
 
+DEFAULT_VOICE_INBOUND_GREETING = (
+    "Olá! Você ligou para o nosso atendimento. Como posso ajudar?"
+)
+
 
 class Settings(BaseSettings):
     # App
@@ -91,6 +95,10 @@ class Settings(BaseSettings):
 
     # MP3s de chamadas outbound (volume Docker voice_audio)
     voice_audio_root: str = "/workspace/voice_audio"
+
+    # Inbound de voz PSTN (Twilio) — VOICE_INBOUND_MODE: record | gather | stream
+    voice_inbound_mode: str = "record"
+    voice_inbound_greeting: str = DEFAULT_VOICE_INBOUND_GREETING
 
     # Frontend
     frontend_url: str = "http://localhost:3000"

@@ -20,11 +20,16 @@ class FasterWhisperSTTProvider(STTProvider):
         return "faster_whisper"
 
     async def transcribe(
-        self, audio_bytes: bytes, language: str = "pt"
+        self,
+        audio_bytes: bytes,
+        language: str = "pt",
+        *,
+        filename: str = "audio.mp3",
+        content_type: str = "audio/mpeg",
     ) -> str:
         response = await self._client.post(
             "/transcribe",
-            files={"audio": ("audio.mp3", audio_bytes, "audio/mpeg")},
+            files={"audio": (filename, audio_bytes, content_type)},
             data={"language": language},
         )
         response.raise_for_status()

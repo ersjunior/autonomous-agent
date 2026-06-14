@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from urllib.parse import quote
 
+import httpx
 from twilio.rest import Client
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 VOICE_OUTBOUND_TWIML_PATH = "/api/v1/channels/webhooks/voice/outbound"
 VOICE_OUTBOUND_AUDIO_TWIML_PATH = "/api/v1/channels/webhooks/voice/outbound-audio"
 VOICE_AUDIO_SERVE_PATH = "/api/v1/channels/webhooks/voice/audio"
+
+RECORDING_DOWNLOAD_RETRIES = 3
+RECORDING_DOWNLOAD_RETRY_DELAY_SEC = 1.0
 
 # MVP: texto na querystring; TODO: ?lead_interaction_id= e webhook busca no banco.
 MAX_TWIML_QUERY_TEXT_CHARS = 500
@@ -57,3 +65,48 @@ def make_outbound_call(to: str, twiml_path: str) -> str:
     client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
     call = client.calls.create(to=to, from_=from_number, url=full_url)
     return call.sid
+
+
+def _recording_wav_url(recording_url: str) -> str:
+    base = (recording_url or "").strip().rstrip("/")
+    if not base:
+        raise ValueError("RecordingUrl vazio")
+    if base.lower().endswith(".wav"):
+        return base
+    return f"{base}.wav"
+
+
+async def download_recording(recording_url: str) -> bytes:
+    """Baixa gravação Twilio como WAV (HTTP Basic Auth + retry curto em 404)."""
+    if not settings.twilio_account_sid or not settings.twilio_auth_token:
+        raise ValueError(
+            "TWILIO_ACCOUNT_SID e TWILIO_AUTH_TOKEN são obrigatórios para baixar gravações"
+        )
+
+    wav_url = _recording_wav_url(recording_url)
+    auth = (settings.twilio_account_sid, settings.twilio_auth_token)
+    last_error: Exception | None = None
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        for attempt in range(1, RECORDING_DOWNLOAD_RETRIES + 1):
+            response = await client.get(wav_url, auth=auth)
+            if response.status_code == 404 and attempt < RECORDING_DOWNLOAD_RETRIES:
+                logger.info(
+                    "Recording not ready (404), retry %s/%s: %s",
+                    attempt,
+                    RECORDING_DOWNLOAD_RETRIES,
+                    wav_url,
+                )
+                await asyncio.sleep(RECORDING_DOWNLOAD_RETRY_DELAY_SEC)
+                continue
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                raise
+            content = response.content
+            if not content:
+                raise RuntimeError("Gravação Twilio retornou conteúdo vazio")
+            return content
+
+    raise last_error or RuntimeError("Falha ao baixar gravação Twilio")

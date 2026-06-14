@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from app.core.config import DEFAULT_AGENT_SYSTEM_PROMPT
+from app.core.config import DEFAULT_AGENT_SYSTEM_PROMPT, DEFAULT_VOICE_INBOUND_GREETING
 
 SettingCategory = Literal["llm", "stt", "tts", "system", "agent"]
 SettingFieldType = Literal["string", "enum", "secret", "url", "number", "textarea"]
@@ -196,6 +196,13 @@ MANAGED_SETTINGS: tuple[SettingFieldSchema, ...] = (
         category="agent",
         field_type="string",
         default_value="",
+    ),
+    SettingFieldSchema(
+        key="voice_inbound_greeting",
+        label="Saudação inicial do atendimento por voz",
+        category="agent",
+        field_type="string",
+        default_value=DEFAULT_VOICE_INBOUND_GREETING,
     ),
     # Read-only (env / migration)
     SettingFieldSchema(

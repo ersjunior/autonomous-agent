@@ -19,7 +19,12 @@ class OpenAISTTProvider(STTProvider):
         return "openai"
 
     async def transcribe(
-        self, audio_bytes: bytes, language: str = "pt"
+        self,
+        audio_bytes: bytes,
+        language: str = "pt",
+        *,
+        filename: str = "audio.mp3",
+        content_type: str = "audio/mpeg",
     ) -> str:
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = "audio.mp3"
