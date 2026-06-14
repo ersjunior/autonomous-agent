@@ -19,7 +19,7 @@ for p in (_ROOT, _BACKEND, _ROOT / "worker"):
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from agents.escalation import resolve_should_escalate
+from agents.escalation import ESCALATION_CONFIDENCE_THRESHOLD, resolve_should_escalate
 from agents.workers.intent_agent import IntentResult
 from agents.workers.response_agent import RECEPTIVE_BEHAVIOR_PROMPT, build_response_messages
 from app.core.database import AsyncSessionLocal
@@ -46,7 +46,10 @@ def test_resolve_should_escalate() -> bool:
     print("\n=== Escalonamento — resolve_should_escalate (unitário) ===")
     ok = True
     ok &= _ok("intent escalate", resolve_should_escalate("escalate", 0.99, "low"))
-    ok &= _ok("baixa confiança", resolve_should_escalate("question", 0.3, "low"))
+    ok &= _ok(
+        "baixa confiança",
+        resolve_should_escalate("question", ESCALATION_CONFIDENCE_THRESHOLD - 0.05, "low"),
+    )
     ok &= _ok(
         "complaint grave",
         resolve_should_escalate("complaint", 0.9, "high"),

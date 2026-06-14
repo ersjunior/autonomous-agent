@@ -52,7 +52,7 @@ O dashboard Next.js cobre campanhas **ativas** (outbound multi-canal), importaç
 O grafo em `agents/orchestrator/graph.py` define os nós e arestas:
 
 1. **`identify_intent`** — carrega histórico do Redis → LLM estruturado → evento `intent_detected`.
-2. **`check_escalation`** — `should_escalate` se intenção `escalate` ou `confidence < 0.5`.
+2. **`check_escalation`** — `should_escalate` se pedido explícito de humano (`intent == "escalate"`), reclamação grave (`complaint` + `severity=high`), ou confiança muito baixa na classificação (`confidence < 0.25`, `ESCALATION_CONFIDENCE_THRESHOLD`).
 3. **Ramo condicional** (`route_after_escalation_check`):
    - **`escalate`** — resposta fixa de encaminhamento humano.
    - **`generate_response`** — recupera RAG + chama LLM de resposta.
@@ -439,7 +439,7 @@ Após `identify_intent`, o nó `check_escalation` usa `resolve_should_escalate()
 | Gatilho | Condição | Efeito |
 |---------|----------|--------|
 | **Pedido explícito de humano** | `intent == "escalate"` (classificador instruído a marcar quando o lead pede atendente, supervisor ou pessoa real) | Escala |
-| **Baixa confiança** | `confidence < 0.5` (`ESCALATION_CONFIDENCE_THRESHOLD`) | Escala |
+| **Confiança muito baixa** | `confidence < 0.25` (`ESCALATION_CONFIDENCE_THRESHOLD`) — LLM muito incerto na classificação | Escala |
 | **Reclamação grave** | `intent == "complaint"` **e** `complaint_severity == "high"` | Escala |
 | **Reclamação leve** | `intent == "complaint"` **e** `complaint_severity == "low"` | **Não** escala — o bot tenta resolver em `generate_response` |
 

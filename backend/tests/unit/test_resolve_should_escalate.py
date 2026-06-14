@@ -22,6 +22,14 @@ class TestResolveShouldEscalate:
             is True
         )
 
+    def test_confidence_0_2_escalates(self) -> None:
+        """Abaixo do limiar (0.25) — escala por incerteza extrema."""
+        assert resolve_should_escalate("question", 0.2, "low") is True
+
+    def test_confidence_0_4_does_not_escalate(self) -> None:
+        """Acima do limiar antigo (0.5) mas abaixo de certeza — bot responde."""
+        assert resolve_should_escalate("other", 0.4, "low") is False
+
     def test_confidence_at_threshold_does_not_escalate(self) -> None:
         assert resolve_should_escalate("other", ESCALATION_CONFIDENCE_THRESHOLD, "low") is False
 

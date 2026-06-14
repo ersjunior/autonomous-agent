@@ -50,7 +50,7 @@ Cada camada tem marker pytest (`unit`, `integration`, `api`) para filtragem sele
 | `test_phone.py` | 9 | Dígitos, E.164, prefixo Brasil |
 | `test_kb_chunking.py` | 8 | Divisão de texto em chunks, overlap, limites mín/máx |
 | `test_capacity_estimate.py` | 7 | Orçamento CPU/RAM, boost GPU, custos por canal |
-| `test_resolve_should_escalate.py` | 8 | Escalonamento: intent `escalate`, confiança, gravidade de reclamação |
+| `test_resolve_should_escalate.py` | 10 | Escalonamento: intent `escalate`, confiança (`< 0.25`), gravidade de reclamação |
 | `test_telegram_config.py` | 7 | URL de webhook, modo polling vs webhook |
 | `test_tunnel_config.py` | 6 | Resolução de URL pública (env vs arquivo tunnel) |
 | `test_tunnel_status.py` | 11 | Status do túnel, probe de health, divergência env/arquivo |

@@ -1,6 +1,6 @@
 """Critérios de escalonamento para humano (B-1) — módulo puro, sem I/O."""
 
-ESCALATION_CONFIDENCE_THRESHOLD = 0.5
+ESCALATION_CONFIDENCE_THRESHOLD = 0.25
 
 
 def resolve_should_escalate(

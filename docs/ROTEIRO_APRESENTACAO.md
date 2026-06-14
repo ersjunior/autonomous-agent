@@ -265,7 +265,7 @@ docker exec autonomous-agent-worker \
 
 > "O receptivo não é só FAQ: **responde com RAG** e **qualifica** com perguntas naturais quando o lead está vago — bloco operacional `RECEPTIVE_BEHAVIOR_PROMPT`, separado da personalidade do agente."
 
-> "O escalonamento é **inteligente**: pedido explícito de humano, baixa confiança na classificação, ou **reclamação grave** avaliada pela IA (`complaint_severity`). Reclamação leve o bot tenta resolver."
+> "O escalonamento é **inteligente**: pedido explícito de humano, confiança **muito baixa** na classificação (`< 0.25`), ou **reclamação grave** avaliada pela IA (`complaint_severity`). Reclamação leve o bot tenta resolver."
 
 > "Quando escala, não é só um aviso: entra **modo humano** no Redis — o bot **para** de consumir capacidade e de chamar o LLM. O operador vê quem aguarda no Monitoramento e pode **devolver ao bot**; se ninguém assumir, o **TTL** (4h default) devolve automaticamente. Tabulação **`NEG:ESCALADO`** registra o handoff para a devolutiva."
 
@@ -279,7 +279,7 @@ docker exec autonomous-agent-worker \
 
 | Pergunta | Resposta sugerida |
 |----------|------------------|
-| **Como decide escalar?** | Três gatilhos em `resolve_should_escalate`: `intent=escalate`, `confidence < 0.5`, ou `complaint` com `severity=high`. Reclamação leve fica com o bot. |
+| **Como decide escalar?** | Três gatilhos em `resolve_should_escalate`: `intent=escalate`, `confidence < 0.25` (incerteza extrema), ou `complaint` com `severity=high`. Reclamação leve fica com o bot. |
 | **O que acontece depois que escala?** | Resposta de transferência, tabulação `NEG:ESCALADO` (origem `ESCALATION`), `enter_human_mode` no Redis. Inbound seguinte **não** chama o grafo. |
 | **E se ninguém assumir?** | `HUMAN_MODE_TTL_SECONDS` (default 4h) expira a chave; contato volta ao bot. Operador pode reativar antes via painel ou `POST /handoff/reactivate`. |
 | **Spamma mensagem de espera?** | Não — throttle `HUMAN_MODE_NOTIFY_INTERVAL_SECONDS` (default 5 min) via chave `human_mode_notified:*`. |
@@ -500,7 +500,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/ag
 > "O gargalo operacional é **concorrência de atendimentos**, não só tokens. Erlang C traduz histórico (λ, AHT) em SLA **previsto** e headroom — mesma linguagem de call center que o gestor entende. A IA decide o texto; a fila decide **quando** há slot."
 
 ### Como o agente receptivo decide passar para humano?
-> "`resolve_should_escalate` após `identify_intent`: pedido explícito (`escalate`), confiança baixa, ou reclamação **grave** (`complaint_severity=high` no structured output). Leve → bot resolve. Escala → `NEG:ESCALADO` + **modo humano** Redis — bot para de responder até reativação ou TTL."
+> "`resolve_should_escalate` após `identify_intent`: pedido explícito (`escalate`), confiança **muito baixa** (`confidence < 0.25`), ou reclamação **grave** (`complaint_severity=high` no structured output). Leve → bot resolve. Escala → `NEG:ESCALADO` + **modo humano** Redis — bot para de responder até reativação ou TTL."
 
 ### O handoff é real ou só mensagem?
 > "**Real.** `human_handoff.py` curto-circuita inbound antes do grafo; libera capacidade; mensagem ocasional com throttle. Operador reativa em `/dashboard/monitoring` ou TTL devolve ao bot. Scripts `validate_human_mode_b2.py` provam curto-circuito e reativação."
