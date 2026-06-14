@@ -27,10 +27,10 @@ import { Badge } from "@/components/ui/Badge";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SystemBadge } from "@/components/ui/SystemBadge";
 
-const VOICE_VIDEO = new Set(["voice", "video"]);
+const VOICE_CHANNELS = new Set(["voice"]);
 const MESSAGING = new Set(["whatsapp", "telegram"]);
-const TEST_CHANNELS = ["whatsapp", "telegram", "voice", "video"] as const;
-const HISTORY_CHANNELS = ["whatsapp", "telegram", "voice", "video"] as const;
+const TEST_CHANNELS = ["whatsapp", "telegram", "voice"] as const;
+const HISTORY_CHANNELS = ["whatsapp", "telegram", "voice"] as const;
 const HISTORY_LIMIT = 50;
 const FINALIZE_CATEGORIES = new Set(["NEGOCIO", "CUSTOMIZADO"]);
 const HISTORY_STATUS_OPTIONS = [
@@ -73,8 +73,8 @@ function statusBadgeVariant(
   return "muted";
 }
 
-function isVoiceVideo(channel: string): boolean {
-  return VOICE_VIDEO.has(channel.toLowerCase());
+function isVoiceChannel(channel: string): boolean {
+  return VOICE_CHANNELS.has(channel.toLowerCase());
 }
 
 type ParamsState = Record<string, Record<string, string | number>>;
@@ -248,7 +248,7 @@ export default function ActivationPage() {
     }
   }
 
-  function renderVoiceVideoFields(channel: string, readOnly: boolean) {
+  function renderVoiceFields(channel: string, readOnly: boolean) {
     const p = paramsByChannel[channel] ?? {};
     const fields = [
       { key: "chamadas_simultaneas", label: "Chamadas simultâneas", min: 1 },
@@ -511,9 +511,9 @@ export default function ActivationPage() {
                   </p>
                 )}
 
-                {isVoiceVideo(channel) || MESSAGING.has(channel) ? (
-                  isVoiceVideo(channel)
-                    ? renderVoiceVideoFields(channel, readOnly)
+                {isVoiceChannel(channel) || MESSAGING.has(channel) ? (
+                  isVoiceChannel(channel)
+                    ? renderVoiceFields(channel, readOnly)
                     : renderMessagingFields(channel, readOnly)
                 ) : (
                   <p className="text-sm text-warning">Canal não suportado nesta camada.</p>

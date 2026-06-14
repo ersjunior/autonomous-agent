@@ -1,7 +1,4 @@
 import type {
-  AvatarImageInfo,
-  AvatarImageUploadResponse,
-  AvatarTestResponse,
   SettingsResponse,
   VoiceSampleInfo,
   VoiceSampleUploadResponse,
@@ -300,49 +297,7 @@ export async function fetchAudioBlob(path: string): Promise<Blob> {
   return res.blob();
 }
 
-export async function getAvatarImageInfo(): Promise<Response> {
-  return apiFetch("/api/v1/settings/avatar-image/info");
-}
-
-const AVATAR_IMAGE_PREVIEW_PATH = "/api/v1/settings/avatar-image/preview";
-
-export async function fetchAvatarImage(): Promise<Blob> {
-  const res = await checkedFetch(
-    `${API_URL}${AVATAR_IMAGE_PREVIEW_PATH}`,
-    { headers: downloadHeaders() },
-    AVATAR_IMAGE_PREVIEW_PATH
-  );
-  if (!res.ok) {
-    throw new Error(await formatApiError(res, "Falha ao carregar imagem do avatar"));
-  }
-  return res.blob();
-}
-
-export async function uploadAvatarImage(file: File): Promise<Response> {
-  const formData = new FormData();
-  formData.append("file", file);
-  return apiUpload("/api/v1/settings/avatar-image", formData);
-}
-
-export async function testAvatar(text?: string): Promise<Response> {
-  return apiFetch("/api/v1/settings/avatar-test", {
-    method: "POST",
-    body: JSON.stringify({ text: text ?? null }),
-  });
-}
-
-export async function fetchVideoBlob(path: string): Promise<Blob> {
-  const res = await checkedFetch(`${API_URL}${path}`, { headers: downloadHeaders() }, path);
-  if (!res.ok) {
-    throw new Error(await formatApiError(res, "Falha ao carregar vídeo"));
-  }
-  return res.blob();
-}
-
 export type {
-  AvatarImageInfo,
-  AvatarImageUploadResponse,
-  AvatarTestResponse,
   SettingsResponse,
   VoiceSampleInfo,
   VoiceSampleUploadResponse,

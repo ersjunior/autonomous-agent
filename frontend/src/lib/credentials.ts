@@ -3,7 +3,6 @@ export const SECRET_MASK = "********";
 const CHANNEL_SECRET_KEYS = new Set([
   "auth_token",
   "bot_token",
-  "did_api_key",
   "account_sid",
 ]);
 

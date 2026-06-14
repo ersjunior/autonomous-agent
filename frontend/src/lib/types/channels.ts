@@ -1,4 +1,4 @@
-export type ChannelType = "WHATSAPP" | "TELEGRAM" | "VOICE" | "VIDEO";
+export type ChannelType = "WHATSAPP" | "TELEGRAM" | "VOICE";
 
 export interface Channel {
   id: string;

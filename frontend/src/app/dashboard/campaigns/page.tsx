@@ -21,8 +21,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { RecordActionsBar } from "@/components/ui/RecordActions";
 import { SystemBadge } from "@/components/ui/SystemBadge";
 
-type ChannelType = "WHATSAPP" | "TELEGRAM" | "VOICE" | "VIDEO";
-const CHANNEL_TYPES: ChannelType[] = ["WHATSAPP", "TELEGRAM", "VOICE", "VIDEO"];
+type ChannelType = "WHATSAPP" | "TELEGRAM" | "VOICE";
+const CHANNEL_TYPES: ChannelType[] = ["WHATSAPP", "TELEGRAM", "VOICE"];
 
 type FormMode = "create" | "edit" | "view" | null;
 

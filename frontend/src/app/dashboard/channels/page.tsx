@@ -28,7 +28,7 @@ interface FieldConfig {
   placeholder?: string;
 }
 
-const CHANNEL_TYPES: ChannelType[] = ["WHATSAPP", "TELEGRAM", "VOICE", "VIDEO"];
+const CHANNEL_TYPES: ChannelType[] = ["WHATSAPP", "TELEGRAM", "VOICE"];
 
 const CHANNEL_FIELD_CONFIG: Record<ChannelType, FieldConfig[]> = {
   WHATSAPP: [
@@ -42,10 +42,6 @@ const CHANNEL_FIELD_CONFIG: Record<ChannelType, FieldConfig[]> = {
   VOICE: [
     { name: "phone_numbers", label: "Números (separados por vírgula)", type: "text", placeholder: "+5511..., +5521..." },
     { name: "provider", label: "Provider", type: "text", placeholder: "twilio" },
-  ],
-  VIDEO: [
-    { name: "avatar_url", label: "Avatar URL", type: "text", placeholder: "https://..." },
-    { name: "did_api_key", label: "D-ID API Key", type: "password" },
   ],
 };
 

@@ -11,24 +11,16 @@ import {
 } from "react";
 import {
   fetchAudioBlob,
-  fetchAvatarImage,
-  fetchVideoBlob,
   fetchVoiceSampleAudio,
   formatApiError,
-  getAvatarImageInfo,
   getSettings,
   getVoiceSampleInfo,
-  testAvatar,
   testVoice,
   updateSettings,
-  uploadAvatarImage,
   uploadVoiceSample,
 } from "@/lib/api";
 import { fetchTunnelStatus } from "@/lib/api-tunnel";
 import type {
-  AvatarImageInfo,
-  AvatarImageUploadResponse,
-  AvatarTestResponse,
   SettingCategory,
   SettingField,
   SettingsResponse,
@@ -45,8 +37,6 @@ import type { TunnelStatusLevel, TunnelStatusResponse } from "@/lib/types/tunnel
 const SECRET_MASK = "********";
 const DEFAULT_TEST_TEXT =
   "Olá! Esta é uma demonstração da minha voz personalizada, falando em português.";
-const DEFAULT_AVATAR_TEST_TEXT =
-  "Olá! Esta é uma demonstração do avatar em vídeo, falando com a minha voz personalizada em português.";
 
 function formatBytes(size: number): string {
   if (size < 1024) {
@@ -79,9 +69,8 @@ function revokeBlobUrl(ref: MutableRefObject<string | null>) {
 const LLM_CATEGORIES = new Set(["llm", "system"]);
 const AGENT_CATEGORIES = new Set(["agent"]);
 const AUDIO_CATEGORIES = new Set(["stt", "tts"]);
-const AVATAR_CATEGORIES = new Set(["avatar"]);
 
-type TabId = "llm" | "agent" | "audio" | "video" | "tunnel";
+type TabId = "llm" | "agent" | "audio" | "tunnel";
 
 const TUNNEL_STATUS_LABELS: Record<TunnelStatusLevel, string> = {
   aguardando: "Aguardando URL pública",
@@ -150,12 +139,6 @@ function providerPrefix(key: string, provider: string | null | undefined): boole
     return true;
   }
   if (p === "coqui" && key.startsWith("coqui_")) {
-    return true;
-  }
-  if (p === "sadtalker" && key.startsWith("sadtalker_")) {
-    return true;
-  }
-  if (p === "did" && key.startsWith("did_")) {
     return true;
   }
   return false;
@@ -304,18 +287,6 @@ export default function SettingsPage() {
   const [testPlayUrl, setTestPlayUrl] = useState<string | null>(null);
   const testObjectUrl = useRef<string | null>(null);
 
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const [avatarInfo, setAvatarInfo] = useState<AvatarImageInfo | null>(null);
-  const [loadingAvatarInfo, setLoadingAvatarInfo] = useState(false);
-  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
-  const avatarPreviewObjectUrl = useRef<string | null>(null);
-
-  const [avatarTestText, setAvatarTestText] = useState(DEFAULT_AVATAR_TEST_TEXT);
-  const [testingAvatar, setTestingAvatar] = useState(false);
-  const [testVideoUrl, setTestVideoUrl] = useState<string | null>(null);
-  const testVideoObjectUrl = useRef<string | null>(null);
-
   const [tunnelStatus, setTunnelStatus] = useState<TunnelStatusResponse | null>(null);
   const [tunnelLoading, setTunnelLoading] = useState(false);
   const [tunnelError, setTunnelError] = useState("");
@@ -413,49 +384,11 @@ export default function SettingsPage() {
     }
   }, [loadReferencePlayer]);
 
-  const loadAvatarPreview = useCallback(async () => {
-    revokeBlobUrl(avatarPreviewObjectUrl);
-    setAvatarPreviewUrl(null);
-    try {
-      const blob = await fetchAvatarImage();
-      const url = URL.createObjectURL(blob);
-      avatarPreviewObjectUrl.current = url;
-      setAvatarPreviewUrl(url);
-    } catch {
-      setError("Erro ao carregar preview da imagem do avatar.");
-    }
-  }, []);
-
-  const loadAvatarImageInfo = useCallback(async () => {
-    setLoadingAvatarInfo(true);
-    try {
-      const res = await getAvatarImageInfo();
-      if (!res.ok) {
-        setAvatarInfo(null);
-        return;
-      }
-      const info: AvatarImageInfo = await res.json();
-      setAvatarInfo(info);
-      if (info.exists) {
-        await loadAvatarPreview();
-      } else {
-        revokeBlobUrl(avatarPreviewObjectUrl);
-        setAvatarPreviewUrl(null);
-      }
-    } catch {
-      setAvatarInfo(null);
-    } finally {
-      setLoadingAvatarInfo(false);
-    }
-  }, [loadAvatarPreview]);
-
   useEffect(() => {
     loadSettings();
     return () => {
       revokeBlobUrl(referenceObjectUrl);
       revokeBlobUrl(testObjectUrl);
-      revokeBlobUrl(avatarPreviewObjectUrl);
-      revokeBlobUrl(testVideoObjectUrl);
     };
   }, [loadSettings]);
 
@@ -464,12 +397,6 @@ export default function SettingsPage() {
       loadVoiceSampleInfo();
     }
   }, [activeTab, loading, loadVoiceSampleInfo]);
-
-  useEffect(() => {
-    if (activeTab === "video" && !loading) {
-      loadAvatarImageInfo();
-    }
-  }, [activeTab, loading, loadAvatarImageInfo]);
 
   useEffect(() => {
     if (activeTab === "tunnel") {
@@ -483,16 +410,13 @@ export default function SettingsPage() {
         ? LLM_CATEGORIES
         : activeTab === "agent"
           ? AGENT_CATEGORIES
-          : activeTab === "video"
-            ? AVATAR_CATEGORIES
-            : AUDIO_CATEGORIES;
+          : AUDIO_CATEGORIES;
     return categories.filter((c) => allowed.has(c.id));
   }, [categories, activeTab]);
 
   const activeLlm = formatValue(runtime.llm_provider);
   const activeStt = formatValue(runtime.stt_provider);
   const activeTts = formatValue(runtime.tts_provider);
-  const activeAvatar = formatValue(runtime.avatar_provider);
 
   function handleFieldChange(key: string, value: string) {
     setFormValues((prev) => ({ ...prev, [key]: value }));
@@ -627,80 +551,13 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleUploadAvatarImage() {
-    if (!imageFile) {
-      setError("Selecione uma imagem (.png, .jpg ou .jpeg).");
-      return;
-    }
-
-    setUploadingImage(true);
-    setError("");
-    try {
-      const res = await uploadAvatarImage(imageFile);
-      if (!res.ok) {
-        if (res.status !== 401) {
-          setError(await formatApiError(res, "Erro ao enviar imagem do avatar"));
-        }
-        return;
-      }
-
-      const data: AvatarImageUploadResponse = await res.json();
-      const dims =
-        data.width && data.height ? ` — ${data.width}×${data.height}px` : "";
-      setSuccess(
-        `${data.message} (${formatBytes(data.size_bytes)}${dims}) — ${data.filename}`
-      );
-      setImageFile(null);
-      await loadSettings();
-      await loadAvatarImageInfo();
-    } catch {
-      setError("Erro de conexão no upload da imagem.");
-    } finally {
-      setUploadingImage(false);
-    }
-  }
-
-  async function handleAvatarTest() {
-    setTestingAvatar(true);
-    setError("");
-    revokeBlobUrl(testVideoObjectUrl);
-    setTestVideoUrl(null);
-
-    try {
-      const res = await testAvatar(avatarTestText);
-
-      if (!res.ok) {
-        if (res.status !== 401) {
-          setError(await formatApiError(res, "Erro no teste de avatar"));
-        }
-        return;
-      }
-
-      const data: AvatarTestResponse = await res.json();
-      const blob = await fetchVideoBlob(data.video_url);
-      const url = URL.createObjectURL(blob);
-      testVideoObjectUrl.current = url;
-      setTestVideoUrl(url);
-      setSuccess("Vídeo de teste gerado com sucesso.");
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("carregar vídeo")) {
-        setError(err.message);
-      } else {
-        setError("Erro de conexão no teste de avatar.");
-      }
-    } finally {
-      setTestingAvatar(false);
-    }
-  }
-
   function renderCategoryFields(cat: SettingCategory, providerKey: string | null) {
-    const fields = cat.fields.filter((f) => f.key !== "avatar_default_image");
     return (
       <div key={cat.id} className="space-y-4">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           {cat.label}
         </h3>
-        {fields.map((field) => {
+        {cat.fields.map((field) => {
           const highlighted = providerPrefix(field.key, providerKey);
           return (
             <div key={field.key}>
@@ -776,17 +633,6 @@ export default function SettingsPage() {
           onClick={() => setActiveTab("audio")}
         >
           Áudio (STT/TTS)
-        </button>
-        <button
-          type="button"
-          className={`px-4 py-2 text-sm font-medium ${
-            activeTab === "video"
-              ? "border-b-2 border-primary text-primary"
-              : "text-muted-foreground"
-          }`}
-          onClick={() => setActiveTab("video")}
-        >
-          Avatar / Vídeo
         </button>
         <button
           type="button"
@@ -1139,148 +985,6 @@ export default function SettingsPage() {
                         autoPlay
                         src={testPlayUrl}
                         className="w-full"
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {activeTab === "video" && (
-            <>
-              <div className="glass-card space-y-6 p-6">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Provedor ativo:</span>
-                  <Badge>
-                    {activeAvatar ? `${activeAvatar} ativo` : "—"}
-                  </Badge>
-                  {activeAvatar === "sadtalker" && (
-                    <span className="text-xs text-muted-foreground">
-                      Requer imagem de rosto + Coqui (aba Áudio)
-                    </span>
-                  )}
-                  {activeAvatar === "did" && (
-                    <span className="text-xs text-muted-foreground">
-                      Usa URL de imagem e TTS interno da D-ID
-                    </span>
-                  )}
-                </div>
-                {visibleCategories.map((cat) =>
-                  renderCategoryFields(cat, activeAvatar)
-                )}
-              </div>
-
-              <div className="glass-card p-6">
-                <h2 className="mb-4 text-lg font-semibold text-foreground">
-                  Avatar em vídeo (SadTalker / D-ID)
-                </h2>
-                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
-                  <div className="space-y-4 rounded-xl border border-border bg-background/50 p-4">
-                    <h3 className="font-medium text-foreground">Imagem do avatar</h3>
-
-                    {loadingAvatarInfo ? (
-                      <p className="text-sm text-muted-foreground">
-                        Carregando imagem...
-                      </p>
-                    ) : avatarInfo?.exists ? (
-                      <div className="space-y-3">
-                        <p className="text-sm font-medium text-foreground">
-                          Imagem atual
-                        </p>
-                        <ul className="space-y-1 text-sm text-muted-foreground">
-                          <li>
-                            <span className="text-foreground">Arquivo:</span>{" "}
-                            {avatarInfo.filename}
-                          </li>
-                          <li>
-                            <span className="text-foreground">Tamanho:</span>{" "}
-                            {formatBytes(avatarInfo.size_bytes)}
-                          </li>
-                          {avatarInfo.width && avatarInfo.height && (
-                            <li>
-                              <span className="text-foreground">Dimensões:</span>{" "}
-                              {avatarInfo.width}×{avatarInfo.height}px
-                            </li>
-                          )}
-                          <li>
-                            <span className="text-foreground">Modificado:</span>{" "}
-                            {formatModifiedAt(avatarInfo.modified_at)}
-                          </li>
-                        </ul>
-                        {avatarPreviewUrl && (
-                          <img
-                            src={avatarPreviewUrl}
-                            alt="Preview do avatar"
-                            className="max-h-48 w-full rounded-lg border border-border object-contain"
-                          />
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        Nenhuma imagem de avatar carregada.
-                      </p>
-                    )}
-
-                    <div className="space-y-2 border-t border-border pt-4">
-                      <label className="block text-sm font-medium text-foreground">
-                        Enviar imagem do avatar (.png, .jpg — mín. 256×256, até 10MB)
-                      </label>
-                      <p className="text-xs text-muted-foreground">
-                        Use uma foto nítida, rosto de frente, boa iluminação.
-                      </p>
-                      <input
-                        type="file"
-                        accept=".png,.jpg,.jpeg,image/png,image/jpeg"
-                        className="input-field"
-                        onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
-                      />
-                      <button
-                        type="button"
-                        className="btn-primary w-full sm:w-auto"
-                        disabled={uploadingImage || !imageFile}
-                        onClick={handleUploadAvatarImage}
-                      >
-                        {uploadingImage
-                          ? "Enviando..."
-                          : "Enviar imagem do avatar"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4 rounded-xl border border-border bg-background/50 p-4">
-                    <h3 className="font-medium text-foreground">Testar avatar</h3>
-                    <label
-                      htmlFor="avatarTestText"
-                      className="block text-sm font-medium text-foreground"
-                    >
-                      Texto para o vídeo
-                    </label>
-                    <textarea
-                      id="avatarTestText"
-                      className="input-field min-h-[100px]"
-                      value={avatarTestText}
-                      onChange={(e) => setAvatarTestText(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="btn-primary w-full sm:w-auto"
-                      disabled={testingAvatar}
-                      onClick={handleAvatarTest}
-                    >
-                      {testingAvatar ? "Gerando vídeo..." : "Gerar e ver vídeo"}
-                    </button>
-                    {testingAvatar && (
-                      <p className="text-sm text-muted-foreground">
-                        Gerando vídeo... (pode levar ~25s)
-                      </p>
-                    )}
-                    {testVideoUrl && (
-                      <video
-                        controls
-                        autoPlay
-                        src={testVideoUrl}
-                        className="w-full rounded-lg border border-border"
                       />
                     )}
                   </div>

@@ -1,4 +1,4 @@
-export type VoiceVideoParams = {
+export type VoiceParams = {
   chamadas_simultaneas: number;
   campanhas_simultaneas: number;
   tentativas_por_hora: number;
@@ -15,7 +15,7 @@ export type MessagingParams = {
   horario_fim: string;
 };
 
-export type ChannelParams = VoiceVideoParams | MessagingParams;
+export type ChannelParams = VoiceParams | MessagingParams;
 
 export type ChannelSettings = {
   agent_id: string;

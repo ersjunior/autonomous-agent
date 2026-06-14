@@ -22,7 +22,6 @@ const CHANNEL_LABELS: Record<string, string> = {
   whatsapp: "WhatsApp",
   telegram: "Telegram",
   voice: "Voz",
-  video: "Vídeo",
 };
 
 export function ImportCsvWizard({ open, onClose, onSuccess }: ImportCsvWizardProps) {

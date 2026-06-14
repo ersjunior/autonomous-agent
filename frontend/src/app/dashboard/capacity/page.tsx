@@ -8,7 +8,6 @@ const CHANNEL_LABELS: Record<string, string> = {
   whatsapp: "WhatsApp",
   telegram: "Telegram",
   voice: "Voz",
-  video: "Vídeo",
 };
 
 function formatPercent(value: number): string {
@@ -79,14 +78,13 @@ export default function CapacityPage() {
         <>
           <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200/90">
             <strong>Estimativa, não medição exata.</strong> CPU/RAM vêm do psutil dentro do
-            container (cgroup). GPU só por sinal opcional do SadTalker. Coeficientes
-            CHANNEL_COST_* são editáveis no <code className="text-xs">.env</code> (somente
-            leitura nesta tela).
+            container (cgroup). Coeficientes CHANNEL_COST_* são editáveis no{" "}
+            <code className="text-xs">.env</code> (somente leitura nesta tela).
           </div>
 
           <section className="mb-8">
             <h2 className="mb-4 text-lg font-semibold text-foreground">Recursos (container)</h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <div className="glass-card p-5">
                 <p className="text-sm text-muted-foreground">CPU (cores lógicos)</p>
                 <p className="mt-2 text-2xl font-semibold">{data.resources.cpu_cores}</p>
@@ -103,17 +101,6 @@ export default function CapacityPage() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   Total {data.resources.ram_total_mb.toFixed(0)} MB
                 </p>
-              </div>
-              <div className="glass-card p-5">
-                <p className="text-sm text-muted-foreground">Sinal GPU (SadTalker)</p>
-                <p className="mt-2 text-2xl font-semibold">
-                  {data.resources.gpu_signal_available ? "Sim" : "Não"}
-                </p>
-                {data.resources.gpu_device_name && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {data.resources.gpu_device_name}
-                  </p>
-                )}
               </div>
               <div className="glass-card p-5">
                 <p className="text-sm text-muted-foreground">Teto global efetivo</p>
@@ -138,8 +125,10 @@ export default function CapacityPage() {
               Orçamento {data.estimate.resource_units_budget.toFixed(1)} unidades abstratas.
               Mix 100% de um canal:
             </p>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {Object.entries(data.estimate.channels_if_single_family).map(([ch, n]) => (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {Object.entries(data.estimate.channels_if_single_family)
+                .filter(([ch]) => ch !== "video")
+                .map(([ch, n]) => (
                 <div key={ch} className="glass-card p-4">
                   <p className="text-sm text-muted-foreground">
                     {CHANNEL_LABELS[ch] ?? ch}

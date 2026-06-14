@@ -49,7 +49,7 @@ const EVENT_VARIANTS: Record<string, "default" | "warning" | "success" | "muted"
 };
 
 const FINALIZE_CATEGORIES = new Set(["NEGOCIO", "CUSTOMIZADO"]);
-const HISTORY_CHANNELS = ["whatsapp", "telegram", "voice", "video"] as const;
+const HISTORY_CHANNELS = ["whatsapp", "telegram", "voice"] as const;
 const HISTORY_LIMIT = 50;
 const HISTORY_STATUS_OPTIONS = [
   { value: "", label: "Todos" },

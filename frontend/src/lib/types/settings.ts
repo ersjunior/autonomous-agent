@@ -53,24 +53,3 @@ export interface VoiceSampleInfo {
   path: string;
 }
 
-export interface AvatarImageUploadResponse {
-  filename: string;
-  size_bytes: number;
-  width: number | null;
-  height: number | null;
-  message: string;
-}
-
-export interface AvatarTestResponse {
-  video_url: string;
-  filename: string;
-}
-
-export interface AvatarImageInfo {
-  exists: boolean;
-  filename: string;
-  size_bytes: number;
-  modified_at: string | null;
-  width: number | null;
-  height: number | null;
-}
