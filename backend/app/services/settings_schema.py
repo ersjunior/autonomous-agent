@@ -5,13 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from app.core.config import settings as app_settings
+from app.core.config import DEFAULT_AGENT_SYSTEM_PROMPT
 
 SettingCategory = Literal["llm", "stt", "tts", "avatar", "system", "agent"]
 SettingFieldType = Literal["string", "enum", "secret", "url", "number", "textarea"]
 NumericValueType = Literal["int", "float"]
-
-DEFAULT_AGENT_SYSTEM_PROMPT = app_settings.agent_system_prompt
 
 AGENT_SYSTEM_PROMPT_MAX_LENGTH = 4000
 

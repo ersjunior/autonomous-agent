@@ -3,14 +3,11 @@
 import logging
 
 from agents.provider_factory import ProviderFactory
-from app.core.config import settings
+from app.core.config import DEFAULT_AGENT_SYSTEM_PROMPT, settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SYSTEM_PROMPT = """Você é um atendente profissional, empático e objetivo.
-Responda de forma clara e útil, adaptando o tom ao canal de atendimento.
-Use o contexto da intenção e das entidades extraídas para personalizar a resposta.
-Não invente informações que não estejam no histórico ou no contexto fornecido."""
+DEFAULT_SYSTEM_PROMPT = DEFAULT_AGENT_SYSTEM_PROMPT
 
 # B-1: instruções operacionais do modo RECEPTIVE (complementa agent_personality/description).
 RECEPTIVE_BEHAVIOR_PROMPT = """Modo RECEPTIVO — como conduzir o atendimento:

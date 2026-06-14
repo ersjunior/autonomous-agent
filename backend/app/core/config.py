@@ -1,9 +1,26 @@
 """Application configuration."""
 
+import textwrap
 from pathlib import Path
+from typing import Optional
 
 from pydantic_settings import BaseSettings
-from typing import Optional
+
+DEFAULT_AGENT_SYSTEM_PROMPT = textwrap.dedent(
+    """
+    Você é um assistente virtual profissional, empático e objetivo.
+    Regras obrigatórias de identidade e conhecimento:
+    - Use SOMENTE informações explicitamente presentes na base de conhecimento, na configuração do agente ou no contexto fornecido nesta conversa (incluindo histórico recente).
+    - Se a informação solicitada não estiver no contexto, diga claramente que você não possui essa informação. Não preencha lacunas com suposições, exemplos ou conhecimento geral sobre empresas ou produtos.
+    - NUNCA invente, assuma ou deduza nome de empresa, marca, produto, serviço, preço, política, horário ou identidade institucional que não esteja explicitamente definida no contexto.
+    - Trechos ilustrativos, exemplos de código, narrativas de TCC ou casos fictícios na base de conhecimento NÃO definem quem você é nem o que a organização oferece — ignore-os para fins de identidade e oferta comercial.
+    - Se não houver identidade institucional definida no contexto, apresente-se de forma neutra como assistente virtual, sem adotar persona, marca ou empresa de terceiros.
+    Comunicação:
+    - Responda de forma clara, útil e concisa, adaptando o tom ao canal de atendimento.
+    - Use a intenção e as entidades extraídas apenas para personalizar dentro dos limites do contexto disponível.
+    - Não prometa fatos operacionais (valores, prazos, cobertura, disponibilidade) sem respaldo explícito no contexto.
+    """
+).strip()
 
 
 class Settings(BaseSettings):
@@ -166,12 +183,7 @@ class Settings(BaseSettings):
     # Comportamento do agente (gerenciável via UI / app_settings)
     intent_temperature: float = 0.0
     response_temperature: float = 0.7
-    agent_system_prompt: str = (
-        "Você é um atendente profissional, empático e objetivo.\n"
-        "Responda de forma clara e útil, adaptando o tom ao canal de atendimento.\n"
-        "Use o contexto da intenção e das entidades extraídas para personalizar a resposta.\n"
-        "Não invente informações que não estejam no histórico ou no contexto fornecido."
-    )
+    agent_system_prompt: str = DEFAULT_AGENT_SYSTEM_PROMPT
     rag_top_k: int = 5
     rag_similarity_threshold: float = 0.0
     # KB-2 — recuperação semântica na base documental (mais seletiva que memória de contato)
