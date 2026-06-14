@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from agents.channels.phone import to_e164
-from agents.channels.telegram.client import send_telegram_message, send_telegram_video
+from agents.channels.telegram.client import send_telegram_message
 from agents.channels.voice.twilio_voice_client import (
     MAX_TWIML_QUERY_TEXT_CHARS,
     build_outbound_audio_twiml_url,
@@ -18,9 +18,7 @@ from agents.channels.voice.twilio_voice_client import (
 )
 from agents.channels.whatsapp.twilio_client import send_whatsapp_message
 from agents.orchestrator.router import route_message
-from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.services.avatar_video import gerar_video_avatar
 from app.services.voice_audio import gerar_audio_chamada
 from app.models.agent import Agent, AgentMode
 from app.models.campaign import Campaign
@@ -59,7 +57,7 @@ def _build_initial_message(lead: Lead, campaign: Campaign) -> str:
 
 def _resolve_recipient(lead: Lead, channel_type: str) -> str | None:
     channel = channel_type.lower()
-    if channel in ("telegram", "video"):
+    if channel == "telegram":
         telegram_id = lead.aux_values.get("telegram_id")
         return str(telegram_id) if telegram_id else None
     if channel in ("whatsapp", "voice"):
@@ -121,48 +119,6 @@ async def _deliver_message(
     if channel == "telegram":
         await send_telegram_message(recipient, response)
         return True
-    if channel == "video":
-        speech_text = (response or "").strip()
-        if not speech_text:
-            speech_text = "Desculpe, não consegui gerar a mensagem de vídeo no momento."
-        caption = speech_text[:1024]
-        try:
-            filename = await gerar_video_avatar(speech_text)
-            video_path = f"{settings.avatar_video_root.rstrip('/')}/{filename}"
-            await send_telegram_video(recipient, video_path, caption=caption)
-            await upsert_lead_interaction(
-                session,
-                lead.id,
-                campaign.id,
-                channel,
-                status="acionado",
-                devolutiva=f"telegram_video={filename}",
-                set_acionamento=first_touch,
-                record_outbound_attempt=True,
-            )
-            logger.info(
-                "Video outbound sent via Telegram for lead %s (file=%s, chat=%s)",
-                lead.id,
-                filename,
-                recipient,
-            )
-            return True
-        except Exception as exc:
-            logger.exception(
-                "Video outbound failed for lead %s (telegram_id=%s): %s",
-                lead.id,
-                recipient,
-                exc,
-            )
-            await upsert_lead_interaction(
-                session,
-                lead.id,
-                campaign.id,
-                channel,
-                status="erro",
-                devolutiva=str(exc),
-            )
-            return False
     if channel == "voice":
         speech_text = (response or "").strip()
         if not speech_text:
@@ -374,7 +330,7 @@ def _release_slot_after_dispatch(
         return
     if not slot_token or not agent_id:
         return
-    if family == "voice_video":
+    if family == "voice":
         if not delivery_ok:
             release_slot(agent_id, channel, slot_token)
         return

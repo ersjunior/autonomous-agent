@@ -2,7 +2,6 @@
 Estimativa de capacidade a partir de recursos do container (R-C).
 
 IMPORTANTE: leitura via psutil reflete cgroup/limites do container — é APROXIMAÇÃO.
-GPU não é lida no backend; sinal opcional via GET /health do SadTalker.
 
 Unidade: "unidades de recurso" abstratas — combinam CPU e RAM com coeficientes
 configuráveis. Cada canal simultâneo consome CHANNEL_COST_* unidades.
@@ -15,10 +14,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
 import psutil
 
-from app.core.activation_defaults import SUPPORTED_CHANNEL_TYPES, normalize_channel_type
+from app.core.activation_defaults import SUPPORTED_CHANNEL_TYPES
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -51,24 +49,7 @@ def channel_costs() -> dict[str, float]:
         "whatsapp": float(settings.channel_cost_whatsapp),
         "telegram": float(settings.channel_cost_telegram),
         "voice": float(settings.channel_cost_voice),
-        "video": float(settings.channel_cost_video),
     }
-
-
-def _fetch_sadtalker_gpu_signal() -> tuple[bool, str | None, str | None]:
-    url = f"{settings.sadtalker_base_url.rstrip('/')}/health"
-    try:
-        with httpx.Client(timeout=2.0) as client:
-            resp = client.get(url)
-        if resp.status_code != 200:
-            return False, "sadtalker_health", None
-        data = resp.json()
-        gpu = bool(data.get("gpu"))
-        device = data.get("device")
-        return gpu, "sadtalker_health", str(device) if device else None
-    except Exception as exc:
-        logger.debug("SadTalker /health indisponível: %s", exc)
-        return False, None, None
 
 
 def read_resources() -> ResourceSnapshot:
@@ -85,17 +66,15 @@ def read_resources() -> ResourceSnapshot:
     ram_total_mb = vm.total / (1024 * 1024)
     ram_avail_mb = vm.available / (1024 * 1024)
 
-    gpu_ok, gpu_src, gpu_name = _fetch_sadtalker_gpu_signal()
-
     return ResourceSnapshot(
         cpu_cores=cores,
         cpu_percent_used=cpu_pct,
         cpu_available_ratio=cpu_avail,
         ram_total_mb=ram_total_mb,
         ram_available_mb=ram_avail_mb,
-        gpu_signal_available=gpu_ok,
-        gpu_signal_source=gpu_src,
-        gpu_device_name=gpu_name,
+        gpu_signal_available=False,
+        gpu_signal_source=None,
+        gpu_device_name=None,
     )
 
 
@@ -107,8 +86,6 @@ def _resource_units_budget(resources: ResourceSnapshot) -> float:
     )
     ram_units = resources.ram_available_mb / float(settings.capacity_mb_per_unit)
     budget = min(cpu_units, ram_units)
-    if resources.gpu_signal_available:
-        budget *= float(settings.gpu_capacity_boost)
     return max(0.0, budget)
 
 
@@ -128,15 +105,6 @@ def estimate_capacity(resources: ResourceSnapshot | None = None) -> CapacityEsti
         "Estimativa baseada em CPU/RAM visíveis ao container (psutil), não no host físico.",
         "Coeficientes CHANNEL_COST_* são unidades abstratas de recurso por canal simultâneo.",
     ]
-    if res.gpu_signal_available:
-        notes.append(
-            f"Sinal GPU via SadTalker /health ({res.gpu_device_name or 'ok'}); "
-            f"boost ×{settings.gpu_capacity_boost}."
-        )
-    else:
-        notes.append(
-            "Sem sinal GPU no SadTalker — capacidade de vídeo pode ser subestimada."
-        )
 
     return CapacityEstimate(
         resource_units_budget=budget,

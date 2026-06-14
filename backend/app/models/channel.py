@@ -21,7 +21,6 @@ class ChannelType(str, enum.Enum):
     WHATSAPP = "WHATSAPP"
     TELEGRAM = "TELEGRAM"
     VOICE = "VOICE"
-    VIDEO = "VIDEO"
 
 
 class Channel(Base):

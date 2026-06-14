@@ -70,14 +70,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: Optional[str] = None
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"  # Rachel (padrão)
 
-    # D-ID (Avatar)
-    did_api_key: Optional[str] = None
-
     # Provider selection (commercial vs open source)
     llm_provider: str = "openai"  # openai | ollama
     stt_provider: str = "openai"  # openai | faster_whisper
     tts_provider: str = "elevenlabs"  # elevenlabs | coqui
-    avatar_provider: str = "sadtalker"  # sadtalker | did
 
     # Ollama (LLM_PROVIDER=ollama)
     ollama_base_url: str = "http://ollama:11434"
@@ -95,13 +91,6 @@ class Settings(BaseSettings):
 
     # MP3s de chamadas outbound (volume Docker voice_audio)
     voice_audio_root: str = "/workspace/voice_audio"
-
-    # SadTalker (AVATAR_PROVIDER=sadtalker)
-    sadtalker_base_url: str = "http://sadtalker:8003"
-    # MP4 gerados pelo SadTalker (volume Docker avatar_video)
-    avatar_video_root: str = "/workspace/avatar_video"
-    avatars_root: str = "/avatars"
-    avatar_default_image: str = "default.png"
 
     # Frontend
     frontend_url: str = "http://localhost:3000"
@@ -128,16 +117,13 @@ class Settings(BaseSettings):
     channel_weight_whatsapp: int = 1
     channel_weight_telegram: int = 1
     channel_weight_voice: int = 3
-    channel_weight_video: int = 4
 
     # R-C — estimativa de capacidade (unidades abstratas de recurso por canal simultâneo)
     channel_cost_whatsapp: float = 1.0
     channel_cost_telegram: float = 1.0
     channel_cost_voice: float = 3.0
-    channel_cost_video: float = 5.0
     capacity_cpu_units_per_core: float = 10.0
     capacity_mb_per_unit: float = 512.0
-    gpu_capacity_boost: float = 1.15
     default_aht_seconds: int = 180
     capacity_history_days: int = 7
     erlang_target_service_level: float = 0.80
@@ -177,7 +163,6 @@ class Settings(BaseSettings):
         base["whatsapp"] = self.channel_weight_whatsapp
         base["telegram"] = self.channel_weight_telegram
         base["voice"] = self.channel_weight_voice
-        base["video"] = self.channel_weight_video
         return base
 
     # Comportamento do agente (gerenciável via UI / app_settings)

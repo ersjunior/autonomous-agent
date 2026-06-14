@@ -32,10 +32,11 @@ class TestCanonicalContactIds:
         assert PHONE in ids
         assert f"whatsapp:{PHONE}" in ids
 
-    def test_voice_and_video_use_same_phone_variants(self) -> None:
+    def test_voice_uses_phone_variants(self) -> None:
         voice_ids = canonical_contact_ids("voice", PHONE)
-        video_ids = canonical_contact_ids("video", PHONE)
-        assert voice_ids == video_ids
+        whatsapp_ids = canonical_contact_ids("whatsapp", PHONE)
+        assert voice_ids == whatsapp_ids
+        assert PHONE in voice_ids
 
     def test_telegram_returns_exact_id(self) -> None:
         chat_id = "123456789"

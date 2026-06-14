@@ -5,7 +5,7 @@ from __future__ import annotations
 from agents.events import publish_event_async
 from agents.orchestrator.state import AgentState
 
-VALID_CHANNELS = frozenset({"telegram", "whatsapp", "voice", "video"})
+VALID_CHANNELS = frozenset({"telegram", "whatsapp", "voice"})
 
 
 def build_initial_state(

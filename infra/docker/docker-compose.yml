@@ -26,19 +26,16 @@ x-app-env: &app-env
     TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
     ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
     ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
-    DID_API_KEY: ${DID_API_KEY:-}
     FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
     STT_PROVIDER: ${STT_PROVIDER:-faster_whisper}
     TTS_PROVIDER: ${TTS_PROVIDER:-coqui}
-    AVATAR_PROVIDER: ${AVATAR_PROVIDER:-sadtalker}
     OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
     OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
     WHISPER_BASE_URL: ${WHISPER_BASE_URL:-http://faster-whisper:8001}
     WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
     COQUI_BASE_URL: ${COQUI_BASE_URL:-http://coqui-tts:8002}
     COQUI_VOICE_SAMPLE: ${COQUI_VOICE_SAMPLE:-}
-    SADTALKER_BASE_URL: ${SADTALKER_BASE_URL:-http://sadtalker:8003}
 
 # GPU NVIDIA (Compose v2+). Requer NVIDIA Container Toolkit.
 # Em host sem GPU, comente estes blocos ou use um override local.
@@ -102,17 +99,13 @@ services:
         condition: service_started
       coqui-tts:
         condition: service_healthy
-      sadtalker:
-        condition: service_healthy
     volumes:
       - ../../backend:/workspace/backend
       - ../../agents:/workspace/agents
       - ../../worker:/workspace/worker
       - devolutivas:/workspace/devolutivas:ro
       - voice_audio:/workspace/voice_audio:rw
-      - avatar_video:/workspace/avatar_video:rw
       - ../../infra/docker/coqui-tts/voices:/voices:rw
-      - ../../infra/docker/sadtalker/avatars:/avatars:rw
       - kb_uploads:/workspace/kb_uploads:rw
       - tunnel_data:/shared:rw
     working_dir: /workspace/backend
@@ -173,17 +166,13 @@ services:
         condition: service_started
       coqui-tts:
         condition: service_healthy
-      sadtalker:
-        condition: service_healthy
     volumes:
       - ../../backend:/workspace/backend
       - ../../agents:/workspace/agents
       - ../../worker:/workspace/worker
       - devolutivas:/workspace/devolutivas
       - voice_audio:/workspace/voice_audio:rw
-      - avatar_video:/workspace/avatar_video:rw
       - ../../infra/docker/coqui-tts/voices:/voices:rw
-      - ../../infra/docker/sadtalker/avatars:/avatars:rw
       - kb_uploads:/workspace/kb_uploads:rw
       - tunnel_data:/shared:ro
     working_dir: /workspace/backend
@@ -300,44 +289,11 @@ services:
       retries: 20
       start_period: 300s
 
-  sadtalker:
-    build:
-      context: ./sadtalker
-      dockerfile: Dockerfile
-    container_name: autonomous-agent-sadtalker
-    <<: *gpu
-    environment:
-      SADTALKER_ROOT: /opt/SadTalker
-      AVATAR_VIDEOS_DIR: /data/videos
-      AVATARS_DIR: /avatars
-      SADTALKER_SIZE: ${SADTALKER_SIZE:-256}
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
-    ports:
-      - "${SADTALKER_PORT:-8003}:8003"
-    volumes:
-      - avatar_video:/data/videos
-      - ./sadtalker/avatars:/avatars:ro
-    restart: unless-stopped
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8003/health'); d=json.loads(r.read()); assert d.get('status')=='ok' and d.get('model_loaded') is True and d.get('gpu') is True, d",
-        ]
-      interval: 30s
-      timeout: 15s
-      retries: 30
-      start_period: 900s
-
 volumes:
   postgres_data:
   redis_data:
   ollama_data:
   devolutivas:
   voice_audio:
-  avatar_video:
   tunnel_data:
   kb_uploads:

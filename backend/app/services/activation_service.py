@@ -37,7 +37,7 @@ SETTINGS_CHANNEL_TYPES = sorted(SUPPORTED_CHANNEL_TYPES)
 def validate_params_for_channel(channel_type: str, params: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize params JSON for the channel family."""
     family = channel_family(channel_type)
-    if family == "voice_video":
+    if family == "voice":
         model = VoiceVideoParams.model_validate(params)
     else:
         model = MessagingParams.model_validate(params)

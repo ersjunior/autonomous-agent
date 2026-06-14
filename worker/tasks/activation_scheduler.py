@@ -86,7 +86,7 @@ def _empty_channel_stats() -> dict:
 
 def _concurrent_limit(params: dict, channel: str) -> int:
     family = channel_family(channel)
-    if family == "voice_video":
+    if family == "voice":
         return int(params.get("chamadas_simultaneas", 1))
     return int(params.get("chats_simultaneos", 5))
 
@@ -125,7 +125,7 @@ async def _build_candidates_for_activation(
     family = channel_family(channel)
     candidates: list[DispatchCandidate] = []
 
-    if family == "voice_video":
+    if family == "voice":
         limit = int(params.get("tentativas_por_hora", 6))
         recent = await count_recent_dispatches(
             db, activation.campaign_id, channel, since_hour
@@ -326,7 +326,7 @@ async def _process_agent_channel_group(
     for activation in to_process:
         key = f"{activation.campaign_id}:{channel}"
         ch = stats["by_channel"].get(key, {})
-        if family == "voice_video":
+        if family == "voice":
             limit = int(params.get("tentativas_por_hora", 6))
             recent = await count_recent_dispatches(
                 db, activation.campaign_id, channel, since_hour

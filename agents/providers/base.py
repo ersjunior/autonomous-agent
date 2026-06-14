@@ -1,4 +1,4 @@
-"""Abstract provider interfaces for LLM, STT, TTS and Avatar services."""
+"""Abstract provider interfaces for LLM, STT and TTS services."""
 
 from abc import ABC, abstractmethod
 from typing import Any
@@ -79,47 +79,6 @@ class TTSProvider(ABC):
         Returns raw audio bytes (typically MP3). ``voice_id`` meaning depends
         on the provider (ElevenLabs voice id, path to speaker WAV for Coqui, etc.).
         """
-
-    @abstractmethod
-    async def aclose(self) -> None:
-        """Release HTTP clients or other resources (no-op if none)."""
-
-
-class AvatarProvider(ABC):
-    """
-    Contract for talking-avatar / lip-sync video backends.
-
-    Fluxos por provedor:
-    - D-ID: ``text`` + ``avatar_ref`` (URL da imagem) — TTS interno; ignora ``audio_bytes``.
-    - SadTalker: imagem em ``avatars_root`` + ``audio_bytes`` (Coqui) — lip-sync local.
-
-    A camada de canal/handler deve sintetizar áudio via Coqui uma vez e passar
-    ``audio_bytes`` para reutilizar a voz clonada (consistente com o canal de voz).
-    Se ``audio_bytes`` for None, SadTalker sintetiza internamente como fallback.
-    """
-
-    @property
-    @abstractmethod
-    def provider_name(self) -> str:
-        """Human-readable provider identifier."""
-
-    @abstractmethod
-    async def create_video(
-        self,
-        text: str,
-        avatar_ref: str,
-        audio_bytes: bytes | None = None,
-    ) -> dict:
-        """
-        Start or complete video generation.
-
-        Returns a dict with at least ``id`` and ``status``. When ready, may include
-        ``video_filename`` (SadTalker, volume local) and/or ``video_url`` (D-ID).
-        """
-
-    @abstractmethod
-    async def get_video(self, video_id: str) -> dict:
-        """Poll or fetch job status (D-ID) or confirm local file (SadTalker)."""
 
     @abstractmethod
     async def aclose(self) -> None:

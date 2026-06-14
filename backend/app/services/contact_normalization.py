@@ -51,7 +51,7 @@ def canonical_contact_ids(channel: str, user_id: str) -> list[str]:
     Return all ``interactions.user_id`` variants to search for a contact.
 
     Variations handled:
-      - **whatsapp / voice / video (phone):** ``+5511...``, ``5511...``, ``whatsapp:+5511...``
+      - **whatsapp / voice (phone):** ``+5511...``, ``5511...``, ``whatsapp:+5511...``
       - **telegram:** exact chat id string (no prefix normalization)
     """
     ch = normalize_channel_type(channel)
@@ -62,7 +62,7 @@ def canonical_contact_ids(channel: str, user_id: str) -> list[str]:
     if ch == "telegram":
         return [raw]
 
-    if ch in ("whatsapp", "voice", "video"):
+    if ch in ("whatsapp", "voice"):
         return _phone_variants(raw)
 
     return [raw]

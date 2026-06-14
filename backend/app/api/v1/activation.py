@@ -250,7 +250,7 @@ async def stop_activation(
 
 
 def _recipient_missing_message(channel: str) -> str:
-    if channel in ("telegram", "video"):
+    if channel == "telegram":
         return f"Lead sem telegram_id para o canal {channel}"
     return f"Lead sem telefone para o canal {channel}"
 

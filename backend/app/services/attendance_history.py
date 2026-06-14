@@ -35,7 +35,7 @@ from worker.tasks.conversation_routing import (
 from worker.tasks.lead_tracking import find_lead_by_channel_user
 from worker.tasks.outbound_campaign import _resolve_recipient
 
-VOICE_VIDEO_CHANNELS = frozenset({"voice", "video"})
+from app.core.activation_defaults import VOICE_CHANNELS
 ATTENDANCE_STATUS_VALUES = (
     "pendente",
     "acionado",
@@ -69,7 +69,7 @@ def _is_terminal_status(status_value: str | None) -> bool:
 
 
 def _duration_available(channel: str) -> bool:
-    return channel.lower() not in VOICE_VIDEO_CHANNELS
+    return channel.lower() not in VOICE_CHANNELS
 
 
 def _truncate_preview(text: str | None) -> str | None:
@@ -514,7 +514,7 @@ async def build_conversation_response(
     )
     tab = li.tabulacao if li else None
     campaign = li.campaign if li else None
-    voice_partial = channel.lower() in VOICE_VIDEO_CHANNELS
+    voice_partial = channel.lower() in VOICE_CHANNELS
 
     return AttendanceConversationResponse(
         lead_interaction_id=li.id if li else None,

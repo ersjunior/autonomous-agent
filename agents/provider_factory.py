@@ -1,6 +1,6 @@
-"""Factory for LLM, STT, TTS and Avatar providers based on application settings."""
+"""Factory for LLM, STT and TTS providers based on application settings."""
 
-from agents.providers.base import AvatarProvider, LLMProvider, STTProvider, TTSProvider
+from agents.providers.base import LLMProvider, STTProvider, TTSProvider
 from app.core.config import settings
 
 
@@ -54,22 +54,4 @@ class ProviderFactory:
         raise ValueError(
             f"Unknown TTS_PROVIDER '{settings.tts_provider}'. "
             "Use 'elevenlabs' or 'coqui'."
-        )
-
-    @staticmethod
-    def get_avatar() -> AvatarProvider:
-        provider = settings.avatar_provider.lower()
-        if provider == "did":
-            from agents.providers.avatar.did_provider import DIDAvatarProvider
-
-            return DIDAvatarProvider()
-        if provider == "sadtalker":
-            from agents.providers.avatar.sadtalker_provider import (
-                SadTalkerAvatarProvider,
-            )
-
-            return SadTalkerAvatarProvider()
-        raise ValueError(
-            f"Unknown AVATAR_PROVIDER '{settings.avatar_provider}'. "
-            "Use 'did' or 'sadtalker'."
         )

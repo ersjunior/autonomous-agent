@@ -1,15 +1,9 @@
-"""Pluggable AI service providers (LLM, STT, TTS, Avatar)."""
+"""Pluggable AI service providers (LLM, STT, TTS)."""
 
-from agents.providers.base import (
-    AvatarProvider,
-    LLMProvider,
-    STTProvider,
-    TTSProvider,
-)
+from agents.providers.base import LLMProvider, STTProvider, TTSProvider
 
 __all__ = [
     "LLMProvider",
     "STTProvider",
     "TTSProvider",
-    "AvatarProvider",
 ]

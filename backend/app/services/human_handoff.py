@@ -52,7 +52,6 @@ _CHANNEL_LABELS = {
     "whatsapp": "WhatsApp",
     "telegram": "Telegram",
     "voice": "Voz",
-    "video": "Vídeo",
 }
 
 _LEAD_CONTACT_MESSAGE = (

@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.core.activation_cadence_text import CLOSE_DEVOLUTIVA, FOLLOWUP_ENQUEUED_MARKER
 from app.core.activation_defaults import (
     MESSAGING_CHANNELS,
-    VOICE_VIDEO_CHANNELS,
+    VOICE_CHANNELS,
     channel_family,
     normalize_channel_type,
 )
@@ -173,8 +173,8 @@ async def close_lead_no_answer(
     )
 
 
-def is_voice_video_channel(channel_type: str) -> bool:
-    return normalize_channel_type(channel_type) in VOICE_VIDEO_CHANNELS
+def is_voice_channel(channel_type: str) -> bool:
+    return normalize_channel_type(channel_type) in VOICE_CHANNELS
 
 
 def is_messaging_channel(channel_type: str) -> bool:

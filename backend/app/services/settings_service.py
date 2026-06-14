@@ -486,7 +486,6 @@ def build_settings_response_payload(effective: dict[str, Any]) -> dict[str, Any]
         "agent",
         "stt",
         "tts",
-        "avatar",
         "system",
     ]
     categories: list[dict[str, Any]] = []

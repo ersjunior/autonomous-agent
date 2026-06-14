@@ -196,7 +196,7 @@ def release_global(token: str | None, weight: int | None = None) -> bool:
 
 def _local_slot_limit(params: dict[str, Any], channel: str) -> int:
     family = normalize_channel_type(channel)
-    if family in ("voice", "video"):
+    if family == "voice":
         return int(params.get("chamadas_simultaneas", 1))
     return int(params.get("chats_simultaneos", 5))
 

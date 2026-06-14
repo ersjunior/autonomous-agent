@@ -28,10 +28,6 @@ UUID_MP3_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mp3$",
     re.IGNORECASE,
 )
-UUID_MP4_PATTERN = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.mp4$",
-    re.IGNORECASE,
-)
 
 
 def _build_voice_outbound_say_twiml(text: str) -> str:
@@ -151,19 +147,6 @@ async def voice_audio_file(filename: str):
         raise HTTPException(status_code=404, detail="Audio not found")
 
     return FileResponse(path, media_type="audio/mpeg", filename=filename)
-
-
-@router.get("/avatar-video/{filename}")
-async def avatar_video_file(filename: str):
-    """Serve MP4 gerado pelo SadTalker (preview / integrações por URL)."""
-    if not UUID_MP4_PATTERN.match(filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-
-    path = Path(settings.avatar_video_root) / filename
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    return FileResponse(path, media_type="video/mp4", filename=filename)
 
 
 @router.get("/webhooks/voice/outbound")

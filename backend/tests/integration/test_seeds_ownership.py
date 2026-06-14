@@ -83,7 +83,6 @@ async def test_seed_default_channels_is_idempotent(db_session) -> None:
     assert ChannelType.WHATSAPP in types
     assert ChannelType.TELEGRAM in types
     assert ChannelType.VOICE in types
-    assert ChannelType.VIDEO in types
     assert all(ch.is_system for ch in channels)
 
 
@@ -174,7 +173,7 @@ async def test_full_seed_sequence_requires_admin_first(db_session) -> None:
 
     admin = await get_admin_user(db_session)
 
-    assert await _count_for_admin(db_session, Channel, admin.id) == 4
+    assert await _count_for_admin(db_session, Channel, admin.id) == 3
     assert await _count_for_admin(db_session, Agent, admin.id) == 2
     assert len(await _system_tabulacoes(db_session)) == 16
 

@@ -151,7 +151,7 @@ def count_active_slots(agent_id: str, channel_type: str) -> int:
 
 def slot_ttl_seconds(channel_type: str) -> int:
     family = channel_family(channel_type)
-    if family == "voice_video":
+    if family == "voice":
         return settings.call_slot_ttl_seconds
     return settings.chat_slot_ttl_seconds
 

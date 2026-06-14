@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-VOICE_VIDEO_CHANNELS = frozenset({"voice", "video"})
+VOICE_CHANNELS = frozenset({"voice"})
 MESSAGING_CHANNELS = frozenset({"whatsapp", "telegram"})
-SUPPORTED_CHANNEL_TYPES = VOICE_VIDEO_CHANNELS | MESSAGING_CHANNELS
+SUPPORTED_CHANNEL_TYPES = VOICE_CHANNELS | MESSAGING_CHANNELS
 
-_VOICE_VIDEO_DEFAULTS: dict[str, Any] = {
+_VOICE_DEFAULTS: dict[str, Any] = {
     "chamadas_simultaneas": 1,
     "campanhas_simultaneas": 1,
     "tentativas_por_hora": 6,
@@ -30,15 +30,13 @@ _MESSAGING_DEFAULTS: dict[str, Any] = {
 
 # Pesos na capacidade global ponderada (R-A; R-C refinará via hardware)
 DEFAULT_CHANNEL_WEIGHTS: dict[str, int] = {
-    "video": 4,
     "voice": 3,
     "whatsapp": 1,
     "telegram": 1,
 }
 
 SYSTEM_CHANNEL_DEFAULTS: dict[str, dict[str, Any]] = {
-    "voice": dict(_VOICE_VIDEO_DEFAULTS),
-    "video": dict(_VOICE_VIDEO_DEFAULTS),
+    "voice": dict(_VOICE_DEFAULTS),
     "whatsapp": dict(_MESSAGING_DEFAULTS),
     "telegram": dict(_MESSAGING_DEFAULTS),
 }
@@ -49,10 +47,10 @@ def normalize_channel_type(channel_type: str) -> str:
 
 
 def channel_family(channel_type: str) -> str:
-    """Returns 'voice_video' or 'messaging'."""
+    """Returns 'voice' or 'messaging'."""
     normalized = normalize_channel_type(channel_type)
-    if normalized in VOICE_VIDEO_CHANNELS:
-        return "voice_video"
+    if normalized in VOICE_CHANNELS:
+        return "voice"
     if normalized in MESSAGING_CHANNELS:
         return "messaging"
     raise ValueError(f"Unsupported channel type: {channel_type}")

@@ -37,32 +37,3 @@ class VoiceSampleInfoResponse(BaseModel):
     size_bytes: int
     modified_at: str | None = None
     path: str = "/voices/reference.wav"
-
-
-class AvatarImageUploadResponse(BaseModel):
-    filename: str
-    size_bytes: int
-    width: int | None = None
-    height: int | None = None
-    message: str
-
-
-class AvatarImageInfoResponse(BaseModel):
-    exists: bool
-    filename: str
-    size_bytes: int
-    modified_at: str | None = None
-    width: int | None = None
-    height: int | None = None
-
-
-class AvatarTestRequest(BaseModel):
-    text: str | None = Field(
-        default=None,
-        description="Texto para geração de vídeo de teste (pt-BR)",
-    )
-
-
-class AvatarTestResponse(BaseModel):
-    video_url: str
-    filename: str

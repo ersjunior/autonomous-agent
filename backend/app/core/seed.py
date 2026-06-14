@@ -23,7 +23,6 @@ SEED_CHANNEL_NAMES = (
     "WhatsApp_Agent",
     "Telegram_Agent",
     "Voice_Agent",
-    "Video_Agent",
 )
 
 SEED_AGENT_NAMES = (
@@ -52,7 +51,7 @@ SEED_TABULACAO_CODIGOS = (
 
 AGENT_ATIVO_DESCRIPTION = (
     "Agente de prospecção ativa. Inicia o contato com os leads de forma proativa "
-    "pelos canais habilitados na campanha (WhatsApp, Telegram, voz ou vídeo), "
+    "pelos canais habilitados na campanha (WhatsApp, Telegram ou voz), "
     "conduz a abordagem inicial, apresenta a oferta, qualifica o interesse e dá "
     "sequência às respostas do lead enquanto a conversa que ele iniciou permanecer "
     "aberta. Atua exclusivamente em fluxos iniciados pelo sistema (outbound); "
@@ -120,20 +119,10 @@ def _voice_credentials() -> dict[str, Any]:
     }
 
 
-def _video_credentials() -> dict[str, Any]:
-    # avatar_url é para D-ID (URL pública). O stack padrão usa SadTalker com
-    # avatar_default_image local em avatars_root — não há env para avatar_url.
-    return {
-        "avatar_url": "",
-        "did_api_key": settings.did_api_key or "",
-    }
-
-
 def _seed_channel_specs() -> list[tuple[str, ChannelType, dict[str, Any], bool]]:
     whatsapp_creds = _whatsapp_credentials()
     telegram_creds = _telegram_credentials()
     voice_creds = _voice_credentials()
-    video_creds = _video_credentials()
 
     return [
         (
@@ -154,17 +143,11 @@ def _seed_channel_specs() -> list[tuple[str, ChannelType, dict[str, Any], bool]]
             voice_creds,
             bool(voice_creds.get("phone_numbers")),
         ),
-        (
-            "Video_Agent",
-            ChannelType.VIDEO,
-            video_creds,
-            True,
-        ),
     ]
 
 
 async def seed_default_channels(db: AsyncSession) -> None:
-    """Cria os 4 canais padrão do admin a partir do .env (idempotente por nome)."""
+    """Cria os 3 canais padrão do admin a partir do .env (idempotente por nome)."""
     try:
         result = await db.execute(select(User).where(User.email == DEFAULT_ADMIN_EMAIL))
         admin = result.scalar_one_or_none()

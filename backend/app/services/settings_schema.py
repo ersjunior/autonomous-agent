@@ -7,7 +7,7 @@ from typing import Literal
 
 from app.core.config import DEFAULT_AGENT_SYSTEM_PROMPT
 
-SettingCategory = Literal["llm", "stt", "tts", "avatar", "system", "agent"]
+SettingCategory = Literal["llm", "stt", "tts", "system", "agent"]
 SettingFieldType = Literal["string", "enum", "secret", "url", "number", "textarea"]
 NumericValueType = Literal["int", "float"]
 
@@ -118,36 +118,6 @@ MANAGED_SETTINGS: tuple[SettingFieldSchema, ...] = (
         category="tts",
         field_type="string",
     ),
-    # Avatar
-    SettingFieldSchema(
-        key="avatar_provider",
-        label="Provedor Avatar",
-        category="avatar",
-        field_type="enum",
-        options=("sadtalker", "did"),
-        default_value="sadtalker",
-    ),
-    SettingFieldSchema(
-        key="did_api_key",
-        label="Chave API D-ID",
-        category="avatar",
-        field_type="secret",
-        is_secret=True,
-    ),
-    SettingFieldSchema(
-        key="sadtalker_base_url",
-        label="URL SadTalker",
-        category="avatar",
-        field_type="url",
-    ),
-    SettingFieldSchema(
-        key="avatar_default_image",
-        label="Arquivo da imagem do avatar",
-        category="avatar",
-        field_type="string",
-        default_value="default.png",
-        read_only=True,
-    ),
     # Comportamento do agente
     SettingFieldSchema(
         key="intent_temperature",
@@ -247,7 +217,6 @@ CATEGORY_LABELS: dict[SettingCategory, str] = {
     "llm": "LLM",
     "stt": "STT (Speech-to-Text)",
     "tts": "TTS (Text-to-Speech)",
-    "avatar": "Avatar",
     "system": "Sistema",
     "agent": "Comportamento do agente",
 }
