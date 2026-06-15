@@ -139,7 +139,7 @@ MANAGED_SETTINGS: tuple[SettingFieldSchema, ...] = (
         min_value=0.0,
         max_value=2.0,
         step=0.1,
-        default_value="0.7",
+        default_value="0.3",
     ),
     SettingFieldSchema(
         key="agent_system_prompt",

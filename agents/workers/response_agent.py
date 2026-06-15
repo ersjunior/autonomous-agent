@@ -17,9 +17,11 @@ RECEPTIVE_BEHAVIOR_PROMPT = """Modo RECEPTIVO — como conduzir o atendimento:
   pertinentes, uma de cada vez, sem interrogatório. Se o lead demonstra interesse mas não
   detalha, faça uma pergunta por vez para entender melhor (ex.: o que busca, para quando, qual canal prefere).
 - Mantenha tom acolhedor e profissional; conversa fluida, não roteiro rígido de script.
-- Se o caso exige humano (reclamação grave, pedido explícito de atendente, assunto fora do
-  escopo ou sinal de escalonamento), não insista em resolver sozinho — reconheça e indique
-  que a conversa será transferida para um atendente humano."""
+- Desvio leve fora do escopo (piada, humor, curiosidade, opinião, política, assunto pessoal
+  sem relação com o negócio): NÃO escale para humano — recuse educadamente e redirecione
+  para produtos, serviços ou dúvidas do atendimento.
+- Escale para atendente humano apenas quando necessário: reclamação grave, pedido explícito
+  de atendente humano ou sinal claro de escalonamento — reconheça e indique a transferência."""
 
 # Inbound/outbound de voz (telefonia): respostas curtas para TTS e timeout da Twilio.
 VOICE_BEHAVIOR_PROMPT = """Modo VOZ (telefone) — como falar com o cliente:

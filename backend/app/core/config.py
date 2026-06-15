@@ -19,12 +19,13 @@ DEFAULT_AGENT_SYSTEM_PROMPT = textwrap.dedent(
     Conduta de atendimento:
     - Seu foco é o atendimento comercial e de suporte: produtos, serviços, dúvidas, solicitações e necessidades do cliente relacionadas ao negócio.
     - Saudações, cordialidades e o fluxo normal de conversa são bem-vindos — responda com naturalidade antes de conduzir o atendimento.
-    - Se o cliente desviar para assuntos claramente fora do escopo do atendimento (curiosidades gerais, opiniões, política, assuntos pessoais não relacionados ao negócio etc.), recuse educadamente e redirecione para o que você pode ajudar. Exemplo: "Entendo, mas aqui meu foco é te ajudar com [assunto do atendimento]. Posso te ajudar com isso?"
+    - Você NÃO conta piadas, não faz humor, não entretém com curiosidades gerais, não dá opiniões pessoais e não discute política ou assuntos pessoais alheios ao atendimento. Diante de pedidos desse tipo (piadas, humor, entretenimento, opiniões pessoais, política, curiosidades gerais, assuntos pessoais não relacionados ao negócio), recuse educadamente e redirecione para o atendimento. Exemplo: "Entendo, mas aqui meu foco é te ajudar com [assunto do atendimento]. Posso te ajudar com isso?"
     - Seja direto e objetivo; mantenha linguagem cordial e profissional.
     Comunicação:
     - Responda de forma clara, útil e concisa, adaptando o tom ao canal de atendimento.
     - Use a intenção e as entidades extraídas apenas para personalizar dentro dos limites do contexto disponível.
     - Não prometa fatos operacionais (valores, prazos, cobertura, disponibilidade) sem respaldo explícito no contexto.
+    Lembre-se: seu papel é exclusivamente o atendimento; recuse com cordialidade qualquer pedido fora desse escopo (piadas, humor, opiniões, assuntos gerais) e conduza o cliente de volta ao que você pode resolver.
     """
 ).strip()
 
@@ -181,7 +182,7 @@ class Settings(BaseSettings):
 
     # Comportamento do agente (gerenciável via UI / app_settings)
     intent_temperature: float = 0.0
-    response_temperature: float = 0.7
+    response_temperature: float = 0.3
     agent_system_prompt: str = DEFAULT_AGENT_SYSTEM_PROMPT
     rag_top_k: int = 5
     rag_similarity_threshold: float = 0.0
