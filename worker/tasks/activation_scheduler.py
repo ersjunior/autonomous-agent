@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
@@ -48,6 +47,7 @@ from app.services.capacity_service import (
     bind_outbound_capacity,
     try_acquire_outbound_capacity,
 )
+from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 from worker.tasks.outbound_campaign import send_campaign_followup, send_campaign_message
 
@@ -423,4 +423,4 @@ def process_active_activations() -> dict:
 
     Beat roda a cada 5 min (UTC); a checagem de janela usa America/Sao_Paulo.
     """
-    return asyncio.run(_process_active_activations_async())
+    return run_celery_async(_process_active_activations_async())

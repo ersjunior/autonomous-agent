@@ -9,12 +9,11 @@ e itens na fila, faz dequeue FIFO e atende (``attend_from_queue_payload``).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from app.core.activation_defaults import MESSAGING_CHANNELS
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal, engine
+from app.core.database import AsyncSessionLocal
 from app.services.activation_service import get_agent_channel_settings_row, merged_params
 from app.services.capacity_service import (
     current_global_usage,
@@ -23,6 +22,7 @@ from app.services.capacity_service import (
 from app.services.inbound_attendance import attend_from_queue_payload
 from app.services.receptive_queue import dequeue_next, queue_size
 from app.services.receptive_window import is_receptive_window_open
+from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 
 logger = logging.getLogger(__name__)
@@ -143,14 +143,4 @@ async def _process_receptive_queue_async() -> dict:
 @celery.task
 def process_receptive_queue() -> dict:
     """Beat: processa fila receptiva FIFO quando há capacidade."""
-
-    async def _wrapper() -> dict:
-        from agents.orchestrator.graph import reset_worker_async_clients
-
-        try:
-            return await _process_receptive_queue_async()
-        finally:
-            await reset_worker_async_clients()
-            await engine.dispose()
-
-    return asyncio.run(_wrapper())
+    return run_celery_async(_process_receptive_queue_async())

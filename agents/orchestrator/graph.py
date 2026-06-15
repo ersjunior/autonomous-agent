@@ -39,6 +39,11 @@ async def reset_worker_async_clients() -> None:
     _short_term_memory = ShortTermMemory()
 
 
+async def close_long_term_pgvector_pool() -> None:
+    """Fecha o pool asyncpg de memória de longo prazo (worker Celery cleanup)."""
+    await _long_term_memory._pool_holder.close()
+
+
 async def identify_intent(state: AgentState) -> AgentState:
     memory = _short_term_memory
     history = await memory.get_history(state["user_id"])

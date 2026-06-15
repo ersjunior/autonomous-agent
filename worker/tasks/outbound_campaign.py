@@ -1,6 +1,5 @@
 """Outbound campaign tasks — modo ATIVO."""
 
-import asyncio
 import logging
 import uuid
 
@@ -28,6 +27,7 @@ from app.core.activation_cadence_text import FOLLOWUP_TRIGGER_MESSAGE
 from app.core.activation_defaults import channel_family, normalize_channel_type
 from app.services.activation_slots import release_slot
 from app.services.capacity_service import release_outbound_capacity_for_lead
+from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 from worker.tasks.conversation_routing import agent_personality_context, agent_routing_metadata
 from worker.tasks.lead_tracking import upsert_lead_interaction
@@ -452,7 +452,7 @@ def send_campaign_message(
 ) -> dict:
     """Envia mensagem ativa (1ª abordagem) para um lead no canal indicado."""
     try:
-        return asyncio.run(
+        return run_celery_async(
             _send_campaign_message(
                 lead_id,
                 campaign_id,
@@ -479,7 +479,7 @@ def send_campaign_followup(
 ) -> dict:
     """Envia follow-up (2ª mensagem) quando o lead não respondeu."""
     try:
-        return asyncio.run(
+        return run_celery_async(
             _send_campaign_message(
                 lead_id,
                 campaign_id,

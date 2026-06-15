@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -12,6 +11,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.lead_interaction import LeadInteraction
 from app.services.tabulacao_assignment import maybe_apply_tabulacao_on_transition
+from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 
 logger = logging.getLogger(__name__)
@@ -70,4 +70,4 @@ async def _marcar_nao_atendidos_async() -> int:
 @celery.task(name="worker.tasks.status_sweep.marcar_nao_atendidos")
 def marcar_nao_atendidos() -> int:
     """Marca interações acionadas sem resposta após STATUS_TIMEOUT_HOURS."""
-    return asyncio.run(_marcar_nao_atendidos_async())
+    return run_celery_async(_marcar_nao_atendidos_async())

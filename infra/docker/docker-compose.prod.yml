@@ -34,4 +34,5 @@ services:
     volumes: !reset []
     environment:
       DEBUG: ${DEBUG:-false}
+      WORKER_PROCESS: "1"
     command: celery -A worker.celery_app worker --loglevel=info --concurrency=4

@@ -10,11 +10,11 @@ para quando o canal voz receptivo existir.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
-from app.core.database import AsyncSessionLocal, engine
+from app.core.database import AsyncSessionLocal
 from app.services.queue_entry_service import sweep_voice_queue_abandonment
+from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 
 logger = logging.getLogger(__name__)
@@ -30,14 +30,4 @@ async def _sweep_queue_abandonment_async() -> dict:
 @celery.task
 def sweep_queue_abandonment() -> dict:
     """Beat: abandono na fila de espera (apenas voz)."""
-
-    async def _wrapper() -> dict:
-        from agents.orchestrator.graph import reset_worker_async_clients
-
-        try:
-            return await _sweep_queue_abandonment_async()
-        finally:
-            await reset_worker_async_clients()
-            await engine.dispose()
-
-    return asyncio.run(_wrapper())
+    return run_celery_async(_sweep_queue_abandonment_async())

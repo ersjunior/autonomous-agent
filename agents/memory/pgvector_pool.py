@@ -29,6 +29,8 @@ async def create_pgvector_pool(database_url: str) -> asyncpg.Pool:
     return await asyncpg.create_pool(
         asyncpg_database_url(database_url),
         init=init_pgvector_connection,
+        min_size=1,
+        max_size=3,
     )
 
 
@@ -44,16 +46,23 @@ class PgVectorPoolHolder:
         self._pool: asyncpg.Pool | None = None
         self._loop_id: int | None = None
 
-    async def _discard_stale_pool(self) -> None:
+    async def close(self) -> None:
+        """Close the pool on the **active** event loop (releases TCP connections in Postgres)."""
         if self._pool is None:
             return
         try:
             await self._pool.close()
         except Exception:
-            # Pool criado em loop anterior (já fechado) — descartar referência basta.
+            logger.warning("PgVector pool close failed; discarding reference", exc_info=True)
+        self._pool = None
+        self._loop_id = None
+
+    async def _discard_stale_pool(self) -> None:
+        # Loop from a prior asyncio.run() is already dead — cannot close remotely.
+        if self._pool is not None:
             logger.debug(
-                "PgVector pool close skipped (stale loop); discarding reference",
-                exc_info=True,
+                "PgVector pool from previous event loop discarded without close "
+                "(loop already closed; rely on run_celery_async cleanup before loop exit)"
             )
         self._pool = None
         self._loop_id = None
@@ -84,3 +93,12 @@ async def use_pgvector_connection(
         pool = await get_pool()
         async with pool.acquire() as acquired:
             yield acquired
+
+
+async def dispose_pgvector_pools() -> None:
+    """Close asyncpg pools held by graph/KB singletons (call inside active Celery task loop)."""
+    from agents.orchestrator.graph import close_long_term_pgvector_pool
+    from agents.tools.knowledge_base import close_kb_pgvector_pool
+
+    await close_long_term_pgvector_pool()
+    await close_kb_pgvector_pool()

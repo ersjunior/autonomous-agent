@@ -163,6 +163,11 @@ class KnowledgeBaseRetriever:
 _retriever = KnowledgeBaseRetriever()
 
 
+async def close_kb_pgvector_pool() -> None:
+    """Fecha o pool asyncpg da base de conhecimento (worker Celery cleanup)."""
+    await _retriever._pool_holder.close()
+
+
 async def retrieve_kb_chunks(
     owner_user_id: str | uuid.UUID | None,
     query: str,

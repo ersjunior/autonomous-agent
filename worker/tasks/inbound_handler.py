@@ -16,18 +16,18 @@ Dedup WhatsApp: ``inbound_dedup:whatsapp:{MessageSid}`` (NX, 24h).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 import redis
 
-from app.core.database import AsyncSessionLocal, engine
+from app.core.database import AsyncSessionLocal
 from app.services.inbound_attendance import (
     attend_inbound_message,
     process_receptive_inbound,
     should_apply_receptive_queue,
 )
 from app.core.config import settings
+from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 from worker.tasks.conversation_routing import resolve_inbound_agent
 from worker.tasks.lead_tracking import find_lead_by_channel_user
@@ -187,15 +187,7 @@ def _run_inbound_async(
     message: str,
     message_sid: str | None = None,
 ) -> str:
-    """Executa corrotina inbound e descarta pool asyncpg (evita InterfaceError no prefork)."""
-
-    async def _wrapper() -> str:
-        from agents.orchestrator.graph import reset_worker_async_clients
-
-        try:
-            return await _process_inbound_message(channel, user_id, message, message_sid)
-        finally:
-            await reset_worker_async_clients()
-            await engine.dispose()
-
-    return asyncio.run(_wrapper())
+    """Executa corrotina inbound (cleanup via run_celery_async)."""
+    return run_celery_async(
+        _process_inbound_message(channel, user_id, message, message_sid)
+    )

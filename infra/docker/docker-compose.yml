@@ -1,41 +1,44 @@
 name: autonomous_agent
 
+x-app-environment: &app-environment
+  PYTHONPATH: /workspace:/workspace/backend:/workspace/worker
+  DEBUG: ${DEBUG:-true}
+  SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+  DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-autonomous_agent}
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+  EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+  TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+  TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+  TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
+  TWILIO_VOICE_NUMBER: ${TWILIO_VOICE_NUMBER:-}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+  TUNNEL_MODE: ${TUNNEL_MODE:-temporary}
+  TUNNEL_URL_FILE: ${TUNNEL_URL_FILE:-/shared/tunnel_url.txt}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
+  ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+  ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+  STT_PROVIDER: ${STT_PROVIDER:-faster_whisper}
+  TTS_PROVIDER: ${TTS_PROVIDER:-coqui}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
+  WHISPER_BASE_URL: ${WHISPER_BASE_URL:-http://faster-whisper:8001}
+  WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+  COQUI_BASE_URL: ${COQUI_BASE_URL:-http://coqui-tts:8002}
+  COQUI_VOICE_SAMPLE: ${COQUI_VOICE_SAMPLE:-}
+
 x-app-env: &app-env
   env_file:
     - path: ../../.env
       required: false
   environment:
-    PYTHONPATH: /workspace:/workspace/backend:/workspace/worker
-    DEBUG: ${DEBUG:-true}
-    SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
-    DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-autonomous_agent}
-    REDIS_URL: redis://redis:6379/0
-    CELERY_BROKER_URL: redis://redis:6379/1
-    CELERY_RESULT_BACKEND: redis://redis:6379/2
-    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
-    EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
-    TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
-    TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
-    TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER:-}
-    TWILIO_VOICE_NUMBER: ${TWILIO_VOICE_NUMBER:-}
-    PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-    TUNNEL_MODE: ${TUNNEL_MODE:-temporary}
-    TUNNEL_URL_FILE: ${TUNNEL_URL_FILE:-/shared/tunnel_url.txt}
-    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-    TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
-    ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
-    ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
-    FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-    LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
-    STT_PROVIDER: ${STT_PROVIDER:-faster_whisper}
-    TTS_PROVIDER: ${TTS_PROVIDER:-coqui}
-    OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-    OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
-    WHISPER_BASE_URL: ${WHISPER_BASE_URL:-http://faster-whisper:8001}
-    WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
-    COQUI_BASE_URL: ${COQUI_BASE_URL:-http://coqui-tts:8002}
-    COQUI_VOICE_SAMPLE: ${COQUI_VOICE_SAMPLE:-}
+    <<: *app-environment
 
 # GPU NVIDIA (Compose v2+). Requer NVIDIA Container Toolkit.
 # Em host sem GPU, comente estes blocos ou use um override local.
@@ -52,6 +55,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: autonomous-agent-postgres
+    command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -153,6 +157,9 @@ services:
       dockerfile: backend/Dockerfile
     container_name: autonomous-agent-worker
     <<: *app-env
+    environment:
+      <<: *app-environment
+      WORKER_PROCESS: "1"
     depends_on:
       postgres:
         condition: service_healthy

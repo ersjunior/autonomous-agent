@@ -1,14 +1,12 @@
 """Celery application instance."""
 
-import asyncio
+from app.core.config import settings
+from app.services.settings_sync import bootstrap_settings
+from worker.async_runner import run_celery_async
 
 from celery import Celery
 from celery.schedules import crontab
 from celery.signals import worker_process_init
-
-from app.core.config import settings
-from app.core.database import engine
-from app.services.settings_sync import bootstrap_settings
 
 celery = Celery(
     "autonomous_agent",
@@ -76,12 +74,11 @@ celery.conf.update(
 
 
 async def _init_worker_process() -> None:
-    """Bootstrap settings and drop pool connections bound to this one-off init loop."""
+    """Bootstrap settings after prefork (pool inherited from parent is discarded on cleanup)."""
     await bootstrap_settings()
-    await engine.dispose()
 
 
 @worker_process_init.connect
 def _init_worker_settings(**_kwargs) -> None:
     """Seed/load provider settings from DB on each worker child process."""
-    asyncio.run(_init_worker_process())
+    run_celery_async(_init_worker_process())

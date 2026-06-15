@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import date
 
@@ -11,6 +10,7 @@ from sqlalchemy import or_, select
 from app.core.database import AsyncSessionLocal
 from app.models.lead_base import LeadBase
 from app.services.devolutiva import DEVOLUTIVAS_ROOT, gerar_devolutiva_base
+from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 
 logger = logging.getLogger(__name__)
@@ -44,4 +44,4 @@ async def _gerar_devolutivas_diarias_async() -> int:
 @celery.task(name="worker.tasks.devolutiva_task.gerar_devolutivas_diarias")
 def gerar_devolutivas_diarias() -> int:
     """Gera arquivos xlsx de devolutiva para todas as bases ativas."""
-    return asyncio.run(_gerar_devolutivas_diarias_async())
+    return run_celery_async(_gerar_devolutivas_diarias_async())

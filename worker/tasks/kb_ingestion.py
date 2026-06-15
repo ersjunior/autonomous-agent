@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -10,11 +9,12 @@ from pathlib import Path
 
 from sqlalchemy import delete, update
 
-from app.core.database import AsyncSessionLocal, engine
+from app.core.database import AsyncSessionLocal
 from app.models.knowledge import KBChunk, KBDocument, KBDocumentStatus
 from app.services.kb_chunking import chunk_text
 from app.services.kb_text_extract import extract_text_from_file
 from agents.services.embedding_service import embed_text
+from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 
 logger = logging.getLogger(__name__)
@@ -130,13 +130,7 @@ async def _process_kb_document_async(document_id: uuid.UUID) -> None:
 
 
 def _run_kb_async(document_id: str) -> None:
-    async def _wrapper() -> None:
-        try:
-            await _process_kb_document_async(uuid.UUID(document_id))
-        finally:
-            await engine.dispose()
-
-    asyncio.run(_wrapper())
+    run_celery_async(_process_kb_document_async(uuid.UUID(document_id)))
 
 
 @celery.task(bind=True, max_retries=2)
@@ -148,7 +142,7 @@ def process_kb_document(self, document_id: str) -> str:
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             try:
-                asyncio.run(_mark_kb_error(uuid.UUID(document_id), str(exc)))
+                run_celery_async(_mark_kb_error(uuid.UUID(document_id), str(exc)))
             except Exception:
                 logger.exception(
                     "Failed to mark KB document %s as ERROR after retries",
