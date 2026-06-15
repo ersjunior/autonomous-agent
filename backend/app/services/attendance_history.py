@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.authorization import can_view
+from app.core.config import settings
 from app.models.agent import Agent, AgentMode
 from app.models.campaign import Campaign
 from app.models.interaction import Interaction
@@ -19,6 +20,7 @@ from app.models.lead import Lead
 from app.models.lead_interaction import LeadInteraction
 from app.models.user import User
 from app.schemas.monitoring_attendance import (
+    ActiveConversationItem,
     AttendanceConversationResponse,
     AttendanceHistoryItem,
     ConversationMessage,
@@ -49,6 +51,9 @@ VOICE_DURATION_NOTE = (
     "Duração da chamada indisponível (integração de telefonia pendente). "
     "Exibida apenas transcrição parcial das falas processadas pelo agente."
 )
+ACTIVE_CONVERSATIONS_ALL_WINDOW = 0
+ACTIVE_CONVERSATIONS_MAX_ITEMS = 100
+ACTIVE_CONVERSATIONS_MAX_WINDOW_MINUTES = 525600
 PREVIEW_MAX_LEN = 120
 
 
@@ -85,6 +90,20 @@ async def get_receptive_pool_owner_id(db: AsyncSession) -> uuid.UUID | None:
     """Owner of the seed Agente_Receptivo (institutional receptive pool)."""
     result = await db.execute(
         select(Agent.user_id)
+        .where(
+            Agent.is_system.is_(True),
+            Agent.mode == AgentMode.RECEPTIVE,
+            Agent.name == SEED_AGENT_RECEPTIVE_NAME,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_receptive_pool_agent(db: AsyncSession) -> Agent | None:
+    """Seed Agente_Receptivo — usado para atribuir agente em contatos órfãos."""
+    result = await db.execute(
+        select(Agent)
         .where(
             Agent.is_system.is_(True),
             Agent.mode == AgentMode.RECEPTIVE,
@@ -181,6 +200,107 @@ def _has_conversational_activity(li: LeadInteraction | None, stats: InteractionS
     if li.data_ultimo_contato or li.data_acionamento:
         return True
     return _is_terminal_status(li.status)
+
+
+def _ensure_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def compute_last_activity(
+    li: LeadInteraction | None,
+    stats: InteractionStats,
+) -> datetime | None:
+    """Maior timestamp entre interactions, último contato inbound e última tentativa outbound."""
+    candidates: list[datetime] = []
+    if stats.last_at:
+        candidates.append(stats.last_at)
+    if li is not None:
+        if li.data_ultimo_contato:
+            candidates.append(li.data_ultimo_contato)
+        if li.data_ultima_tentativa:
+            candidates.append(li.data_ultima_tentativa)
+    if not candidates:
+        return None
+    return max(_ensure_utc(dt) for dt in candidates)
+
+
+def _is_active_conversation(
+    li: LeadInteraction | None,
+    stats: InteractionStats,
+    *,
+    cutoff: datetime | None,
+) -> bool:
+    if li is not None and _is_terminal_status(li.status):
+        return False
+    last_activity = compute_last_activity(li, stats)
+    if last_activity is None:
+        return False
+    if cutoff is None:
+        return True
+    return last_activity >= cutoff
+
+
+def _li_to_active_item(
+    li: LeadInteraction,
+    *,
+    contact_user_id: str,
+    stats: InteractionStats,
+) -> ActiveConversationItem:
+    lead = li.lead
+    campaign = li.campaign
+    agent = campaign.agent if campaign else None
+    return ActiveConversationItem(
+        lead_interaction_id=li.id,
+        contact_user_id=contact_user_id,
+        lead_nome=lead.nome_cliente if lead else None,
+        channel=li.channel_type,
+        agent_id=agent.id if agent else None,
+        agent_name=agent.name if agent else None,
+        status=li.status,
+        last_message_preview=stats.last_preview,
+        last_activity_at=compute_last_activity(li, stats),
+        message_count=stats.message_count,
+    )
+
+
+def _orphan_to_active_item(
+    *,
+    contact_user_id: str,
+    channel: str,
+    stats: InteractionStats,
+    lead: Lead | None,
+    receptive_agent: Agent | None,
+) -> ActiveConversationItem:
+    return ActiveConversationItem(
+        lead_interaction_id=None,
+        contact_user_id=contact_user_id,
+        lead_nome=lead.nome_cliente if lead else None,
+        channel=channel,
+        agent_id=receptive_agent.id if receptive_agent else None,
+        agent_name=receptive_agent.name if receptive_agent else None,
+        status=None,
+        last_message_preview=stats.last_preview,
+        last_activity_at=compute_last_activity(None, stats),
+        message_count=stats.message_count,
+    )
+
+
+def _dedupe_active_items(items: list[ActiveConversationItem]) -> list[ActiveConversationItem]:
+    """Mantém o item com maior last_activity_at por (channel, contact_user_id)."""
+    best: dict[tuple[str, str], ActiveConversationItem] = {}
+    for item in items:
+        key = (item.channel.lower(), item.contact_user_id)
+        existing = best.get(key)
+        if existing is None:
+            best[key] = item
+            continue
+        existing_at = existing.last_activity_at or datetime.min.replace(tzinfo=timezone.utc)
+        item_at = item.last_activity_at or datetime.min.replace(tzinfo=timezone.utc)
+        if item_at >= existing_at:
+            best[key] = item
+    return list(best.values())
 
 
 def _li_to_item(
@@ -404,6 +524,125 @@ async def list_attendance_history(
     total = len(filtered)
     page = filtered[skip : skip + limit]
     return page, total
+
+
+async def _collect_active_li_items(
+    db: AsyncSession,
+    user: User,
+    *,
+    cutoff: datetime | None,
+) -> list[ActiveConversationItem]:
+    result = await db.execute(
+        select(LeadInteraction)
+        .join(Campaign, LeadInteraction.campaign_id == Campaign.id)
+        .where(campaign_visibility_filter(user))
+        .options(
+            selectinload(LeadInteraction.lead),
+            selectinload(LeadInteraction.campaign).selectinload(Campaign.agent),
+            selectinload(LeadInteraction.tabulacao),
+        )
+    )
+    records = list(result.scalars().unique().all())
+    items: list[ActiveConversationItem] = []
+    for li in records:
+        contact = _resolve_recipient(li.lead, li.channel_type) if li.lead else None
+        if not contact:
+            continue
+        variants = canonical_contact_ids(li.channel_type, contact)
+        stats = await fetch_interaction_stats(db, variants)
+        if not _is_active_conversation(li, stats, cutoff=cutoff):
+            continue
+        items.append(
+            _li_to_active_item(li, contact_user_id=contact, stats=stats)
+        )
+    return items
+
+
+async def _collect_active_orphan_items(
+    db: AsyncSession,
+    user: User,
+    *,
+    cutoff: datetime | None,
+) -> list[ActiveConversationItem]:
+    receptive_owner = await get_receptive_pool_owner_id(db)
+    if not can_view_orphan_attendance(user, receptive_owner):
+        return []
+
+    receptive_agent = await get_receptive_pool_agent(db)
+    distinct = await db.execute(select(Interaction.user_id).distinct())
+    raw_ids = [row[0] for row in distinct.all() if row[0]]
+
+    items: list[ActiveConversationItem] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    for raw_uid in raw_ids:
+        channel = infer_channel_from_contact(raw_uid)
+        if await _contact_has_tracked_li_any_channel(db, raw_uid):
+            continue
+
+        variants = canonical_contact_ids(channel, raw_uid)
+        canonical_key = variants[0] if variants else raw_uid
+        dedupe_key = (channel, canonical_key)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+
+        stats = await fetch_interaction_stats(db, variants)
+        if not _is_active_conversation(None, stats, cutoff=cutoff):
+            continue
+
+        lead = await find_lead_by_channel_user(db, channel, raw_uid)
+        items.append(
+            _orphan_to_active_item(
+                contact_user_id=canonical_key,
+                channel=channel,
+                stats=stats,
+                lead=lead,
+                receptive_agent=receptive_agent,
+            )
+        )
+    return items
+
+
+async def list_active_conversations(
+    db: AsyncSession,
+    user: User,
+    *,
+    window_minutes: int | None = None,
+    limit: int | None = None,
+) -> tuple[list[ActiveConversationItem], int, int]:
+    """
+    Conversas com atividade recente (monitoramento tempo real).
+
+    Reusa fetch_interaction_stats, canonical_contact_ids, _resolve_recipient e
+    campaign_visibility_filter de attendance_history.
+
+    ``window_minutes=0`` → todo o período (sem corte temporal; status não-terminal).
+  Resultado limitado a ``ACTIVE_CONVERSATIONS_MAX_ITEMS`` por last_activity DESC.
+    """
+    max_items = limit if limit is not None else ACTIVE_CONVERSATIONS_MAX_ITEMS
+
+    if window_minutes == ACTIVE_CONVERSATIONS_ALL_WINDOW:
+        cutoff = None
+        resolved_window = ACTIVE_CONVERSATIONS_ALL_WINDOW
+    elif window_minutes is not None:
+        resolved_window = window_minutes
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+    else:
+        resolved_window = settings.active_conversations_window_minutes
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=resolved_window)
+
+    li_items = await _collect_active_li_items(db, user, cutoff=cutoff)
+    orphan_items = await _collect_active_orphan_items(db, user, cutoff=cutoff)
+    merged = _dedupe_active_items(li_items + orphan_items)
+
+    merged.sort(
+        key=lambda x: x.last_activity_at or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    total = len(merged)
+    page = merged[:max_items]
+    return page, total, resolved_window
 
 
 async def get_lead_interaction_for_attendance(

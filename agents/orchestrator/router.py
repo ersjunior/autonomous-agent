@@ -60,14 +60,17 @@ async def route_message(
 
     normalized_channel = channel.lower()
     if notify_received:
-        await publish_event_async(
-            "message_received",
-            {
-                "channel": normalized_channel,
-                "user_id": user_id,
-                "message": message,
-            },
-        )
+        received_payload: dict = {
+            "channel": normalized_channel,
+            "user_id": user_id,
+            "message": message,
+        }
+        if agent_context:
+            if agent_context.get("agent_id"):
+                received_payload["agent_id"] = agent_context["agent_id"]
+            if agent_context.get("agent_name"):
+                received_payload["agent_name"] = agent_context["agent_name"]
+        await publish_event_async("message_received", received_payload)
 
     state = build_initial_state(
         message,

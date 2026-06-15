@@ -1,5 +1,6 @@
 import { apiFetch, formatApiError } from "@/lib/api";
 import type {
+  ActiveConversationsList,
   AttendanceConversation,
   AttendanceHistoryFilters,
   AttendanceHistoryList,
@@ -33,6 +34,23 @@ export async function fetchAttendanceHistory(
   const res = await apiFetch(`/api/v1/monitoring/attendance-history?${params.toString()}`);
   if (!res.ok) {
     await parseError(res, "Erro ao carregar histórico de atendimentos");
+  }
+  return res.json();
+}
+
+export async function getActiveConversations(
+  windowMinutes?: number,
+): Promise<ActiveConversationsList> {
+  const params = new URLSearchParams();
+  if (windowMinutes !== undefined) {
+    params.set("window_minutes", String(windowMinutes));
+  }
+  const query = params.toString();
+  const res = await apiFetch(
+    `/api/v1/monitoring/active-conversations${query ? `?${query}` : ""}`,
+  );
+  if (!res.ok) {
+    await parseError(res, "Erro ao carregar conversas ativas");
   }
   return res.json();
 }

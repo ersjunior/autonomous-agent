@@ -161,6 +161,9 @@ class Settings(BaseSettings):
     human_handoff_finalize_ttl_seconds: int = 14400  # 4h após assumir → auto NEG:ABANDONO
     human_handoff_sweep_seconds: int = 60  # intervalo do Beat sweep_human_handoff_timeouts
 
+    # Monitoramento — janela de conversas ativas (REST active-conversations)
+    active_conversations_window_minutes: int = 10
+
     # H-1 — handoff humano: notificação do operador + link wa.me ao lead no escalonamento
     human_handoff_whatsapp: str = ""  # E.164 do atendente; vazio = desabilitado
     human_handoff_enabled: bool = True  # requer número preenchido para ativar na prática

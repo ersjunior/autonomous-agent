@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.monitoring_attendance import (
+    ActiveConversationsListResponse,
     AttendanceConversationResponse,
     AttendanceHistoryListResponse,
 )
@@ -23,6 +24,7 @@ from app.services.attendance_history import (
     ATTENDANCE_STATUS_VALUES,
     get_attendance_conversation_by_contact,
     get_attendance_conversation_by_li,
+    list_active_conversations,
     list_attendance_history,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -147,6 +149,39 @@ async def get_attendance_history(
         open_only=open_only,
     )
     return AttendanceHistoryListResponse(items=items, total=total, skip=skip, limit=limit)
+
+
+@router.get("/active-conversations", response_model=ActiveConversationsListResponse)
+async def get_active_conversations(
+    window_minutes: int | None = Query(
+        None,
+        ge=0,
+        le=525600,
+        description=(
+            "Janela de atividade em minutos (default: app setting). "
+            "0 = todo o período (sem corte temporal)."
+        ),
+    ),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActiveConversationsListResponse:
+    """
+    Conversas ativas agora — para popular o painel de monitoramento ao abrir a aba.
+
+    Critério: última atividade (interactions, data_ultimo_contato ou data_ultima_tentativa)
+    dentro da janela configurável; status não terminal quando há LeadInteraction.
+    ``window_minutes=0`` retorna todas as conversas não-terminais (máx. 100 itens).
+    """
+    items, total, resolved_window = await list_active_conversations(
+        db,
+        user,
+        window_minutes=window_minutes,
+    )
+    return ActiveConversationsListResponse(
+        items=items,
+        total=total,
+        window_minutes=resolved_window,
+    )
 
 
 @router.get(

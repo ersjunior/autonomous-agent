@@ -16,6 +16,19 @@ from agents.workers.response_agent import generate_response as run_generate_resp
 
 logger = logging.getLogger(__name__)
 
+
+def _agent_event_fields(state: AgentState) -> dict:
+    """Optional agent metadata for monitoring events (backward-compatible)."""
+    fields: dict = {}
+    agent_id = state.get("agent_id")
+    agent_name = state.get("agent_name")
+    if agent_id:
+        fields["agent_id"] = agent_id
+    if agent_name:
+        fields["agent_name"] = agent_name
+    return fields
+
+
 EMPTY_RESPONSE_FALLBACK = (
     "Desculpe, não consegui processar sua mensagem agora. Pode reformular?"
 )
@@ -60,6 +73,7 @@ async def identify_intent(state: AgentState) -> AgentState:
             "intent": result.intent,
             "confidence": result.confidence,
             "complaint_severity": result.complaint_severity,
+            **_agent_event_fields(state),
         },
     )
     return {
@@ -146,6 +160,7 @@ async def send_response(state: AgentState) -> AgentState:
             "message": state["message"],
             "response": response,
             "intent": state.get("intent", ""),
+            **_agent_event_fields(state),
         },
     )
 

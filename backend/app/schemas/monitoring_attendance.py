@@ -34,6 +34,25 @@ class AttendanceHistoryListResponse(BaseModel):
     limit: int
 
 
+class ActiveConversationItem(BaseModel):
+    contact_user_id: str
+    channel: str
+    lead_nome: str | None = None
+    lead_interaction_id: UUID | None = None
+    agent_id: UUID | None = None
+    agent_name: str | None = None
+    status: str | None = None
+    last_message_preview: str | None = None
+    last_activity_at: datetime | None = None
+    message_count: int = 0
+
+
+class ActiveConversationsListResponse(BaseModel):
+    items: list[ActiveConversationItem]
+    total: int
+    window_minutes: int
+
+
 class ConversationMessage(BaseModel):
     role: str = Field(..., description="user | assistant")
     content: str

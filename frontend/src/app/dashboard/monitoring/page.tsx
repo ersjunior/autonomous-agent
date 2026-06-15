@@ -12,41 +12,37 @@ import {
   type HandoffContact,
   type TabulacaoCatalogItem,
 } from "@/lib/api";
-import { fetchAttendanceHistory, fetchAttendanceMessages } from "@/lib/api-monitoring";
+import { fetchAttendanceHistory, fetchAttendanceMessages, getActiveConversations } from "@/lib/api-monitoring";
 import { fetchCampaigns } from "@/lib/api-entities";
 import type {
+  ActiveConversation,
+  ActiveConversationItem,
+  AgentMonitoringEvent,
   AttendanceConversation,
   AttendanceHistoryItem,
+  ConversationMessage,
 } from "@/lib/types/monitoring-attendance";
 import type { Campaign } from "@/lib/types/campaigns";
+import { CHANNEL_LABELS } from "@/lib/types/metrics";
+import { AttendanceConversationModal } from "@/components/monitoring/AttendanceConversationModal";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { PageHeader } from "@/components/ui/PageHeader";
 
-interface AgentEvent {
-  type: string;
-  timestamp: string;
-  channel?: string;
-  user_id?: string;
-  message?: string;
-  response?: string;
-  intent?: string;
-  confidence?: number;
-}
+const WS_BACKOFF_MS = [1000, 2000, 5000, 10000, 30000] as const;
+const ACTIVE_TTL_CHECK_MS = 30_000;
+const DEFAULT_ACTIVE_WINDOW_MINUTES = 10;
+const PREVIEW_MAX_LEN = 120;
+const ALL_PERIOD_WINDOW_MINUTES = 0;
 
-const EVENT_LABELS: Record<string, string> = {
-  message_received: "Mensagem recebida",
-  intent_detected: "Intenção detectada",
-  response_sent: "Resposta enviada",
-  escalated: "Escalada",
-};
-
-const EVENT_VARIANTS: Record<string, "default" | "warning" | "success" | "muted"> = {
-  message_received: "default",
-  intent_detected: "warning",
-  response_sent: "success",
-  escalated: "muted",
-};
+const ACTIVE_WINDOW_OPTIONS = [
+  { label: "10 min", windowMinutes: 10 },
+  { label: "Última Hora", windowMinutes: 60 },
+  { label: "Dia", windowMinutes: 1440 },
+  { label: "Mês", windowMinutes: 43200 },
+  { label: "Ano", windowMinutes: 525600 },
+  { label: "Todo o período", windowMinutes: ALL_PERIOD_WINDOW_MINUTES },
+] as const;
 
 const FINALIZE_CATEGORIES = new Set(["NEGOCIO", "CUSTOMIZADO"]);
 const HISTORY_CHANNELS = ["whatsapp", "telegram", "voice"] as const;
@@ -117,6 +113,179 @@ function contactLabel(item: AttendanceHistoryItem): string {
   return item.lead_nome || item.contact_user_id;
 }
 
+function conversationKey(channel: string, userId: string): string {
+  return `${channel.toLowerCase()}:${userId}`;
+}
+
+function truncatePreview(text: string, max = PREVIEW_MAX_LEN): string {
+  const cleaned = text.trim();
+  if (!cleaned) return "";
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, max - 1)}…`;
+}
+
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "—";
+  const diffSec = Math.floor((Date.now() - then) / 1000);
+  if (diffSec < 60) return "agora";
+  const mins = Math.floor(diffSec / 60);
+  if (mins < 60) return `há ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `há ${hours}h`;
+  return new Date(iso).toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function activeConversationLabel(conv: ActiveConversation): string {
+  return conv.lead_nome || conv.contact_user_id;
+}
+
+function restItemToConversation(item: ActiveConversationItem): ActiveConversation {
+  const lastMessage = item.last_message_preview ?? "";
+  return {
+    ...item,
+    last_timestamp: item.last_activity_at ?? new Date().toISOString(),
+    last_message: lastMessage,
+    last_message_preview: lastMessage,
+    is_escalated: false,
+  };
+}
+
+function applyAgentEvent(
+  prev: Record<string, ActiveConversation>,
+  event: AgentMonitoringEvent,
+): Record<string, ActiveConversation> {
+  const channel = (event.channel ?? "").toLowerCase();
+  const userId = event.user_id;
+  if (!channel || !userId) return prev;
+
+  const key = conversationKey(channel, userId);
+  const existing = prev[key];
+  const next: ActiveConversation = existing
+    ? { ...existing }
+    : {
+        contact_user_id: userId,
+        channel,
+        lead_nome: null,
+        lead_interaction_id: null,
+        agent_id: event.agent_id ?? null,
+        agent_name: event.agent_name ?? null,
+        status: null,
+        last_message_preview: "",
+        last_activity_at: event.timestamp,
+        message_count: 0,
+        last_timestamp: event.timestamp,
+        last_message: "",
+        is_escalated: false,
+      };
+
+  next.last_timestamp = event.timestamp;
+  next.last_activity_at = event.timestamp;
+  next.last_event_type = event.type;
+  if (event.agent_id) next.agent_id = event.agent_id;
+  if (event.agent_name) next.agent_name = event.agent_name;
+
+  switch (event.type) {
+    case "message_received":
+      if (event.message) next.last_message = event.message;
+      break;
+    case "intent_detected":
+      if (event.intent) next.intent = event.intent;
+      break;
+    case "response_sent":
+      if (event.response) next.last_message = event.response;
+      next.is_escalated = false;
+      break;
+    case "escalated":
+      if (event.response) next.last_message = event.response;
+      next.is_escalated = true;
+      break;
+    default:
+      break;
+  }
+
+  next.last_message_preview = truncatePreview(
+    next.last_message || next.last_message_preview || "",
+  );
+
+  return { ...prev, [key]: next };
+}
+
+function pruneStaleConversations(
+  prev: Record<string, ActiveConversation>,
+  windowMinutes: number,
+): Record<string, ActiveConversation> {
+  if (windowMinutes === ALL_PERIOD_WINDOW_MINUTES) {
+    return prev;
+  }
+  const cutoff = Date.now() - windowMinutes * 60 * 1000;
+  let changed = false;
+  const next: Record<string, ActiveConversation> = { ...prev };
+  for (const [key, conv] of Object.entries(next)) {
+    const ts = new Date(conv.last_timestamp).getTime();
+    if (Number.isNaN(ts) || ts < cutoff) {
+      delete next[key];
+      changed = true;
+    }
+  }
+  return changed ? next : prev;
+}
+
+type ConversationFetchTarget = {
+  lead_interaction_id: string | null;
+  channel: string;
+  contact_user_id: string;
+};
+
+function appendLiveEventToConversation(
+  conv: AttendanceConversation,
+  event: AgentMonitoringEvent,
+): AttendanceConversation | null {
+  if (
+    conversationKey(conv.channel, conv.contact_user_id) !==
+    conversationKey(event.channel ?? "", event.user_id ?? "")
+  ) {
+    return null;
+  }
+
+  let newMsg: ConversationMessage | null = null;
+  if (event.type === "message_received" && event.message) {
+    newMsg = {
+      role: "user",
+      content: event.message,
+      at: event.timestamp,
+      intent: event.intent,
+    };
+  } else if (
+    (event.type === "response_sent" || event.type === "escalated") &&
+    event.response
+  ) {
+    newMsg = {
+      role: "assistant",
+      content: event.response,
+      at: event.timestamp,
+    };
+  }
+  if (!newMsg) return null;
+
+  const last = conv.messages[conv.messages.length - 1];
+  if (
+    last &&
+    last.role === newMsg.role &&
+    last.content === newMsg.content &&
+    last.at === newMsg.at
+  ) {
+    return null;
+  }
+
+  return { ...conv, messages: [...conv.messages, newMsg] };
+}
+
 export default function MonitoringPage() {
   const [activeTab, setActiveTab] = useState<TabId>("live");
 
@@ -126,7 +295,7 @@ export default function MonitoringPage() {
         title="Monitoramento"
         description={
           activeTab === "live"
-            ? "Feed em tempo real de eventos do agente e modo humano."
+            ? "Conversas ativas em tempo real e modo humano."
             : "Histórico de atendimentos com conversas para supervisão."
         }
       />
@@ -162,7 +331,14 @@ export default function MonitoringPage() {
 }
 
 function LiveMonitoringPanel() {
-  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [conversations, setConversations] = useState<Record<string, ActiveConversation>>({});
+  const [conversationsLoading, setConversationsLoading] = useState(true);
+  const [conversationsError, setConversationsError] = useState<string | null>(null);
+  const [selectedWindowMinutes, setSelectedWindowMinutes] = useState(DEFAULT_ACTIVE_WINDOW_MINUTES);
+  const [activeWindowMinutes, setActiveWindowMinutes] = useState(DEFAULT_ACTIVE_WINDOW_MINUTES);
+  const [conversation, setConversation] = useState<AttendanceConversation | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationError, setConversationError] = useState("");
   const [connected, setConnected] = useState(false);
   const [handoffs, setHandoffs] = useState<HandoffContact[]>([]);
   const [handoffLoading, setHandoffLoading] = useState(false);
@@ -173,6 +349,30 @@ function LiveMonitoringPanel() {
   const [selectedTabulacao, setSelectedTabulacao] = useState("");
   const [finalizeLoading, setFinalizeLoading] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const hasConnectedBeforeRef = useRef(false);
+  const openConversationKeyRef = useRef<string | null>(null);
+
+  const loadActiveConversations = useCallback(async (windowMinutes?: number) => {
+    const resolvedWindow = windowMinutes ?? selectedWindowMinutes;
+    setConversationsError(null);
+    setConversationsLoading(true);
+    try {
+      const data = await getActiveConversations(resolvedWindow);
+      setActiveWindowMinutes(data.window_minutes);
+      const mapped: Record<string, ActiveConversation> = {};
+      for (const item of data.items) {
+        const key = conversationKey(item.channel, item.contact_user_id);
+        mapped[key] = restItemToConversation(item);
+      }
+      setConversations(mapped);
+    } catch (err) {
+      setConversationsError(
+        err instanceof Error ? err.message : "Erro ao carregar conversas ativas",
+      );
+    } finally {
+      setConversationsLoading(false);
+    }
+  }, [selectedWindowMinutes]);
 
   const loadHandoffs = useCallback(async () => {
     setHandoffLoading(true);
@@ -207,35 +407,90 @@ function LiveMonitoringPanel() {
   useEffect(() => {
     void loadHandoffs();
     void loadTabulacoes();
+    void loadActiveConversations(selectedWindowMinutes);
     const interval = setInterval(() => void loadHandoffs(), 30000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount inicial; troca de janela via handleWindowChange
   }, [loadHandoffs, loadTabulacoes]);
 
   useEffect(() => {
-    const wsUrl = `${API_URL.replace(/^http/, "ws")}/api/v1/monitoring/ws`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    const interval = setInterval(() => {
+      setConversations((prev) => pruneStaleConversations(prev, activeWindowMinutes));
+    }, ACTIVE_TTL_CHECK_MS);
+    return () => clearInterval(interval);
+  }, [activeWindowMinutes]);
 
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-    ws.onerror = () => setConnected(false);
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as AgentEvent;
-        setEvents((prev) => [data, ...prev].slice(0, 100));
-        if (data.type === "escalated") {
-          void loadHandoffs();
+  useEffect(() => {
+    const wsUrl = `${API_URL.replace(/^http/, "ws")}/api/v1/monitoring/ws`;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempt = 0;
+    let intentionalClose = false;
+
+    function scheduleReconnect() {
+      const delay =
+        WS_BACKOFF_MS[Math.min(reconnectAttempt, WS_BACKOFF_MS.length - 1)] ??
+        WS_BACKOFF_MS[WS_BACKOFF_MS.length - 1];
+      reconnectAttempt += 1;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    }
+
+    function connect() {
+      ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setConnected(true);
+        reconnectAttempt = 0;
+        if (hasConnectedBeforeRef.current) {
+          void loadActiveConversations(selectedWindowMinutes);
+        } else {
+          hasConnectedBeforeRef.current = true;
         }
-      } catch {
-        // ignore malformed events
-      }
-    };
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        wsRef.current = null;
+        if (!intentionalClose) {
+          scheduleReconnect();
+        }
+      };
+
+      ws.onerror = () => {
+        setConnected(false);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as AgentMonitoringEvent;
+          setConversations((prev) => applyAgentEvent(prev, data));
+          setConversation((conv) => {
+            if (!conv || !openConversationKeyRef.current) return conv;
+            const updated = appendLiveEventToConversation(conv, data);
+            return updated ?? conv;
+          });
+          if (data.type === "escalated") {
+            void loadHandoffs();
+          }
+        } catch {
+          // ignore malformed events
+        }
+      };
+    }
+
+    connect();
 
     return () => {
-      ws.close();
+      intentionalClose = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
       wsRef.current = null;
     };
-  }, [loadHandoffs]);
+  }, [loadHandoffs, loadActiveConversations, selectedWindowMinutes]);
 
   async function handleAssume(channel: string, userId: string) {
     const key = `${channel}:${userId}`;
@@ -311,6 +566,37 @@ function LiveMonitoringPanel() {
 
   const waitingCount = handoffs.filter((h) => !h.is_assumed).length;
   const assumedCount = handoffs.filter((h) => h.is_assumed).length;
+
+  const sortedConversations = Object.values(conversations).sort(
+    (a, b) => new Date(b.last_timestamp).getTime() - new Date(a.last_timestamp).getTime(),
+  );
+
+  async function openConversation(item: ConversationFetchTarget) {
+    openConversationKeyRef.current = conversationKey(item.channel, item.contact_user_id);
+    setConversationLoading(true);
+    setConversationError("");
+    setConversation(null);
+    try {
+      const data = await fetchAttendanceMessages(item);
+      setConversation(data);
+    } catch (err) {
+      setConversationError(err instanceof Error ? err.message : "Erro ao abrir conversa.");
+      openConversationKeyRef.current = null;
+    } finally {
+      setConversationLoading(false);
+    }
+  }
+
+  function closeConversation() {
+    openConversationKeyRef.current = null;
+    setConversation(null);
+    setConversationError("");
+  }
+
+  function handleWindowChange(windowMinutes: number) {
+    setSelectedWindowMinutes(windowMinutes);
+    void loadActiveConversations(windowMinutes);
+  }
 
   return (
     <>
@@ -467,55 +753,121 @@ function LiveMonitoringPanel() {
         </div>
       )}
 
-      {events.length === 0 ? (
-        <div className="glass-card p-8 text-center text-muted-foreground">
-          Aguardando eventos... Envie uma mensagem pelo WhatsApp ou Telegram.
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-foreground">Atendimentos em andamento</h2>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {events.map((event, index) => (
-            <div key={`${event.timestamp}-${index}`} className="glass-card p-5">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <Badge variant={EVENT_VARIANTS[event.type] ?? "muted"}>
-                  {EVENT_LABELS[event.type] ?? event.type}
-                </Badge>
-                {event.channel && (
-                  <span className="text-xs uppercase text-muted-foreground">
-                    {event.channel}
-                  </span>
-                )}
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {new Date(event.timestamp).toLocaleString("pt-BR")}
-                </span>
-              </div>
 
-              {event.user_id && (
-                <p className="text-xs text-muted-foreground">Usuário: {event.user_id}</p>
-              )}
-              {event.message && (
-                <p className="mt-2 text-sm text-foreground">
-                  <span className="font-medium text-muted-foreground">Mensagem:</span>{" "}
-                  {event.message}
-                </p>
-              )}
-              {event.intent && (
-                <p className="mt-2 text-sm text-foreground">
-                  <span className="font-medium text-muted-foreground">Intenção:</span>{" "}
-                  {event.intent}
-                  {event.confidence !== undefined &&
-                    ` (${(event.confidence * 100).toFixed(0)}%)`}
-                </p>
-              )}
-              {event.response && (
-                <p className="mt-2 text-sm text-foreground">
-                  <span className="font-medium text-muted-foreground">Resposta:</span>{" "}
-                  {event.response}
-                </p>
-              )}
-            </div>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Janela
+          </span>
+          <div className="inline-flex flex-wrap gap-1 rounded-xl border border-border/60 bg-card/50 p-1 backdrop-blur-sm">
+            {ACTIVE_WINDOW_OPTIONS.map((option) => {
+              const active = selectedWindowMinutes === option.windowMinutes;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  onClick={() => handleWindowChange(option.windowMinutes)}
+                  disabled={conversationsLoading}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          {conversationsLoading && (
+            <span className="text-xs text-muted-foreground">Atualizando…</span>
+          )}
         </div>
-      )}
+
+        {conversationsError && (
+          <p className="text-sm text-destructive">{conversationsError}</p>
+        )}
+
+        {conversationsLoading && sortedConversations.length === 0 ? (
+          <div className="glass-card p-8 text-center text-muted-foreground">
+            Carregando conversas ativas…
+          </div>
+        ) : sortedConversations.length === 0 ? (
+          <div className="glass-card p-8 text-center text-muted-foreground">
+            Nenhum atendimento em andamento no momento.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {sortedConversations.map((conv) => {
+              const key = conversationKey(conv.channel, conv.contact_user_id);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className="glass-card w-full cursor-pointer p-5 text-left transition hover:border-primary/40 hover:bg-muted/10"
+                  onClick={() =>
+                    void openConversation({
+                      lead_interaction_id: conv.lead_interaction_id,
+                      channel: conv.channel,
+                      contact_user_id: conv.contact_user_id,
+                    })
+                  }
+                >
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <span className="text-base font-semibold text-foreground">
+                      {activeConversationLabel(conv)}
+                    </span>
+                    <Badge variant="muted">
+                      {CHANNEL_LABELS[conv.channel.toLowerCase()] ??
+                        conv.channel.toUpperCase()}
+                    </Badge>
+                    {conv.status && (
+                      <Badge variant={statusBadgeVariant(conv.status)}>{conv.status}</Badge>
+                    )}
+                    {conv.is_escalated && <Badge variant="warning">Escalado</Badge>}
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {formatRelativeTime(conv.last_timestamp)}
+                    </span>
+                  </div>
+
+                  {conv.agent_name && (
+                    <p className="mb-2 text-sm text-muted-foreground">
+                      Atendido por:{" "}
+                      <span className="font-medium text-foreground">{conv.agent_name}</span>
+                    </p>
+                  )}
+
+                  {conv.intent && (
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      Intenção: {conv.intent}
+                    </p>
+                  )}
+
+                  <p className="line-clamp-2 text-sm text-foreground">
+                    {conv.last_message_preview || conv.last_message || "—"}
+                  </p>
+
+                  {conv.message_count > 0 && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {conv.message_count} mensagem(ns) no histórico
+                    </p>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <AttendanceConversationModal
+        conversation={conversation}
+        loading={conversationLoading}
+        error={conversationError}
+        onClose={closeConversation}
+      />
     </>
   );
 }
@@ -785,101 +1137,12 @@ function AttendanceHistoryPanel() {
         </div>
       </div>
 
-      {(conversation || conversationLoading || conversationError) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="glass-card flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden">
-            <div className="border-b border-border p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-lg font-semibold text-foreground">Conversa</h3>
-                  {conversation && (
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {conversation.lead_nome || conversation.contact_user_id}
-                      {conversation.campaign_name && ` · ${conversation.campaign_name}`}
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="btn-secondary text-sm"
-                  onClick={closeConversation}
-                >
-                  Fechar
-                </button>
-              </div>
-              {conversation && (
-                <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <Badge variant="muted">{channelLabel(conversation.channel)}</Badge>
-                  {conversation.status && (
-                    <Badge variant={statusBadgeVariant(conversation.status)}>
-                      {conversation.status}
-                    </Badge>
-                  )}
-                  {conversation.tabulacao_codigo && (
-                    <span>
-                      Tabulação: {conversation.tabulacao_codigo} —{" "}
-                      {conversation.tabulacao_nome}
-                    </span>
-                  )}
-                  <span>Início: {formatDateTime(conversation.started_at)}</span>
-                  <span>Fim: {formatDateTime(conversation.ended_at)}</span>
-                  <span>
-                    Duração:{" "}
-                    {formatDurationSeconds(
-                      conversation.duration_seconds,
-                      conversation.duration_available,
-                    )}
-                  </span>
-                </div>
-              )}
-              {conversation?.voice_partial_transcript && conversation.voice_duration_note && (
-                <div className="mt-4">
-                  <Alert variant="warning">{conversation.voice_duration_note}</Alert>
-                </div>
-              )}
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6">
-              {conversationLoading && (
-                <p className="text-sm text-muted-foreground">Carregando mensagens…</p>
-              )}
-              {conversationError && (
-                <Alert variant="error">{conversationError}</Alert>
-              )}
-              {conversation && conversation.messages.length === 0 && (
-                <p className="text-sm text-muted-foreground">Nenhuma mensagem registrada.</p>
-              )}
-              {conversation && conversation.messages.length > 0 && (
-                <div className="space-y-3">
-                  {conversation.messages.map((msg, idx) => (
-                    <div
-                      key={`${msg.at}-${idx}`}
-                      className={`flex ${msg.role === "user" ? "justify-start" : "justify-end"}`}
-                    >
-                      <div
-                        className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm ${
-                          msg.role === "user"
-                            ? "bg-muted text-foreground"
-                            : "bg-primary/15 text-foreground"
-                        }`}
-                      >
-                        <p className="mb-1 text-xs font-medium text-muted-foreground">
-                          {msg.role === "user" ? "Cliente" : "Agente"}
-                          {msg.intent ? ` · ${msg.intent}` : ""}
-                        </p>
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {formatDateTime(msg.at)}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <AttendanceConversationModal
+        conversation={conversation}
+        loading={conversationLoading}
+        error={conversationError}
+        onClose={closeConversation}
+      />
     </div>
   );
 }

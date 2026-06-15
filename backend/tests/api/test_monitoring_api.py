@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -375,4 +375,261 @@ async def test_contact_messages_missing_query_params_returns_422(
     auth_client,
 ) -> None:
     response = await auth_client.get(f"{MONITORING}/contact-messages")
+    assert response.status_code == 422
+
+
+# --- active-conversations ---
+
+
+def _recent_time(minutes_ago: int = 2) -> datetime:
+    return datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+
+
+async def test_active_conversations_requires_auth(client) -> None:
+    response = await client.get(f"{MONITORING}/active-conversations")
+    assert response.status_code == 401
+
+
+async def test_active_conversations_returns_recent_with_agent(
+    auth_client,
+    owner_ctx,
+    db_session,
+) -> None:
+    recent = _recent_time(2)
+    lead = await create_lead_on_base(
+        db_session, owner_ctx, suffix="active-now", telefone="5511333444555"
+    )
+    li = await create_lead_interaction(
+        db_session,
+        lead_id=lead.id,
+        campaign_id=owner_ctx.campaign.id,
+        channel_type="whatsapp",
+        status="em_andamento",
+        data_acionamento=recent,
+        data_ultimo_contato=recent,
+    )
+    await create_interaction_record(
+        db_session,
+        user_id=f"whatsapp:+{lead.telefone_1}",
+        message="Oi agora",
+        response="Olá!",
+        created_at=recent,
+    )
+
+    response = await auth_client.get(f"{MONITORING}/active-conversations")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["window_minutes"] == 10
+    assert body["total"] >= 1
+    match = next(
+        (item for item in body["items"] if item["lead_interaction_id"] == str(li.id)),
+        None,
+    )
+    assert match is not None
+    assert match["agent_id"] == str(owner_ctx.agent.id)
+    assert match["agent_name"] == owner_ctx.agent.name
+    assert match["lead_nome"] == lead.nome_cliente
+    assert match["channel"] == "whatsapp"
+    assert match["status"] == "em_andamento"
+    assert match["last_message_preview"] is not None
+    assert match["message_count"] >= 1
+    assert match["last_activity_at"] is not None
+
+
+async def test_active_conversations_excludes_old_outside_window(
+    auth_client,
+    owner_ctx,
+    db_session,
+) -> None:
+    old = _recent_time(30)
+    lead = await create_lead_on_base(
+        db_session, owner_ctx, suffix="active-old", telefone="5511222333444"
+    )
+    li = await create_lead_interaction(
+        db_session,
+        lead_id=lead.id,
+        campaign_id=owner_ctx.campaign.id,
+        channel_type="whatsapp",
+        status="em_andamento",
+        data_acionamento=old,
+        data_ultimo_contato=old,
+    )
+    await create_interaction_record(
+        db_session,
+        user_id=f"whatsapp:+{lead.telefone_1}",
+        message="Antiga",
+        response="Resposta",
+        created_at=old,
+    )
+
+    response = await auth_client.get(
+        f"{MONITORING}/active-conversations",
+        params={"window_minutes": 10},
+    )
+    assert response.status_code == 200
+    ids = {item["lead_interaction_id"] for item in response.json()["items"]}
+    assert str(li.id) not in ids
+
+
+async def test_active_conversations_excludes_terminal_status(
+    auth_client,
+    owner_ctx,
+    db_session,
+) -> None:
+    recent = _recent_time(1)
+    lead = await create_lead_on_base(
+        db_session, owner_ctx, suffix="active-terminal", telefone="5511111222333"
+    )
+    li = await create_lead_interaction(
+        db_session,
+        lead_id=lead.id,
+        campaign_id=owner_ctx.campaign.id,
+        channel_type="whatsapp",
+        status="convertido",
+        data_acionamento=recent,
+        data_ultimo_contato=recent,
+    )
+    await create_interaction_record(
+        db_session,
+        user_id=f"whatsapp:+{lead.telefone_1}",
+        message="Fechou",
+        response="Obrigado",
+        created_at=recent,
+    )
+
+    response = await auth_client.get(f"{MONITORING}/active-conversations")
+    assert response.status_code == 200
+    ids = {item["lead_interaction_id"] for item in response.json()["items"]}
+    assert str(li.id) not in ids
+
+
+async def test_active_conversations_owner_sees_own_records_only(
+    auth_client,
+    owner_ctx,
+    db_session,
+) -> None:
+    recent = _recent_time(1)
+    lead = await create_lead_on_base(
+        db_session, owner_ctx, suffix="active-owner", telefone="5511000111222"
+    )
+    await create_lead_interaction(
+        db_session,
+        lead_id=lead.id,
+        campaign_id=owner_ctx.campaign.id,
+        channel_type="whatsapp",
+        status="em_andamento",
+        data_acionamento=recent,
+        data_ultimo_contato=recent,
+    )
+    await create_interaction_record(
+        db_session,
+        user_id=f"whatsapp:+{lead.telefone_1}",
+        message="Minha",
+        response="Sua",
+        created_at=recent,
+    )
+
+    other_ctx = await create_owner_context(db_session, email_suffix="active-other")
+    other_lead = await create_lead_on_base(
+        db_session, other_ctx, suffix="other-active", telefone="5511000333444"
+    )
+    await create_lead_interaction(
+        db_session,
+        lead_id=other_lead.id,
+        campaign_id=other_ctx.campaign.id,
+        channel_type="whatsapp",
+        status="em_andamento",
+        data_acionamento=recent,
+        data_ultimo_contato=recent,
+    )
+    await create_interaction_record(
+        db_session,
+        user_id=f"whatsapp:+{other_lead.telefone_1}",
+        message="Outro",
+        response="Tenant",
+        created_at=recent,
+    )
+
+    response = await auth_client.get(f"{MONITORING}/active-conversations")
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+
+
+async def test_active_conversations_all_period_includes_old_non_terminal(
+    auth_client,
+    owner_ctx,
+    db_session,
+) -> None:
+    old = _recent_time(30)
+    lead = await create_lead_on_base(
+        db_session, owner_ctx, suffix="active-all-period", telefone="5511888777666"
+    )
+    li = await create_lead_interaction(
+        db_session,
+        lead_id=lead.id,
+        campaign_id=owner_ctx.campaign.id,
+        channel_type="whatsapp",
+        status="em_andamento",
+        data_acionamento=old,
+        data_ultimo_contato=old,
+    )
+    await create_interaction_record(
+        db_session,
+        user_id=f"whatsapp:+{lead.telefone_1}",
+        message="Antiga mas aberta",
+        response="Resposta",
+        created_at=old,
+    )
+
+    response = await auth_client.get(
+        f"{MONITORING}/active-conversations",
+        params={"window_minutes": 0},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["window_minutes"] == 0
+    ids = {item["lead_interaction_id"] for item in body["items"]}
+    assert str(li.id) in ids
+
+
+async def test_active_conversations_large_window_includes_old(
+    auth_client,
+    owner_ctx,
+    db_session,
+) -> None:
+    old = _recent_time(30)
+    lead = await create_lead_on_base(
+        db_session, owner_ctx, suffix="active-day", telefone="5511777666555"
+    )
+    li = await create_lead_interaction(
+        db_session,
+        lead_id=lead.id,
+        campaign_id=owner_ctx.campaign.id,
+        channel_type="whatsapp",
+        status="em_andamento",
+        data_acionamento=old,
+        data_ultimo_contato=old,
+    )
+    await create_interaction_record(
+        db_session,
+        user_id=f"whatsapp:+{lead.telefone_1}",
+        message="Dentro do dia",
+        response="Ok",
+        created_at=old,
+    )
+
+    response = await auth_client.get(
+        f"{MONITORING}/active-conversations",
+        params={"window_minutes": 1440},
+    )
+    assert response.status_code == 200
+    ids = {item["lead_interaction_id"] for item in response.json()["items"]}
+    assert str(li.id) in ids
+
+
+async def test_active_conversations_invalid_window_returns_422(auth_client) -> None:
+    response = await auth_client.get(
+        f"{MONITORING}/active-conversations",
+        params={"window_minutes": 600000},
+    )
     assert response.status_code == 422
