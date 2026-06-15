@@ -160,8 +160,8 @@ async def test_lead_bases_import_csv_returns_201_with_leads(
     )
     assert response.status_code == 201
     body = response.json()
-    # DB grava IMPORT; response_model omite source e cai no default MANUAL (ver divergência).
     assert body["leads_count"] == 2
+    assert body["source"] == "IMPORT"
 
     count = await db_session.scalar(
         select(func.count())

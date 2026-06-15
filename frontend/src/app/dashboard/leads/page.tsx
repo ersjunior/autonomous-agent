@@ -192,12 +192,13 @@ export default function LeadsPage() {
     loadLeadBases();
   }
 
-  function handleLeadCreated() {
-    if (selectedBaseId) {
-      loadLeads(selectedBaseId, skip);
-      loadLeadBases();
-    }
+  async function handleLeadCreated(leadBaseId: string) {
+    setSuccess("Lead criado com sucesso.");
     setShowManualForm(false);
+    setSelectedBaseId(leadBaseId);
+    await loadLeadBases();
+    await loadLeads(leadBaseId, 0);
+    loadDevolutivas(leadBaseId);
   }
 
   async function confirmDeleteBase() {
@@ -244,14 +245,11 @@ export default function LeadsPage() {
             </button>
             <button
               type="button"
-              onClick={() => setShowManualForm((current) => !current)}
+              onClick={() => {
+                setShowManualForm((current) => !current);
+                setSuccess("");
+              }}
               className="btn-primary"
-              disabled={!selectedBase || baseIsImport}
-              title={
-                baseIsImport
-                  ? "Bases importadas não permitem inclusão manual de leads"
-                  : undefined
-              }
             >
               {showManualForm ? "Cancelar" : "Novo lead"}
             </button>
@@ -281,7 +279,18 @@ export default function LeadsPage() {
           <p className="text-sm text-muted-foreground">Carregando bases...</p>
         ) : leadBases.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nenhuma base cadastrada. Importe um CSV para começar.
+            Nenhuma base cadastrada. Importe um CSV ou use{" "}
+            <button
+              type="button"
+              className="font-medium text-primary underline-offset-2 hover:underline"
+              onClick={() => {
+                setShowManualForm(true);
+                setSuccess("");
+              }}
+            >
+              Novo lead
+            </button>{" "}
+            para criar um lead avulso com base nova.
           </p>
         ) : (
           <select
@@ -365,12 +374,21 @@ export default function LeadsPage() {
         </div>
       )}
 
-      {showManualForm && selectedBase && (
+      {showManualForm && (
         <div className="mb-8">
           <ManualLeadForm
-            leadBase={selectedBase}
+            leadBases={leadBases}
+            initialManualBase={
+              selectedBase && !baseIsImport ? selectedBase : null
+            }
             onSuccess={handleLeadCreated}
-            onColumnMappingUpdated={handleColumnMappingUpdated}
+            onCancel={() => setShowManualForm(false)}
+            onBasesChanged={loadLeadBases}
+            onColumnMappingUpdated={(baseId, mapping) => {
+              if (baseId === selectedBaseId) {
+                handleColumnMappingUpdated(mapping);
+              }
+            }}
           />
         </div>
       )}

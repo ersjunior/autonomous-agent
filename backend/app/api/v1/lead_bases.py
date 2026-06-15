@@ -137,6 +137,8 @@ def _to_lead_base_response(lead_base: LeadBase, leads_count: int) -> LeadBaseRes
         column_mapping=lead_base.column_mapping,
         channel_types=[channel.channel_type for channel in lead_base.lead_base_channels],
         leads_count=leads_count,
+        source=lead_base.source,
+        is_system=lead_base.is_system,
         created_at=lead_base.created_at,
     )
 
