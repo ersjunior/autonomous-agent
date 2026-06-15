@@ -22,6 +22,9 @@ build/
 .env.production
 .env.*.local
 
+# Base de conhecimento
+backend/scripts/kb_seed_local/
+
 # Amostras de voz Coqui (não commitar áudios de referência reais)
 infra/docker/coqui-tts/voices/*.wav
 !infra/docker/coqui-tts/voices/.gitkeep
