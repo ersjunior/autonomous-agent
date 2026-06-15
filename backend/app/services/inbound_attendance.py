@@ -79,6 +79,7 @@ async def attend_inbound_message(
     capacity: ReceptiveCapacityHandle | None = None,
     bind_capacity: bool = True,
     message_sid: str | None = None,
+    twilio_call_sid: str | None = None,
 ) -> str:
     """
     Roteia pelo grafo, envia resposta e faz tracking.
@@ -113,6 +114,7 @@ async def attend_inbound_message(
         message,
         result.get("intent", "other"),
         escalated=escalated,
+        twilio_call_sid=twilio_call_sid,
     )
 
     if escalated:

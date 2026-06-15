@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.api.v1.channels import VOICE_REPEAT_MESSAGE
 from app.core.config import settings
+from app.core.voice_silence_text import VOICE_SILENCE_WARNING_MESSAGE
 
 pytestmark = pytest.mark.api
 
@@ -21,43 +21,52 @@ FAKE_MP3 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.mp3"
 @pytest.fixture(autouse=True)
 def _public_base_url(monkeypatch):
     monkeypatch.setattr(settings, "public_base_url", "https://example.com")
+    monkeypatch.setattr(settings, "voice_silence_warning_seconds", 30)
+    monkeypatch.setattr(settings, "voice_silence_close_seconds", 15)
 
 
-async def test_record_callback_empty_recording_returns_repeat_twiml(client) -> None:
-    response = await client.post(
-        RECORD_CALLBACK,
-        data={
-            "CallSid": "CAtest",
-            "From": "+5511999999999",
-            "RecordingUrl": "",
-            "RecordingDuration": "0",
-        },
-    )
+async def test_record_callback_empty_recording_triggers_silence_flow(client) -> None:
+    with patch(
+        "app.api.v1.channels._handle_voice_silence_turn",
+        new=AsyncMock(
+            return_value=f"<Response><Say>{VOICE_SILENCE_WARNING_MESSAGE}</Say><Record/></Response>"
+        ),
+    ) as silence_handler:
+        response = await client.post(
+            RECORD_CALLBACK,
+            data={
+                "CallSid": "CAtest",
+                "From": "+5511999999999",
+                "RecordingUrl": "",
+                "RecordingDuration": "0",
+            },
+        )
+
     assert response.status_code == 200
-    assert response.headers.get("content-type", "").startswith("application/xml")
-    body = response.text
-    assert "Não entendi" in body
-    assert "<Record" in body
-    assert "record-callback" in body
+    silence_handler.assert_awaited_once()
+    assert VOICE_SILENCE_WARNING_MESSAGE in response.text
 
 
-async def test_record_callback_silence_short_duration_returns_repeat_twiml(client) -> None:
-    response = await client.post(
-        RECORD_CALLBACK,
-        data={
-            "CallSid": "CAtest",
-            "From": "+5511999999999",
-            "RecordingUrl": FAKE_RECORDING_URL,
-            "RecordingDuration": "0",
-        },
-    )
+async def test_record_callback_silence_short_duration_triggers_silence_flow(client) -> None:
+    with patch(
+        "app.api.v1.channels._handle_voice_silence_turn",
+        new=AsyncMock(
+            return_value=f"<Response><Say>{VOICE_SILENCE_WARNING_MESSAGE}</Say><Record/></Response>"
+        ),
+    ) as silence_handler:
+        response = await client.post(
+            RECORD_CALLBACK,
+            data={
+                "CallSid": "CAtest",
+                "From": "+5511999999999",
+                "RecordingUrl": FAKE_RECORDING_URL,
+                "RecordingDuration": "0",
+            },
+        )
+
     assert response.status_code == 200
-    assert response.headers.get("content-type", "").startswith("application/xml")
-    body = response.text
-    assert VOICE_REPEAT_MESSAGE in body
-    assert "<Say" in body
-    assert "<Record" in body
-    assert "record-callback" in body
+    silence_handler.assert_awaited_once()
+    assert VOICE_SILENCE_WARNING_MESSAGE in response.text
 
 
 async def test_record_callback_agent_turn_mocked(client) -> None:
@@ -80,6 +89,7 @@ async def test_record_callback_agent_turn_mocked(client) -> None:
             "app.services.voice_audio.gerar_audio_chamada",
             new=AsyncMock(return_value=fake_mp3),
         ),
+        patch("app.services.voice_call_state.reset_silence_stage"),
     ):
         response = await client.post(
             RECORD_CALLBACK,
@@ -97,8 +107,9 @@ async def test_record_callback_agent_turn_mocked(client) -> None:
     assert fake_mp3 in body
     assert "<Play>" in body
     assert "<Record" in body
+    assert 'timeout="30"' in body
     assert "record-callback" in body
-    assert "Funcionamos" not in body  # resposta via Play URL, não Say inline
+    assert "Funcionamos" not in body
 
 
 async def test_record_callback_full_turn_mocked_without_gpu(client) -> None:
@@ -120,6 +131,7 @@ async def test_record_callback_full_turn_mocked_without_gpu(client) -> None:
             "app.services.voice_audio.gerar_audio_chamada",
             new=AsyncMock(return_value=FAKE_MP3),
         ),
+        patch("app.services.voice_call_state.reset_silence_stage"),
     ):
         response = await client.post(
             RECORD_CALLBACK,

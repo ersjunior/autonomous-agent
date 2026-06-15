@@ -9,9 +9,9 @@ import pytest
 
 from agents.channels.voice.twilio_voice_client import download_recording
 from app.api.v1.channels import (
-    VOICE_REPEAT_MESSAGE,
     _build_voice_turn_twiml,
     _parse_recording_duration,
+    _voice_record_block_xml,
 )
 from app.core.config import settings
 
@@ -26,6 +26,7 @@ def test_parse_recording_duration() -> None:
 
 def test_build_voice_turn_twiml_play_and_record(monkeypatch) -> None:
     monkeypatch.setattr(settings, "public_base_url", "https://example.com")
+    monkeypatch.setattr(settings, "voice_silence_warning_seconds", 30)
     twiml = _build_voice_turn_twiml(
         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.mp3",
         is_fallback=False,
@@ -33,14 +34,24 @@ def test_build_voice_turn_twiml_play_and_record(monkeypatch) -> None:
     assert "<Play>https://example.com/api/v1/channels/webhooks/voice/audio/" in twiml
     assert "record-callback" in twiml
     assert "<Record" in twiml
+    assert 'timeout="30"' in twiml
 
 
 def test_build_voice_turn_twiml_say_fallback(monkeypatch) -> None:
     monkeypatch.setattr(settings, "public_base_url", "https://example.com")
-    twiml = _build_voice_turn_twiml(VOICE_REPEAT_MESSAGE, is_fallback=True)
+    monkeypatch.setattr(settings, "voice_silence_warning_seconds", 30)
+    twiml = _build_voice_turn_twiml("Teste de fallback", is_fallback=True)
     assert "Polly.Camila" in twiml
-    assert VOICE_REPEAT_MESSAGE in twiml
+    assert "Teste de fallback" in twiml
     assert "<Record" in twiml
+    assert 'timeout="30"' in twiml
+
+
+def test_voice_record_block_xml_timeout(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "public_base_url", "https://example.com")
+    monkeypatch.setattr(settings, "voice_silence_warning_seconds", 30)
+    assert 'timeout="30"' in _voice_record_block_xml()
+    assert 'timeout="15"' in _voice_record_block_xml(record_timeout_sec=15)
 
 
 @pytest.mark.asyncio

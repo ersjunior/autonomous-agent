@@ -106,6 +106,8 @@ class Settings(BaseSettings):
     # Inbound de voz PSTN (Twilio) — VOICE_INBOUND_MODE: record | gather | stream
     voice_inbound_mode: str = "record"
     voice_inbound_greeting: str = DEFAULT_VOICE_INBOUND_GREETING
+    voice_silence_warning_seconds: int = 30
+    voice_silence_close_seconds: int = 15
 
     # Frontend
     frontend_url: str = "http://localhost:3000"

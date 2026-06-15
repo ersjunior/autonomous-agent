@@ -36,6 +36,7 @@ async def upsert_lead_interaction(
     touch_inbound: bool = False,
     record_outbound_attempt: bool = False,
     touch_agent_message: bool = False,
+    twilio_call_sid: str | None = None,
 ) -> LeadInteraction:
     """
     Busca ou cria LeadInteraction por (lead_id, campaign_id, channel_type). Não commita.
@@ -108,6 +109,8 @@ async def upsert_lead_interaction(
         record.data_ultima_tentativa = now
     elif touch_agent_message:
         record.data_ultima_tentativa = now
+    if twilio_call_sid:
+        record.twilio_call_sid = twilio_call_sid.strip()
 
     await session.flush()
     return record
@@ -185,6 +188,7 @@ async def track_inbound_lead_interaction(
     intent: str,
     *,
     escalated: bool = False,
+    twilio_call_sid: str | None = None,
 ) -> LeadInteraction | None:
     """Vincula mensagem inbound a LeadInteraction quando o lead é identificado."""
     lead = await find_lead_by_channel_user(session, channel, user_id)
@@ -217,6 +221,7 @@ async def track_inbound_lead_interaction(
         last_interaction_id=last_interaction_id,
         touch_inbound=True,
         touch_agent_message=True,
+        twilio_call_sid=twilio_call_sid,
     )
 
     from app.services.tabulacao_assignment import maybe_apply_tabulacao_on_transition
