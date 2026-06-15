@@ -1,7 +1,10 @@
 """Outbound campaign tasks — modo ATIVO."""
 
+from __future__ import annotations
+
 import logging
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +36,13 @@ from worker.tasks.conversation_routing import agent_personality_context, agent_r
 from worker.tasks.lead_tracking import upsert_lead_interaction
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DeliverResult:
+    ok: bool
+    twilio_message_sid: str | None = None
+    initial_delivery_status: str | None = None
 
 
 def get_phone(lead: Lead) -> str | None:
@@ -111,14 +121,18 @@ async def _deliver_message(
     response: str,
     *,
     first_touch: bool = True,
-) -> bool:
-    """Envia texto/mídia no canal. Retorna True se entrega ok."""
+) -> DeliverResult:
+    """Envia texto/mídia no canal. Retorna resultado com SID WhatsApp quando aplicável."""
     if channel == "whatsapp":
-        send_whatsapp_message(recipient, response)
-        return True
+        message_sid = send_whatsapp_message(recipient, response)
+        return DeliverResult(
+            ok=True,
+            twilio_message_sid=message_sid,
+            initial_delivery_status="queued",
+        )
     if channel == "telegram":
         await send_telegram_message(recipient, response)
-        return True
+        return DeliverResult(ok=True)
     if channel == "voice":
         speech_text = (response or "").strip()
         if not speech_text:
@@ -149,6 +163,9 @@ async def _deliver_message(
                 )
                 twiml_url = build_outbound_twiml_url(speech_text_for_say)
             call_sid = make_outbound_call(recipient_e164, twiml_url)
+            from app.services.voice_call_state import remember_call_from_number
+
+            remember_call_from_number(call_sid, recipient_e164)
             await upsert_lead_interaction(
                 session,
                 lead.id,
@@ -158,6 +175,7 @@ async def _deliver_message(
                 devolutiva=f"twilio_call_sid={call_sid}",
                 set_acionamento=first_touch,
                 record_outbound_attempt=True,
+                twilio_call_sid=call_sid,
             )
             logger.info(
                 "Voice outbound call placed for lead %s to %s (sid=%s)",
@@ -165,7 +183,7 @@ async def _deliver_message(
                 recipient_e164,
                 call_sid,
             )
-            return True
+            return DeliverResult(ok=True)
         except Exception as exc:
             logger.exception(
                 "Voice outbound failed for lead %s (user_id=%s): %s",
@@ -181,9 +199,9 @@ async def _deliver_message(
                 status="erro",
                 devolutiva=str(exc),
             )
-            return False
+            return DeliverResult(ok=False)
     logger.warning("Unsupported channel %s for lead %s", channel, lead.id)
-    return False
+    return DeliverResult(ok=False)
 
 
 async def _send_on_channel(
@@ -233,7 +251,7 @@ async def _send_on_channel(
             logger.warning("Empty response for lead %s channel %s", lead.id, channel)
             return None
         try:
-            await _deliver_message(session, lead, campaign, channel, recipient, response)
+            delivery = await _deliver_message(session, lead, campaign, channel, recipient, response)
         except Exception as exc:
             logger.error(
                 "Outbound delivery failed: channel=%s lead_id=%s recipient=%s error=%s",
@@ -261,9 +279,11 @@ async def _send_on_channel(
             set_acionamento=not followup,
             record_outbound_attempt=True,
             devolutiva=(response or "")[:500] if followup else None,
+            twilio_message_sid=delivery.twilio_message_sid,
+            last_delivery_status=delivery.initial_delivery_status,
         )
     else:
-        ok = await _deliver_message(
+        delivery = await _deliver_message(
             session,
             lead,
             campaign,
@@ -272,7 +292,7 @@ async def _send_on_channel(
             response,
             first_touch=not followup,
         )
-        if not ok:
+        if not delivery.ok:
             return None
 
     return {"channel": channel, "recipient": recipient, "response": response, "followup": followup}

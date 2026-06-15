@@ -85,6 +85,15 @@ def clear_voice_call_state(call_sid: str) -> None:
 
 
 def remember_call_from_number(call_sid: str, from_number: str) -> None:
-    """Preserva From no Redis sem alterar silence_stage (ex.: webhook inicial)."""
+    """Preserva telefone do cliente no Redis sem alterar silence_stage."""
     stage = get_silence_stage(call_sid)
     set_voice_call_state(call_sid, silence_stage=stage, from_number=from_number)
+
+
+def get_call_customer_number(call_sid: str) -> str | None:
+    """Telefone do cliente (lead) associado à chamada, se conhecido no Redis."""
+    data = get_voice_call_state(call_sid)
+    if not data:
+        return None
+    raw = (data.get("from_number") or "").strip()
+    return raw or None

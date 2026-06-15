@@ -46,8 +46,8 @@ VOICE_TERMINAL_CALL_STATUSES = frozenset(
 )
 
 
-def _build_voice_outbound_say_twiml(text: str) -> str:
-    """TwiML fallback com <Say> (voz Twilio Polly)."""
+def _build_voice_say_only_twiml(text: str) -> str:
+    """TwiML com <Say> apenas, sem <Record> (erro / modo indisponível)."""
     spoken = xml.sax.saxutils.escape((text or "").strip() or " ")
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -57,20 +57,21 @@ def _build_voice_outbound_say_twiml(text: str) -> str:
     )
 
 
-def _build_voice_outbound_play_twiml(filename: str) -> str:
-    """TwiML fase 2 (b): <Play> com MP3 Coqui servido pelo backend."""
-    if not UUID_MP3_PATTERN.match(filename):
-        raise HTTPException(status_code=400, detail="Invalid audio filename")
-
-    base = settings.require_public_base_url()
-    play_url = xml.sax.saxutils.escape(
-        f"{base}/api/v1/channels/webhooks/voice/audio/{filename}"
+def _build_voice_outbound_say_twiml(text: str) -> str:
+    """TwiML outbound fallback <Say> + <Record> (entra no loop de turnos inbound)."""
+    return _build_voice_turn_twiml(
+        text,
+        is_fallback=True,
+        record_timeout_sec=settings.voice_silence_warning_seconds,
     )
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        "<Response>\n"
-        f"  <Play>{play_url}</Play>\n"
-        "</Response>"
+
+
+def _build_voice_outbound_play_twiml(filename: str) -> str:
+    """TwiML outbound <Play> Coqui + <Record> (entra no loop de turnos inbound)."""
+    return _build_voice_turn_twiml(
+        filename,
+        is_fallback=False,
+        record_timeout_sec=settings.voice_silence_warning_seconds,
     )
 
 
@@ -453,12 +454,57 @@ async def voice_audio_file(filename: str):
     return FileResponse(path, media_type="audio/mpeg", filename=filename)
 
 
+def _prepare_outbound_voice_call_context(
+    call_sid: str,
+    *,
+    to_number: str = "",
+) -> None:
+    """Registra StatusCallback e telefone do lead quando Twilio busca TwiML outbound."""
+    sid = (call_sid or "").strip()
+    if not sid:
+        return
+    customer = (to_number or "").strip()
+    if customer:
+        from app.services.voice_call_state import remember_call_from_number
+
+        remember_call_from_number(sid, customer)
+    _register_voice_call_status_callback(sid)
+
+
+def _resolve_voice_customer_number(
+    call_sid: str,
+    from_number: str,
+    to_number: str,
+) -> str:
+    """Inbound: From=cliente. Outbound: To=cliente; Redis prevalece se já mapeado."""
+    from app.services.voice_call_state import get_call_customer_number
+
+    stored = get_call_customer_number(call_sid)
+    if stored:
+        return stored
+
+    from_n = (from_number or "").strip()
+    to_n = (to_number or "").strip()
+    try:
+        pstn = settings.resolve_twilio_pstn_number()
+    except ValueError:
+        pstn = ""
+    if from_n and from_n != pstn:
+        return from_n
+    if to_n and to_n != pstn:
+        return to_n
+    return from_n or to_n
+
+
 @router.get("/webhooks/voice/outbound")
 @router.post("/webhooks/voice/outbound")
 async def voice_outbound_webhook(
     text: str = Query("", description="Texto a ser falado na chamada (fallback <Say>)"),
+    CallSid: str = Form(""),
+    To: str = Form(""),
 ):
-    """TwiML fallback com voz sintética Twilio."""
+    """TwiML fallback <Say> + <Record> para mensagem ativa outbound."""
+    _prepare_outbound_voice_call_context(CallSid, to_number=To)
     twiml = _build_voice_outbound_say_twiml(text)
     return Response(content=twiml, media_type="application/xml")
 
@@ -467,8 +513,11 @@ async def voice_outbound_webhook(
 @router.post("/webhooks/voice/outbound-audio")
 async def voice_outbound_audio_webhook(
     audio: str = Query("", description="Nome do arquivo MP3 (UUID.mp3) gerado pelo Coqui"),
+    CallSid: str = Form(""),
+    To: str = Form(""),
 ):
-    """TwiML principal fase 2 (b): reproduz MP3 com voz clonada Coqui."""
+    """TwiML outbound <Play> Coqui + <Record> para mensagem ativa."""
+    _prepare_outbound_voice_call_context(CallSid, to_number=To)
     twiml = _build_voice_outbound_play_twiml(audio)
     return Response(content=twiml, media_type="application/xml")
 
@@ -492,7 +541,7 @@ async def voice_inbound_webhook(
             "Voice inbound mode %r not implemented; only record is supported",
             mode,
         )
-        twiml = _build_voice_outbound_say_twiml(
+        twiml = _build_voice_say_only_twiml(
             "Este modo de atendimento por voz ainda não está disponível."
         )
         return Response(content=twiml, media_type="application/xml")
@@ -545,7 +594,7 @@ async def voice_inbound_record_callback(
     from app.services.voice_call_state import reset_silence_stage
 
     call_sid = (CallSid or "").strip()
-    from_number = (From or "").strip()
+    from_number = _resolve_voice_customer_number(call_sid, From or "", To or "")
 
     logger.info(
         "Voice inbound record-callback CallSid=%s From=%s RecordingUrl=%s duration=%s",
@@ -617,6 +666,7 @@ async def voice_inbound_status_callback(
     CallSid: str = Form(""),
     CallStatus: str = Form(""),
     From: str = Form(""),
+    To: str = Form(""),
 ):
     """Twilio StatusCallback — finaliza LI se o cliente desligar sem terminal."""
     from app.services.voice_call_finalize import finalize_voice_call_terminal
@@ -624,7 +674,7 @@ async def voice_inbound_status_callback(
 
     call_sid = (CallSid or "").strip()
     status = (CallStatus or "").strip().lower()
-    from_number = (From or "").strip()
+    from_number = _resolve_voice_customer_number(call_sid, From or "", To or "")
 
     logger.info(
         "Voice status callback CallSid=%s CallStatus=%s From=%s",
@@ -648,6 +698,43 @@ async def voice_inbound_status_callback(
     if finalized:
         await db.commit()
 
+    return Response(content="", status_code=204)
+
+
+@router.post("/webhooks/whatsapp/status")
+async def whatsapp_status_webhook(
+    db: AsyncSession = Depends(get_db),
+    MessageSid: str = Form(""),
+    MessageStatus: str = Form(""),
+    SmsStatus: str = Form(""),
+    ErrorCode: str = Form(""),
+    ErrorMessage: str = Form(""),
+):
+    """
+    Twilio status callback de entrega WhatsApp (queued → sent → delivered / failed).
+
+    Campos principais: MessageSid, MessageStatus (ou SmsStatus), ErrorCode, ErrorMessage.
+    """
+    from app.services.whatsapp_delivery import apply_whatsapp_delivery_status
+
+    status = (MessageStatus or SmsStatus or "").strip()
+    err_code = (ErrorCode or "").strip() or None
+
+    logger.info(
+        "WhatsApp status callback MessageSid=%s MessageStatus=%s ErrorCode=%s ErrorMessage=%s",
+        MessageSid or "?",
+        status or "?",
+        err_code or "?",
+        (ErrorMessage or "?")[:120],
+    )
+
+    await apply_whatsapp_delivery_status(
+        db,
+        message_sid=MessageSid,
+        message_status=status,
+        error_code=err_code,
+    )
+    await db.commit()
     return Response(content="", status_code=204)
 
 

@@ -1,4 +1,4 @@
-type BadgeVariant = "default" | "success" | "warning" | "muted";
+export type BadgeVariant = "default" | "success" | "warning" | "muted";
 
 const styles: Record<BadgeVariant, string> = {
   default: "bg-primary/15 text-primary",

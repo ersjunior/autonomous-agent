@@ -37,6 +37,9 @@ async def upsert_lead_interaction(
     record_outbound_attempt: bool = False,
     touch_agent_message: bool = False,
     twilio_call_sid: str | None = None,
+    twilio_message_sid: str | None = None,
+    last_delivery_status: str | None = None,
+    last_delivery_error_code: str | None = None,
 ) -> LeadInteraction:
     """
     Busca ou cria LeadInteraction por (lead_id, campaign_id, channel_type). Não commita.
@@ -111,6 +114,12 @@ async def upsert_lead_interaction(
         record.data_ultima_tentativa = now
     if twilio_call_sid:
         record.twilio_call_sid = twilio_call_sid.strip()
+    if twilio_message_sid:
+        record.twilio_message_sid = twilio_message_sid.strip()
+    if last_delivery_status is not None:
+        record.last_delivery_status = last_delivery_status.strip().lower() or None
+    if last_delivery_error_code is not None:
+        record.last_delivery_error_code = last_delivery_error_code.strip() or None
 
     await session.flush()
     return record

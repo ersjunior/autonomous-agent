@@ -29,6 +29,7 @@ from app.services.contact_normalization import (
     canonical_contact_ids,
     infer_channel_from_contact,
 )
+from app.services.whatsapp_delivery import delivery_badge_label
 from worker.tasks.conversation_routing import (
     SEED_AGENT_RECEPTIVE_NAME,
     TERMINAL_STATUSES,
@@ -335,6 +336,14 @@ def _li_to_item(
         message_count=stats.message_count,
         last_message_preview=stats.last_preview,
         has_lead=lead is not None,
+        last_delivery_status=li.last_delivery_status,
+        last_delivery_error_code=li.last_delivery_error_code,
+        delivery_label=delivery_badge_label(
+            li.last_delivery_status,
+            li.last_delivery_error_code,
+        )
+        if channel == "whatsapp"
+        else None,
     )
 
 

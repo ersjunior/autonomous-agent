@@ -86,6 +86,9 @@ export type ActivationHistoryItem = {
   tabulacao_aplicada_em: string | null;
   is_terminal: boolean;
   is_human_mode: boolean;
+  last_delivery_status?: string | null;
+  last_delivery_error_code?: string | null;
+  delivery_label?: string | null;
 };
 
 export type ActivationHistoryList = {

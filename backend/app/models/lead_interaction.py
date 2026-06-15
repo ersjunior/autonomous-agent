@@ -74,6 +74,22 @@ class LeadInteraction(Base):
         index=True,
         doc="Call SID Twilio para correlação SIP (gancho futuro).",
     )
+    twilio_message_sid: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+        doc="Message SID Twilio (WhatsApp) para status callback de entrega.",
+    )
+    last_delivery_status: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+        doc="Status de entrega do provedor (queued/sent/delivered/failed…).",
+    )
+    last_delivery_error_code: Mapped[str | None] = mapped_column(
+        String(16),
+        nullable=True,
+        doc="ErrorCode Twilio quando a entrega falha (ex: 63015 sandbox).",
+    )
     lifecycle_version: Mapped[int] = mapped_column(
         Integer,
         default=0,

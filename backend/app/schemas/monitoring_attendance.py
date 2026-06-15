@@ -25,6 +25,9 @@ class AttendanceHistoryItem(BaseModel):
     message_count: int = 0
     last_message_preview: str | None = None
     has_lead: bool = False
+    last_delivery_status: str | None = None
+    last_delivery_error_code: str | None = None
+    delivery_label: str | None = None
 
 
 class AttendanceHistoryListResponse(BaseModel):

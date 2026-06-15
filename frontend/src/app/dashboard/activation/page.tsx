@@ -24,6 +24,7 @@ import type { Campaign } from "@/lib/types/campaigns";
 import type { Lead } from "@/lib/types/leads";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
+import { deliveryBadgeVariant } from "@/lib/delivery-label";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SystemBadge } from "@/components/ui/SystemBadge";
 
@@ -75,6 +76,26 @@ function statusBadgeVariant(
 
 function isVoiceChannel(channel: string): boolean {
   return VOICE_CHANNELS.has(channel.toLowerCase());
+}
+
+function dispatchOutcomeBadge(
+  status: string,
+): { label: string; variant: "default" | "warning" | "success" | "muted" } {
+  if (status === "sucesso") {
+    return { label: "Aceito pelo provedor", variant: "default" };
+  }
+  return { label: status, variant: "warning" };
+}
+
+function dispatchSuccessHint(channel: string): string {
+  const ch = channel.toLowerCase();
+  if (isVoiceChannel(ch)) {
+    return "Chamada iniciada. O Twilio está discando o destinatário; acompanhe no Histórico de acionamentos.";
+  }
+  if (ch === "whatsapp") {
+    return "Mensagem enviada ao provedor. O status de entrega (Entregue / Falhou) aparece no Histórico de acionamentos em alguns segundos.";
+  }
+  return "Mensagem enviada ao provedor. Confira o Histórico de acionamentos para acompanhar o atendimento.";
 }
 
 type ParamsState = Record<string, Record<string, string | number>>;
@@ -397,7 +418,10 @@ export default function ActivationPage() {
       </div>
 
       {activeTab === "test" ? (
-        <TestActivationPanel agents={agents} />
+        <TestActivationPanel
+          agents={agents}
+          onOpenHistory={() => setActiveTab("history")}
+        />
       ) : activeTab === "history" ? (
         <ActivationHistoryPanel campaigns={campaigns} />
       ) : (
@@ -546,7 +570,13 @@ function leadOptionLabel(lead: Lead): string {
   return `${lead.nome_cliente} — ${contact}`;
 }
 
-function TestActivationPanel({ agents }: { agents: Agent[] }) {
+function TestActivationPanel({
+  agents,
+  onOpenHistory,
+}: {
+  agents: Agent[];
+  onOpenHistory: () => void;
+}) {
   const activeAgents = useMemo(
     () => agents.filter((a) => a.mode === "ACTIVE"),
     [agents],
@@ -559,6 +589,61 @@ function TestActivationPanel({ agents }: { agents: Agent[] }) {
   const [dispatching, setDispatching] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<TestDispatchResult | null>(null);
+  const [deliveryPoll, setDeliveryPoll] = useState<{
+    label: string | null;
+    polling: boolean;
+  }>({ label: null, polling: false });
+
+  useEffect(() => {
+    const liId = result?.lead_interaction_id;
+    const channel = result?.channel?.toLowerCase();
+    if (result?.status !== "sucesso" || !liId || channel !== "whatsapp") {
+      setDeliveryPoll({ label: null, polling: false });
+      return;
+    }
+
+    let attempts = 0;
+    const maxAttempts = 10;
+    let cancelled = false;
+    setDeliveryPoll({ label: null, polling: true });
+
+    async function pollDelivery() {
+      if (cancelled) {
+        return;
+      }
+      attempts += 1;
+      try {
+        const data = await fetchActivationHistory(0, HISTORY_LIMIT, {
+          channel_type: "whatsapp",
+        });
+        const item = data.items.find((i) => i.id === liId);
+        const label = item?.delivery_label ?? null;
+        const terminal =
+          label?.startsWith("Entregue") || label?.startsWith("Falhou");
+        if (terminal && label) {
+          setDeliveryPoll({ label, polling: false });
+          return;
+        }
+        if (attempts >= maxAttempts) {
+          setDeliveryPoll({ label: label ?? "Enviado", polling: false });
+          return;
+        }
+        window.setTimeout(pollDelivery, 3000);
+      } catch {
+        if (attempts >= maxAttempts) {
+          setDeliveryPoll({ label: null, polling: false });
+        } else {
+          window.setTimeout(pollDelivery, 3000);
+        }
+      }
+    }
+
+    void pollDelivery();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [result?.status, result?.lead_interaction_id, result?.channel]);
 
   useEffect(() => {
     async function load() {
@@ -686,10 +771,24 @@ function TestActivationPanel({ agents }: { agents: Agent[] }) {
         <div className="glass-card space-y-4 p-6">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-lg font-semibold text-foreground">Resultado</h2>
-            <Badge variant={result.status === "sucesso" ? "success" : "warning"}>
-              {result.status}
-            </Badge>
+            {(() => {
+              const outcome = dispatchOutcomeBadge(result.status);
+              return <Badge variant={outcome.variant}>{outcome.label}</Badge>;
+            })()}
+            {deliveryPoll.label && (
+              <Badge variant={deliveryBadgeVariant(deliveryPoll.label)}>
+                Entrega: {deliveryPoll.label}
+              </Badge>
+            )}
+            {deliveryPoll.polling && (
+              <span className="text-xs text-muted-foreground">
+                Aguardando status de entrega…
+              </span>
+            )}
           </div>
+          {result.status === "sucesso" && (
+            <Alert variant="info">{dispatchSuccessHint(result.channel)}</Alert>
+          )}
           <p className="text-sm text-muted-foreground">
             Canal: <strong className="text-foreground">{result.channel.toUpperCase()}</strong>
             {result.recipient && (
@@ -700,6 +799,15 @@ function TestActivationPanel({ agents }: { agents: Agent[] }) {
               </>
             )}
           </p>
+          {result.status === "sucesso" && result.lead_interaction_id && (
+            <button
+              type="button"
+              className="rounded-lg border border-border bg-muted/30 px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted/50"
+              onClick={onOpenHistory}
+            >
+              Ver Histórico de acionamentos
+            </button>
+          )}
           {result.lead_interaction_id && (
             <p className="text-xs text-muted-foreground">
               LeadInteraction: {result.lead_interaction_id}
@@ -891,6 +999,7 @@ function ActivationHistoryPanel({ campaigns }: { campaigns: Campaign[] }) {
               <th className="px-4 py-3 font-medium">Campanha</th>
               <th className="px-4 py-3 font-medium">Canal</th>
               <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Entrega</th>
               <th className="px-4 py-3 font-medium">Tabulação</th>
               <th className="px-4 py-3 font-medium">Acionamento</th>
               <th className="px-4 py-3 font-medium">Último contato</th>
@@ -901,13 +1010,13 @@ function ActivationHistoryPanel({ campaigns }: { campaigns: Campaign[] }) {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
                   Carregando…
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
                   Nenhum acionamento encontrado.
                 </td>
               </tr>
@@ -929,6 +1038,15 @@ function ActivationHistoryPanel({ campaigns }: { campaigns: Campaign[] }) {
                   </td>
                   <td className="px-4 py-3">
                     <Badge variant={statusBadgeVariant(item.status)}>{item.status}</Badge>
+                  </td>
+                  <td className="px-4 py-3">
+                    {item.channel_type === "whatsapp" && item.delivery_label ? (
+                      <Badge variant={deliveryBadgeVariant(item.delivery_label)}>
+                        {item.delivery_label}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {item.tabulacao_codigo

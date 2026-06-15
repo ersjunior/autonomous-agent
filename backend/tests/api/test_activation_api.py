@@ -106,8 +106,14 @@ def mock_test_dispatch_stack(monkeypatch):
         return {"response": "Resposta mock de test-dispatch"}
 
     async def fake_deliver_message(*args, **kwargs):
+        from worker.tasks.outbound_campaign import DeliverResult
+
         state["deliver_calls"].append(args[:4])
-        return True
+        return DeliverResult(
+            ok=True,
+            twilio_message_sid="SMmock-test-dispatch",
+            initial_delivery_status="queued",
+        )
 
     monkeypatch.setattr("worker.tasks.outbound_campaign.route_message", fake_route_message)
     monkeypatch.setattr(

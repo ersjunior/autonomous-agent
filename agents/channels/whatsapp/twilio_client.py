@@ -7,10 +7,24 @@ from twilio.rest import Client
 
 from agents.channels.phone import to_e164
 from app.core.config import settings
+from app.services.whatsapp_delivery import WHATSAPP_STATUS_CALLBACK_PATH
 
 logger = logging.getLogger(__name__)
 
 _TWILIO_TYPING_INDICATOR_URL = "https://messaging.twilio.com/v2/Indicators/Typing.json"
+
+
+def _whatsapp_status_callback_url() -> str | None:
+    """URL pública para status callback; None se PUBLIC_BASE_URL indisponível."""
+    try:
+        base = settings.require_public_base_url()
+    except ValueError as exc:
+        logger.warning(
+            "PUBLIC_BASE_URL indisponível; status_callback WhatsApp omitido: %s",
+            exc,
+        )
+        return None
+    return f"{base}{WHATSAPP_STATUS_CALLBACK_PATH}"
 
 
 def _whatsapp_address(number: str) -> str:
@@ -57,12 +71,24 @@ def send_whatsapp_typing_indicator(message_sid: str) -> bool:
 
 
 def send_whatsapp_message(to: str, body: str) -> str:
-    """Send a WhatsApp message via Twilio. Returns the message SID."""
+    """Send a WhatsApp message via Twilio. Returns the message SID (criação aceita, não entrega)."""
     recipient_e164 = _normalize_whatsapp_recipient(to)
     client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
-    message = client.messages.create(
-        body=body,
-        from_=_whatsapp_address(settings.twilio_phone_number),
-        to=_whatsapp_address(recipient_e164),
+    create_kwargs: dict = {
+        "body": body,
+        "from_": _whatsapp_address(settings.twilio_phone_number),
+        "to": _whatsapp_address(recipient_e164),
+    }
+    callback_url = _whatsapp_status_callback_url()
+    if callback_url:
+        create_kwargs["status_callback"] = callback_url
+
+    message = client.messages.create(**create_kwargs)
+    initial_status = (getattr(message, "status", None) or "queued").strip().lower()
+    logger.info(
+        "WhatsApp message CREATED sid=%s to=%s status=%s (delivery pending callback)",
+        message.sid,
+        recipient_e164,
+        initial_status,
     )
     return message.sid

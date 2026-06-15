@@ -18,6 +18,7 @@ from app.schemas.activation import ActivationHistoryItem, FinalizeInteractionRes
 from app.services.human_handoff import finalize_human_mode, is_in_human_mode
 from app.services.tabulacao_assignment import apply_tabulacao
 from app.services.tabulacao_mapping import status_from_tabulacao_codigo
+from app.services.whatsapp_delivery import delivery_badge_label
 from app.services.capacity_service import release_outbound_capacity_for_lead
 from app.services.activation_slots import release_slot_for_lead
 from worker.tasks.conversation_routing import TERMINAL_STATUSES
@@ -69,6 +70,14 @@ def _to_history_item(record: LeadInteraction, *, channel_user_id: str | None) ->
         tabulacao_aplicada_em=record.tabulacao_aplicada_em,
         is_terminal=_is_terminal_status(record.status),
         is_human_mode=in_human,
+        last_delivery_status=record.last_delivery_status,
+        last_delivery_error_code=record.last_delivery_error_code,
+        delivery_label=delivery_badge_label(
+            record.last_delivery_status,
+            record.last_delivery_error_code,
+        )
+        if ch == "whatsapp"
+        else None,
     )
 
 

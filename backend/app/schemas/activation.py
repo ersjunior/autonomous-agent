@@ -133,6 +133,9 @@ class ActivationHistoryItem(BaseModel):
     tabulacao_aplicada_em: datetime | None = None
     is_terminal: bool
     is_human_mode: bool = False
+    last_delivery_status: str | None = None
+    last_delivery_error_code: str | None = None
+    delivery_label: str | None = None
 
 
 class ActivationHistoryListResponse(BaseModel):

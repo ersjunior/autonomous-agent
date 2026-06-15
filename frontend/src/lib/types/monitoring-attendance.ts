@@ -15,6 +15,9 @@ export type AttendanceHistoryItem = {
   message_count: number;
   last_message_preview: string | null;
   has_lead: boolean;
+  last_delivery_status?: string | null;
+  last_delivery_error_code?: string | null;
+  delivery_label?: string | null;
 };
 
 export type AttendanceHistoryList = {

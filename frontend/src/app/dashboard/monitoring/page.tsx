@@ -23,7 +23,7 @@ import type {
   ConversationMessage,
 } from "@/lib/types/monitoring-attendance";
 import type { Campaign } from "@/lib/types/campaigns";
-import { CHANNEL_LABELS } from "@/lib/types/metrics";
+import { deliveryBadgeVariant } from "@/lib/delivery-label";
 import { AttendanceConversationModal } from "@/components/monitoring/AttendanceConversationModal";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
@@ -821,8 +821,7 @@ function LiveMonitoringPanel() {
                       {activeConversationLabel(conv)}
                     </span>
                     <Badge variant="muted">
-                      {CHANNEL_LABELS[conv.channel.toLowerCase()] ??
-                        conv.channel.toUpperCase()}
+                      {channelLabel(conv.channel)}
                     </Badge>
                     {conv.status && (
                       <Badge variant={statusBadgeVariant(conv.status)}>{conv.status}</Badge>
@@ -1067,13 +1066,20 @@ function AttendanceHistoryPanel() {
                     <Badge variant="muted">{channelLabel(item.channel)}</Badge>
                   </td>
                   <td className="px-4 py-3">
-                    {item.status ? (
-                      <Badge variant={statusBadgeVariant(item.status)}>
-                        {item.status}
-                      </Badge>
-                    ) : (
-                      "—"
-                    )}
+                    <span className="inline-flex flex-wrap items-center gap-2">
+                      {item.status ? (
+                        <Badge variant={statusBadgeVariant(item.status)}>
+                          {item.status}
+                        </Badge>
+                      ) : (
+                        "—"
+                      )}
+                      {item.channel === "whatsapp" && item.delivery_label && (
+                        <Badge variant={deliveryBadgeVariant(item.delivery_label)}>
+                          {item.delivery_label}
+                        </Badge>
+                      )}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {item.tabulacao_codigo
