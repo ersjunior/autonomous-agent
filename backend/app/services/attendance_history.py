@@ -316,6 +316,17 @@ async def _contact_has_tracked_li(
     return _has_conversational_activity(li, stats)
 
 
+async def _contact_has_tracked_li_any_channel(
+    db: AsyncSession,
+    user_id: str,
+) -> bool:
+    """True when any channel has a LeadInteraction with conversational activity."""
+    for channel in ("telegram", "whatsapp", "voice"):
+        if await _contact_has_tracked_li(db, channel, user_id):
+            return True
+    return False
+
+
 async def _collect_orphan_items(
     db: AsyncSession,
     user: User,
@@ -332,7 +343,7 @@ async def _collect_orphan_items(
 
     for raw_uid in raw_ids:
         channel = infer_channel_from_contact(raw_uid)
-        if await _contact_has_tracked_li(db, channel, raw_uid):
+        if await _contact_has_tracked_li_any_channel(db, raw_uid):
             continue
 
         variants = canonical_contact_ids(channel, raw_uid)

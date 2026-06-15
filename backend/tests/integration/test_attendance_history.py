@@ -301,6 +301,48 @@ async def test_fetch_interaction_stats_aggregates_known_messages(
     assert "D" in (stats.last_preview or "")
 
 
+async def test_telegram_chat_id_not_misclassified_as_whatsapp_orphan(
+    owner_ctx: OwnerContext, db_session
+) -> None:
+    """Numeric telegram_id must not appear as whatsapp orphan when LI exists."""
+    chat_id = "5043259127"
+    lead = await create_lead_on_base(
+        db_session, owner_ctx, suffix="tg-att", telefone="5511999000111"
+    )
+    lead.aux_values = {"telegram_id": chat_id}
+    await db_session.flush()
+    await create_lead_interaction(
+        db_session,
+        lead_id=lead.id,
+        campaign_id=owner_ctx.campaign.id,
+        channel_type="telegram",
+        status="em_andamento",
+        data_acionamento=BASE_TIME,
+        data_ultimo_contato=BASE_TIME,
+    )
+    await create_interaction_record(
+        db_session,
+        user_id=chat_id,
+        message="Oi telegram",
+        response="Olá!",
+        created_at=BASE_TIME,
+    )
+
+    items, total = await list_attendance_history(
+        db_session, owner_ctx.user, skip=0, limit=50
+    )
+
+    tg_items = [
+        i
+        for i in items
+        if i.contact_user_id == chat_id or chat_id in (i.contact_user_id or "")
+    ]
+    assert len(tg_items) == 1
+    assert tg_items[0].channel == "telegram"
+    assert tg_items[0].lead_interaction_id is not None
+    assert tg_items[0].status == "em_andamento"
+
+
 async def test_receptive_pool_owner_is_seed_admin(system_seeds, db_session) -> None:
     admin = await get_admin_user(db_session)
     pool_owner = await get_receptive_pool_owner_id(db_session)

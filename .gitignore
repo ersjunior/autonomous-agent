@@ -25,6 +25,9 @@ build/
 # Base de conhecimento
 backend/scripts/kb_seed_local/
 
+# Limpeza operacional local (SQL one-off, não versionar)
+backend/scripts/cleanup_local/
+
 # Amostras de voz Coqui (não commitar áudios de referência reais)
 infra/docker/coqui-tts/voices/*.wav
 !infra/docker/coqui-tts/voices/.gitkeep

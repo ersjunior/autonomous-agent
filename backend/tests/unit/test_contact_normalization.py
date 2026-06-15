@@ -54,9 +54,12 @@ class TestInferChannelFromContact:
     def test_e164_phone(self) -> None:
         assert infer_channel_from_contact(PHONE) == "whatsapp"
 
-    def test_bare_digits_treated_as_phone(self) -> None:
-        # Lógica atual: isdigit() → whatsapp (limitação conhecida para chat ids numéricos)
+    def test_brazil_phone_bare_digits(self) -> None:
         assert infer_channel_from_contact(PHONE_DIGITS) == "whatsapp"
+
+    def test_numeric_telegram_chat_id(self) -> None:
+        assert infer_channel_from_contact("5043259127") == "telegram"
+        assert infer_channel_from_contact("123456789") == "telegram"
 
     def test_alphanumeric_id_is_telegram(self) -> None:
         assert infer_channel_from_contact("user_abc_42") == "telegram"

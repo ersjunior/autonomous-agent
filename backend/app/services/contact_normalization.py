@@ -68,17 +68,36 @@ def canonical_contact_ids(channel: str, user_id: str) -> list[str]:
     return [raw]
 
 
+def _looks_like_brazil_phone_digits(digits: str) -> bool:
+    """Bare digits matching Brazilian E.164 without ``+`` (``5511...``, 12–13 digits)."""
+    return (
+        digits.isdigit()
+        and digits.startswith("55")
+        and 12 <= len(digits) <= 13
+    )
+
+
 def infer_channel_from_contact(user_id: str) -> str:
     """
     Infer messaging channel for orphan contacts (no LeadInteraction row).
 
     Used only when listing receptive contacts without a tracked lead interaction.
+
+    Heuristics:
+      - ``whatsapp:+55...`` or ``+55...`` → whatsapp (voice shares phone format)
+      - bare digits ``55`` + DDD + number (12–13 digits) → whatsapp
+      - other numeric ids (e.g. ``5043259127`` telegram chat id) → telegram
+      - non-numeric strings → telegram
     """
     raw = (user_id or "").strip()
     if not raw:
         return "whatsapp"
     if _WHATSAPP_PREFIX_RE.match(raw):
         return "whatsapp"
-    if raw.startswith("+") or raw.isdigit():
+    if raw.startswith("+"):
         return "whatsapp"
+    if raw.isdigit():
+        if _looks_like_brazil_phone_digits(raw):
+            return "whatsapp"
+        return "telegram"
     return "telegram"
