@@ -7,7 +7,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.core.authorization import SYSTEM_RECORD_EDIT_DETAIL
+from app.core.authorization import SYSTEM_RECORD_DELETE_DETAIL
 from app.models.agent_activation import AgentActivation
 from app.models.campaign import Campaign, CampaignChannel
 from tests.api.ownership_helpers import foreign_campaign_id
@@ -188,7 +188,7 @@ async def test_campaign_start_foreign_returns_404(
     assert mock_send_campaign_message["calls"] == []
 
 
-async def test_campaign_start_system_returns_403(
+async def test_campaign_start_system_owner_returns_200(
     auth_client,
     owner_ctx,
     db_session,
@@ -210,8 +210,10 @@ async def test_campaign_start_system_returns_403(
     await db_session.flush()
 
     response = await auth_client.post(f"{BASE}{system_campaign.id}/start")
-    assert response.status_code == 403
-    assert response.json()["detail"] == SYSTEM_RECORD_EDIT_DETAIL
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "started"
+    assert body["leads_dispatched"] == 0
     assert mock_send_campaign_message["calls"] == []
 
 

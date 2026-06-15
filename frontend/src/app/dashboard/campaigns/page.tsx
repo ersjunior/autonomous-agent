@@ -10,7 +10,7 @@ import {
   stopCampaign,
   updateCampaign,
 } from "@/lib/api-entities";
-import { actionsFor } from "@/lib/protection";
+import { campaignActionsFor } from "@/lib/protection";
 import type { Agent } from "@/lib/types/agents";
 import type { Campaign } from "@/lib/types/campaigns";
 import { Alert } from "@/components/ui/Alert";
@@ -265,7 +265,7 @@ export default function CampaignsPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {campaigns.map((campaign) => {
-                const actions = actionsFor(campaign);
+                const actions = campaignActionsFor(campaign);
                 const agentMode = getAgentMode(campaign.agent_id);
                 const canStart =
                   actions.canEdit &&

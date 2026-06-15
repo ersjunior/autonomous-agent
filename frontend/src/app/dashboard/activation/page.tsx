@@ -465,8 +465,7 @@ export default function ActivationPage() {
             const activation = activationMap[channel];
             const running = activation?.is_running ?? false;
             const readOnly = !editable;
-            const canToggle =
-              !selectedCampaign.is_system && selectedAgent?.mode === "ACTIVE";
+            const canToggle = selectedAgent?.mode === "ACTIVE";
 
             return (
               <section key={channel} className="glass-card space-y-4 p-6">

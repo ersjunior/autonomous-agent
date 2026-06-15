@@ -3,12 +3,13 @@
 import logging
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.security import hash_password
 from app.models.agent import Agent, AgentMode
+from app.models.campaign import Campaign, CampaignChannel
 from app.models.channel import Channel, ChannelType
 from app.models.tabulacao import Tabulacao, TabulacaoCategoria
 from app.models.user import User
@@ -29,6 +30,15 @@ SEED_AGENT_NAMES = (
     "Agente_Ativo",
     "Agente_Receptivo",
 )
+
+SEED_CAMPAIGN_NAMES = (
+    "Campanha Ativa",
+    "Campanha Receptiva",
+)
+
+OBSOLETE_CAMPAIGN_NAMES = ("Validação Stop Sistema",)
+
+SEED_CAMPAIGN_CHANNEL_TYPES = ("whatsapp", "telegram", "voice")
 
 SEED_TABULACAO_CODIGOS = (
     "SIP:200",
@@ -250,6 +260,133 @@ async def seed_default_agents(db: AsyncSession) -> None:
         logger.exception("seed_default_agents falhou; startup continua")
 
 
+def _seed_campaign_specs() -> list[dict[str, str]]:
+    return [
+        {"name": "Campanha Ativa", "agent_name": "Agente_Ativo"},
+        {"name": "Campanha Receptiva", "agent_name": "Agente_Receptivo"},
+    ]
+
+
+async def _sync_campaign_channels(
+    db: AsyncSession,
+    campaign: Campaign,
+    channel_types: tuple[str, ...],
+) -> bool:
+    """Garante os canais da campanha; retorna True se houve alteração."""
+    result = await db.execute(
+        select(CampaignChannel.channel_type).where(
+            CampaignChannel.campaign_id == campaign.id
+        )
+    )
+    existing = {row.lower() for row in result.scalars().all()}
+    desired = {ch.lower() for ch in channel_types}
+    if existing == desired:
+        return False
+
+    await db.execute(delete(CampaignChannel).where(CampaignChannel.campaign_id == campaign.id))
+    for channel_type in channel_types:
+        db.add(CampaignChannel(campaign_id=campaign.id, channel_type=channel_type.lower()))
+    return True
+
+
+async def cleanup_obsolete_campaigns(db: AsyncSession) -> None:
+    """Remove campanhas de validação legadas (sem dados associados esperados)."""
+    try:
+        removed = 0
+        for name in OBSOLETE_CAMPAIGN_NAMES:
+            result = await db.execute(select(Campaign).where(Campaign.name == name))
+            campaign = result.scalar_one_or_none()
+            if campaign is None:
+                continue
+            await db.delete(campaign)
+            removed += 1
+
+        if removed:
+            await db.commit()
+            logger.info("cleanup_obsolete_campaigns: %d campanha(s) obsoleta(s) removida(s)", removed)
+    except Exception:
+        await db.rollback()
+        logger.exception("cleanup_obsolete_campaigns falhou; startup continua")
+
+
+async def seed_default_campaigns(db: AsyncSession) -> None:
+    """Cria ou atualiza campanhas padrão do admin (idempotente por nome)."""
+    try:
+        result = await db.execute(select(User).where(User.email == DEFAULT_ADMIN_EMAIL))
+        admin = result.scalar_one_or_none()
+        if admin is None:
+            logger.warning(
+                "seed_default_campaigns: admin %s não encontrado; pulando seed de campanhas",
+                DEFAULT_ADMIN_EMAIL,
+            )
+            return
+
+        created = 0
+        updated = 0
+        for spec in _seed_campaign_specs():
+            agent_row = await db.execute(
+                select(Agent).where(
+                    Agent.user_id == admin.id,
+                    Agent.name == spec["agent_name"],
+                )
+            )
+            agent = agent_row.scalar_one_or_none()
+            if agent is None:
+                logger.warning(
+                    "seed_default_campaigns: agente %s não encontrado; pulando %s",
+                    spec["agent_name"],
+                    spec["name"],
+                )
+                continue
+
+            existing = await db.execute(
+                select(Campaign).where(
+                    Campaign.user_id == admin.id,
+                    Campaign.name == spec["name"],
+                )
+            )
+            campaign = existing.scalar_one_or_none()
+            if campaign is None:
+                campaign = Campaign(
+                    user_id=admin.id,
+                    agent_id=agent.id,
+                    name=spec["name"],
+                    status="active",
+                    is_system=True,
+                )
+                db.add(campaign)
+                await db.flush()
+                await _sync_campaign_channels(db, campaign, SEED_CAMPAIGN_CHANNEL_TYPES)
+                created += 1
+                continue
+
+            changed = False
+            if not campaign.is_system:
+                campaign.is_system = True
+                changed = True
+            if campaign.agent_id != agent.id:
+                campaign.agent_id = agent.id
+                changed = True
+            if campaign.status != "active":
+                campaign.status = "active"
+                changed = True
+            if await _sync_campaign_channels(db, campaign, SEED_CAMPAIGN_CHANNEL_TYPES):
+                changed = True
+            if changed:
+                updated += 1
+
+        if created or updated:
+            await db.commit()
+            logger.info(
+                "seed_default_campaigns: %d criada(s), %d atualizada(s)",
+                created,
+                updated,
+            )
+    except Exception:
+        await db.rollback()
+        logger.exception("seed_default_campaigns falhou; startup continua")
+
+
 def _seed_tabulacao_specs() -> list[dict]:
     return [
         # SIP — telefonia
@@ -334,7 +471,7 @@ async def seed_default_tabulacoes(db: AsyncSession) -> None:
 
 
 async def ensure_seed_flags(db: AsyncSession) -> None:
-    """Garante is_system=true nos canais, agentes e tabulações seed (idempotente)."""
+    """Garante is_system=true nos canais, agentes, campanhas e tabulações seed (idempotente)."""
     try:
         result = await db.execute(select(User).where(User.email == DEFAULT_ADMIN_EMAIL))
         admin = result.scalar_one_or_none()
@@ -366,6 +503,19 @@ async def ensure_seed_flags(db: AsyncSession) -> None:
             if agent is None or agent.is_system:
                 continue
             agent.is_system = True
+            updated += 1
+
+        for campaign_name in SEED_CAMPAIGN_NAMES:
+            row = await db.execute(
+                select(Campaign).where(
+                    Campaign.user_id == admin.id,
+                    Campaign.name == campaign_name,
+                )
+            )
+            campaign = row.scalar_one_or_none()
+            if campaign is None or campaign.is_system:
+                continue
+            campaign.is_system = True
             updated += 1
 
         for codigo in SEED_TABULACAO_CODIGOS:

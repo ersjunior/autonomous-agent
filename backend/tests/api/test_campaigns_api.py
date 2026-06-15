@@ -7,7 +7,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.core.authorization import SYSTEM_RECORD_DELETE_DETAIL, SYSTEM_RECORD_EDIT_DETAIL
+from app.core.authorization import SYSTEM_RECORD_DELETE_DETAIL
 from app.models.agent import Agent, AgentMode
 from app.models.campaign import Campaign
 from tests.api.ownership_helpers import foreign_campaign_id
@@ -121,7 +121,7 @@ async def test_campaigns_update_own_returns_200(auth_client, owner_ctx) -> None:
     assert body["channel_types"] == ["telegram"]
 
 
-async def test_campaigns_update_system_returns_403(
+async def test_campaigns_update_system_owner_returns_200(
     auth_client,
     owner_ctx,
     db_session,
@@ -138,10 +138,10 @@ async def test_campaigns_update_system_returns_403(
 
     response = await auth_client.put(
         f"{BASE}{system_campaign.id}",
-        json={"name": "Tentativa"},
+        json={"name": "Campanha Sistema Renomeada"},
     )
-    assert response.status_code == 403
-    assert response.json()["detail"] == SYSTEM_RECORD_EDIT_DETAIL
+    assert response.status_code == 200
+    assert response.json()["name"] == "Campanha Sistema Renomeada"
 
 
 async def test_campaigns_update_foreign_returns_404(auth_client, db_session) -> None:

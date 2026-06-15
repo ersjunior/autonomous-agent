@@ -234,7 +234,9 @@ async def test_system_channel_not_editable(system_seeds, db_session) -> None:
     assert exc.value.status_code == 403
 
 
-async def test_system_campaign_not_editable(db_session, owner_ctx: OwnerContext) -> None:
+async def test_system_campaign_owner_can_edit_but_not_delete(
+    db_session, owner_ctx: OwnerContext, second_owner
+) -> None:
     campaign = Campaign(
         user_id=owner_ctx.user.id,
         agent_id=owner_ctx.agent.id,
@@ -245,11 +247,17 @@ async def test_system_campaign_not_editable(db_session, owner_ctx: OwnerContext)
     db_session.add(campaign)
     await db_session.flush()
 
-    assert can_edit(campaign, owner_ctx.user) is False
+    assert can_edit(campaign, owner_ctx.user) is True
+    assert can_edit(campaign, second_owner) is False
+    assert can_delete(campaign, owner_ctx.user) is False
+    assert can_delete(campaign, second_owner) is False
+
+    raise_if_cannot_edit(campaign, owner_ctx.user)
+
     with pytest.raises(HTTPException) as exc:
-        raise_if_cannot_edit(campaign, owner_ctx.user)
+        raise_if_cannot_delete(campaign, owner_ctx.user)
     assert exc.value.status_code == 403
-    assert exc.value.detail == SYSTEM_RECORD_EDIT_DETAIL
+    assert exc.value.detail == SYSTEM_RECORD_DELETE_DETAIL
 
 
 async def test_owner_can_edit_own_non_system_records(

@@ -10,9 +10,9 @@ import httpx
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
+from app.core.seed import SEED_CAMPAIGN_NAMES
 from app.models.agent_activation import AgentActivation
-from app.models.campaign import Campaign, CampaignChannel
-from app.models.user import User
+from app.models.campaign import Campaign
 from worker.tasks.activation_scheduler import _process_active_activations_async
 
 BASE = "http://127.0.0.1:8000/api/v1"
@@ -45,37 +45,6 @@ async def scheduler_includes_campaign(campaign_id: str) -> bool:
         return result.scalars().first() is not None
 
 
-async def seed_system_campaign(agent_id: str) -> str | None:
-    async with AsyncSessionLocal() as db:
-        admin = (
-            await db.execute(select(User).where(User.email == ADMIN_EMAIL))
-        ).scalar_one_or_none()
-        if admin is None:
-            return None
-        existing = (
-            await db.execute(
-                select(Campaign).where(
-                    Campaign.is_system.is_(True),
-                    Campaign.name == "Validação Stop Sistema",
-                )
-            )
-        ).scalar_one_or_none()
-        if existing:
-            return str(existing.id)
-        camp = Campaign(
-            user_id=admin.id,
-            agent_id=uuid.UUID(agent_id),
-            name="Validação Stop Sistema",
-            status="active",
-            is_system=True,
-        )
-        db.add(camp)
-        await db.flush()
-        db.add(CampaignChannel(campaign_id=camp.id, channel_type="whatsapp"))
-        await db.commit()
-        return str(camp.id)
-
-
 async def run_validation() -> list[tuple[str, bool, str]]:
     results: list[tuple[str, bool, str]] = []
     camp_id: str | None = None
@@ -89,11 +58,33 @@ async def run_validation() -> list[tuple[str, bool, str]]:
         r_login.raise_for_status()
         h = {"Authorization": f"Bearer {r_login.json()['access_token']}"}
 
+        campaigns = (await client.get(f"{BASE}/campaigns/", headers=h)).json()
         agents = (await client.get(f"{BASE}/agents/", headers=h)).json()
-        system_active = next(
-            (a for a in agents if a.get("is_system") and a.get("mode") == "ACTIVE"),
+
+        seed_campaign = next(
+            (c for c in campaigns if c.get("name") in SEED_CAMPAIGN_NAMES and c.get("is_system")),
             None,
         )
+        if seed_campaign:
+            seed_id = seed_campaign["id"]
+            r_get_sys = await client.get(f"{BASE}/campaigns/{seed_id}", headers=h)
+            sys_body = r_get_sys.json()
+            results.append(
+                (
+                    "GET campanha seed is_system inclui is_system=true",
+                    r_get_sys.status_code == 200 and sys_body.get("is_system") is True,
+                    f"status={r_get_sys.status_code} is_system={sys_body.get('is_system')}",
+                )
+            )
+            r_delete_sys = await client.delete(f"{BASE}/campaigns/{seed_id}", headers=h)
+            results.append(
+                (
+                    "DELETE campanha is_system → 403",
+                    r_delete_sys.status_code == 403,
+                    f"status={r_delete_sys.status_code} body={r_delete_sys.text[:120]}",
+                )
+            )
+
         custom_active = next(
             (a for a in agents if not a.get("is_system") and a.get("mode") == "ACTIVE"),
             None,
@@ -111,29 +102,6 @@ async def run_validation() -> list[tuple[str, bool, str]]:
             )
             r_agent.raise_for_status()
             custom_active = r_agent.json()
-
-        if system_active:
-            system_camp_id = await seed_system_campaign(system_active["id"])
-            if system_camp_id:
-                r_get_sys = await client.get(f"{BASE}/campaigns/{system_camp_id}", headers=h)
-                sys_body = r_get_sys.json()
-                results.append(
-                    (
-                        "GET campanha is_system inclui is_system=true",
-                        r_get_sys.status_code == 200 and sys_body.get("is_system") is True,
-                        f"status={r_get_sys.status_code} is_system={sys_body.get('is_system')}",
-                    )
-                )
-                r_stop_sys = await client.post(
-                    f"{BASE}/campaigns/{system_camp_id}/stop", headers=h
-                )
-                results.append(
-                    (
-                        "POST stop campanha is_system → 403",
-                        r_stop_sys.status_code == 403,
-                        f"status={r_stop_sys.status_code} body={r_stop_sys.text[:120]}",
-                    )
-                )
 
         r_draft = await client.post(
             f"{BASE}/campaigns/",

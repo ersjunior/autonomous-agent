@@ -15,6 +15,14 @@ export function actionsFor(record: OwnableRecord): RecordActions {
   return { canView: true, canEdit: true, canDelete: true };
 }
 
+/** Campanhas is_system: editáveis e operáveis pelo dono; exclusão bloqueada. */
+export function campaignActionsFor(record: OwnableRecord): RecordActions {
+  if (record.is_system) {
+    return { canView: true, canEdit: true, canDelete: false };
+  }
+  return actionsFor(record);
+}
+
 export type LeadBaseSource = "IMPORT" | "MANUAL";
 
 export function isImportLeadBase(source?: LeadBaseSource): boolean {

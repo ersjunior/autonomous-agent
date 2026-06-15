@@ -16,9 +16,11 @@ from app.core.database import AsyncSessionLocal, engine
 from app.core.telegram_setup import configure_telegram_on_startup
 from app.core.tunnel_log import log_resolved_public_urls
 from app.core.seed import (
+    cleanup_obsolete_campaigns,
     ensure_seed_flags,
     seed_default_admin,
     seed_default_agents,
+    seed_default_campaigns,
     seed_default_channels,
     seed_default_tabulacoes,
 )
@@ -45,6 +47,8 @@ async def lifespan(app: FastAPI):
         await seed_default_admin(db)
         await seed_default_channels(db)
         await seed_default_agents(db)
+        await cleanup_obsolete_campaigns(db)
+        await seed_default_campaigns(db)
         await seed_default_tabulacoes(db)
         await ensure_seed_flags(db)
 

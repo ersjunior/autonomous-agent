@@ -16,6 +16,13 @@ IMPORT_LEAD_EDIT_DETAIL = "Leads de base importada são somente leitura"
 IMPORT_LEAD_DELETE_DETAIL = "Leads de base importada são somente leitura"
 
 
+def _is_campaign(record: Any) -> bool:
+    """Campaign is the only model where is_system blocks delete but not edit."""
+    from app.models.campaign import Campaign
+
+    return isinstance(record, Campaign)
+
+
 def record_owner_id(record: Any) -> uuid.UUID:
     """Resolve owner user_id for Agent, Channel, Tabulacao, Campaign, Lead, or LeadBase."""
     if isinstance(record, LeadBase):
@@ -38,12 +45,16 @@ def can_view(record: Any, user: User) -> bool:
 
 
 def can_edit(record: Any, user: User) -> bool:
-    """System records are never editable; only the owner may edit."""
+    """System records are never editable except Campaign (owner may edit)."""
+    if _is_campaign(record):
+        return record_owner_id(record) == user.id
     return not getattr(record, "is_system", False) and record_owner_id(record) == user.id
 
 
 def can_delete(record: Any, user: User) -> bool:
-    """Same base rule as edit; endpoint-specific exceptions apply elsewhere."""
+    """System campaigns cannot be deleted; other system records follow can_edit."""
+    if _is_campaign(record) and getattr(record, "is_system", False):
+        return False
     return can_edit(record, user)
 
 
@@ -73,6 +84,11 @@ def raise_if_cannot_view(record: Any, user: User, *, not_found_detail: str = "No
 
 
 def raise_if_cannot_edit(record: Any, user: User) -> None:
+    # Campanhas is_system: editáveis pelo dono (start/stop, nome, canais, bases).
+    if _is_campaign(record):
+        if record_owner_id(record) != user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        return
     if getattr(record, "is_system", False):
         raise _forbidden(SYSTEM_RECORD_EDIT_DETAIL)
     if record_owner_id(record) != user.id:
