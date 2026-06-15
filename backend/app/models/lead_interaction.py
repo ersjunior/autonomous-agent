@@ -74,6 +74,17 @@ class LeadInteraction(Base):
         index=True,
         doc="Call SID Twilio para correlação SIP (gancho futuro).",
     )
+    lifecycle_version: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+        doc="0 = legado (fora do sweep de inatividade); >=1 = regras novas.",
+    )
+    inactivity_warning_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Timestamp do aviso 'Ainda está aí?' (resetado quando o cliente responde).",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

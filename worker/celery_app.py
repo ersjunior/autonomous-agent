@@ -31,6 +31,7 @@ celery.conf.update(
         "worker.tasks.queue_abandon_sweep",
         "worker.tasks.kb_ingestion",
         "worker.tasks.human_handoff_sweep",
+        "worker.tasks.inactivity_sweep",
     ),
     beat_schedule={
         "gerar-devolutivas-diarias": {
@@ -65,6 +66,11 @@ celery.conf.update(
         "sweep-human-handoff-timeouts": {
             "task": "worker.tasks.human_handoff_sweep.sweep_human_handoff_timeouts_task",
             "schedule": float(settings.human_handoff_sweep_seconds),
+        },
+        # Mensageria — inatividade em em_andamento (lifecycle_version >= 1)
+        "sweep-messaging-inactivity": {
+            "task": "worker.tasks.inactivity_sweep.sweep_messaging_inactivity",
+            "schedule": float(settings.inactivity_sweep_seconds),
         },
     },
 )

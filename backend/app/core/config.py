@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     # Lead interaction status sweep (worker): acionado sem resposta → nao_atendido
     status_timeout_hours: int = 48
 
+    # Mensageria — sweep de inatividade em em_andamento (lifecycle_version >= 1)
+    inactivity_warning_minutes: int = 20
+    inactivity_close_minutes: int = 20
+    inactivity_sweep_seconds: int = 60
+
     # Janela de conversa ativa outbound (inbound continua com o agente ACTIVE):
     # encerra se (now - data_ultimo_contato) > N horas. Separado de status_timeout_hours.
     active_conversation_timeout_hours: int = 24

@@ -35,6 +35,7 @@ async def upsert_lead_interaction(
     set_acionamento: bool = False,
     touch_inbound: bool = False,
     record_outbound_attempt: bool = False,
+    touch_agent_message: bool = False,
 ) -> LeadInteraction:
     """
     Busca ou cria LeadInteraction por (lead_id, campaign_id, channel_type). Não commita.
@@ -42,6 +43,7 @@ async def upsert_lead_interaction(
     Semântica de timestamps:
       - data_ultimo_contato: apenas inbound (touch_inbound=True)
       - data_ultima_tentativa + tentativas: outbound (record_outbound_attempt=True)
+      - data_ultima_tentativa sem incrementar tentativas: touch_agent_message=True
     """
     channel = channel_type.lower()
     now = datetime.now(timezone.utc)
@@ -69,6 +71,7 @@ async def upsert_lead_interaction(
             channel_type=channel,
             status="pendente",
             tentativas=0,
+            lifecycle_version=1,
         )
         session.add(record)
 
@@ -98,8 +101,12 @@ async def upsert_lead_interaction(
         record.data_acionamento = now
     if touch_inbound:
         record.data_ultimo_contato = now
+        if record.inactivity_warning_sent_at is not None:
+            record.inactivity_warning_sent_at = None
     if record_outbound_attempt:
         record.tentativas = (record.tentativas or 0) + 1
+        record.data_ultima_tentativa = now
+    elif touch_agent_message:
         record.data_ultima_tentativa = now
 
     await session.flush()
@@ -209,6 +216,7 @@ async def track_inbound_lead_interaction(
         devolutiva=devolutiva,
         last_interaction_id=last_interaction_id,
         touch_inbound=True,
+        touch_agent_message=True,
     )
 
     from app.services.tabulacao_assignment import maybe_apply_tabulacao_on_transition

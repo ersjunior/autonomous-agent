@@ -111,7 +111,10 @@ async def create_lead_interaction(
     status: str = "em_andamento",
     data_acionamento: datetime | None = None,
     data_ultimo_contato: datetime | None = None,
+    data_ultima_tentativa: datetime | None = None,
     tentativas: int = 1,
+    lifecycle_version: int = 0,
+    inactivity_warning_sent_at: datetime | None = None,
 ) -> LeadInteraction:
     li = LeadInteraction(
         lead_id=lead_id,
@@ -121,6 +124,9 @@ async def create_lead_interaction(
         tentativas=tentativas,
         data_acionamento=data_acionamento,
         data_ultimo_contato=data_ultimo_contato,
+        data_ultima_tentativa=data_ultima_tentativa,
+        lifecycle_version=lifecycle_version,
+        inactivity_warning_sent_at=inactivity_warning_sent_at,
     )
     session.add(li)
     await session.flush()

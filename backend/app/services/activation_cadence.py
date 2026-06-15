@@ -44,6 +44,29 @@ def lead_has_responded(record: LeadInteraction) -> bool:
     return last_inbound > last_outbound
 
 
+def last_agent_message_at(record: LeadInteraction) -> datetime | None:
+    """Timestamp da última mensagem do agente (outbound ou resposta inbound)."""
+    return _aware(record.data_ultima_tentativa) or _aware(record.data_acionamento)
+
+
+def client_is_silent(record: LeadInteraction) -> bool:
+    """Cliente sem responder desde a última mensagem do agente."""
+    if last_agent_message_at(record) is None:
+        return False
+    return not lead_has_responded(record)
+
+
+def client_silent_since_warning(record: LeadInteraction) -> bool:
+    """Sem inbound após o aviso de inatividade."""
+    warn = _aware(record.inactivity_warning_sent_at)
+    if warn is None:
+        return False
+    last_inbound = _aware(record.data_ultimo_contato)
+    if last_inbound is None:
+        return True
+    return last_inbound <= warn
+
+
 def remaining_hourly_quota(limit: int, recent_count: int) -> int:
     return max(0, limit - recent_count)
 
