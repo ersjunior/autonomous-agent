@@ -7,6 +7,53 @@ export interface MetricsResponse {
   taxa_resposta: number;
 }
 
+export interface DashboardCards {
+  agents: number;
+  active_channels: number;
+  leads: number;
+  active_campaigns: number;
+}
+
+export interface DashboardSummaryResponse {
+  cards: DashboardCards;
+  leads_acionados: number;
+  leads_virgens: number;
+  tentativas_por_canal: Record<string, number>;
+  tentativas_por_status: Record<string, number>;
+}
+
+/** Filtro de canal — seletor na home do dashboard. */
+export type DashboardChannelFilter = "whatsapp" | "telegram" | "voice" | null;
+
+export interface DashboardCampaignRow {
+  campaign_id: string;
+  campaign_name: string;
+  leads: number;
+  data_recebimento: string | null;
+  data_inicio: string | null;
+  data_fim: string | null;
+  tentativas: number;
+  spin: number;
+  contato: number;
+  cpc: number;
+  sucesso: number;
+  conversao: number;
+}
+
+export interface DashboardCampaignsResponse {
+  campaigns: DashboardCampaignRow[];
+}
+
+export const STATUS_ORDER = [
+  "pendente",
+  "acionado",
+  "em_andamento",
+  "nao_atendido",
+  "convertido",
+  "recusou",
+  "erro",
+] as const;
+
 export const STATUS_LABELS: Record<string, string> = {
   pendente: "Pendente",
   acionado: "Acionado",

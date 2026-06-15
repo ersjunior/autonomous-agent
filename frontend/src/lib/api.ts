@@ -173,6 +173,16 @@ export async function getQueueMetrics(days = 1): Promise<Response> {
   return apiFetch(`/api/v1/metrics/queue?days=${days}`);
 }
 
+export async function getDashboardSummary(channelType?: string | null): Promise<Response> {
+  const query = channelType ? `?channel_type=${encodeURIComponent(channelType)}` : "";
+  return apiFetch(`/api/v1/dashboard/summary${query}`);
+}
+
+export async function getDashboardCampaigns(channelType?: string | null): Promise<Response> {
+  const query = channelType ? `?channel_type=${encodeURIComponent(channelType)}` : "";
+  return apiFetch(`/api/v1/dashboard/campaigns${query}`);
+}
+
 export async function getCapacity(): Promise<Response> {
   return apiFetch("/api/v1/capacity");
 }
