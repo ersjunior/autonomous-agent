@@ -9,6 +9,7 @@ from app.api.v1 import (
     campaigns,
     capacity,
     channels,
+    dashboard,
     handoff,
     knowledge,
     lead_bases,
@@ -28,6 +29,7 @@ api_router.include_router(channels.router)
 api_router.include_router(lead_bases.router)
 api_router.include_router(leads.router)
 api_router.include_router(campaigns.router)
+api_router.include_router(dashboard.router)
 api_router.include_router(metrics.router)
 api_router.include_router(capacity.router)
 api_router.include_router(tunnel.router)
