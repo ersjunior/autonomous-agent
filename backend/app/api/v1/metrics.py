@@ -6,10 +6,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
-from app.schemas.metrics import QueueMetricsResponse
+from app.schemas.metrics import AgentMetricsResponse, QueueMetricsResponse
+from app.services.metrics import get_metrics_by_agent
 from app.services.queue_metrics import get_queue_metrics
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
+
+
+@router.get("/by-agent", response_model=AgentMetricsResponse)
+async def metrics_by_agent(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AgentMetricsResponse:
+    """Métricas simples agregadas por agente (comparativo lado a lado)."""
+    return await get_metrics_by_agent(db, user_id=user.id)
 
 
 @router.get("/queue", response_model=QueueMetricsResponse)

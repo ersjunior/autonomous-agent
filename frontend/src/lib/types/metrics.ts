@@ -7,6 +7,27 @@ export interface MetricsResponse {
   taxa_resposta: number;
 }
 
+export interface AgentMetricsRow {
+  agent_id: string;
+  agent_name: string;
+  mode: string;
+  total_leads: number;
+  total_acionamentos: number;
+  por_status: Record<string, number>;
+  por_canal: Record<string, number>;
+  taxa_conversao: number;
+  taxa_resposta: number;
+}
+
+export interface AgentMetricsResponse {
+  agents: AgentMetricsRow[];
+}
+
+export const AGENT_MODE_LABELS: Record<string, string> = {
+  ACTIVE: "Ativo",
+  RECEPTIVE: "Receptivo",
+};
+
 export interface DashboardCards {
   agents: number;
   active_channels: number;

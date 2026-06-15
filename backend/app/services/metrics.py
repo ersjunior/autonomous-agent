@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.agent import Agent
+from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.models.lead_base import LeadBase
 from app.models.lead_interaction import LeadInteraction
-from app.schemas.metrics import MetricsResponse
+from app.schemas.metrics import AgentMetricsResponse, AgentMetricsRow, MetricsResponse
 
 STATUS_KEYS = (
     "pendente",
@@ -138,3 +140,129 @@ async def get_lead_base_metrics(
         status_rows=list(status_result.all()),
         channel_rows=list(channel_result.all()),
     )
+
+
+def _agent_scope(user_id: uuid.UUID):
+    """Agentes visíveis ao usuário (dono ou seed is_system)."""
+    return or_(Agent.is_system.is_(True), Agent.user_id == user_id)
+
+
+def _campaign_scope(user_id: uuid.UUID):
+    """Campanhas visíveis ao usuário (dono ou seed is_system)."""
+    return or_(Campaign.is_system.is_(True), Campaign.user_id == user_id)
+
+
+async def get_metrics_by_agent(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+) -> AgentMetricsResponse:
+    """
+    Métricas simples agregadas por agente (uma linha por agente visível).
+
+    Estratégia (sem N+1): Q1 lista agentes; Q2–Q5 agregam por ``Campaign.agent_id``
+    com JOIN em campanhas no escopo do usuário; merge em Python por agent_id.
+
+    LIMITAÇÃO: a interação é atribuída ao ``Campaign.agent_id`` da campanha gravada
+    no lead_interaction — mesma semântica de ``get_campaign_metrics``, não o agente
+    efetivo do roteamento em fallbacks para seeds do sistema.
+    """
+    agent_scope = _agent_scope(user_id)
+    campaign_scope = _campaign_scope(user_id)
+
+    agent_rows = list(
+        (
+            await db.execute(
+                select(Agent.id, Agent.name, Agent.mode)
+                .where(agent_scope)
+                .order_by(Agent.mode, Agent.name)
+            )
+        ).all()
+    )
+
+    if not agent_rows:
+        return AgentMetricsResponse(agents=[])
+
+    rows_by_id: dict[uuid.UUID, dict] = {
+        agent_id: {
+            "agent_name": name,
+            "mode": mode.value if hasattr(mode, "value") else str(mode),
+            "total_leads": 0,
+            "total_acionamentos": 0,
+        }
+        for agent_id, name, mode in agent_rows
+    }
+
+    lead_stats = await db.execute(
+        select(Campaign.agent_id, func.count(func.distinct(Lead.id)))
+        .select_from(Lead)
+        .join(LeadBase, Lead.lead_base_id == LeadBase.id)
+        .join(Campaign, LeadBase.campaign_id == Campaign.id)
+        .where(campaign_scope)
+        .group_by(Campaign.agent_id)
+    )
+    for agent_id, lead_count in lead_stats.all():
+        bucket = rows_by_id.get(agent_id)
+        if bucket is None:
+            continue
+        bucket["total_leads"] = int(lead_count or 0)
+
+    acionamento_stats = await db.execute(
+        select(Campaign.agent_id, func.count(LeadInteraction.id))
+        .select_from(LeadInteraction)
+        .join(Campaign, LeadInteraction.campaign_id == Campaign.id)
+        .where(campaign_scope)
+        .group_by(Campaign.agent_id)
+    )
+    for agent_id, total in acionamento_stats.all():
+        bucket = rows_by_id.get(agent_id)
+        if bucket is None:
+            continue
+        bucket["total_acionamentos"] = int(total or 0)
+
+    status_stats = await db.execute(
+        select(Campaign.agent_id, LeadInteraction.status, func.count())
+        .select_from(LeadInteraction)
+        .join(Campaign, LeadInteraction.campaign_id == Campaign.id)
+        .where(campaign_scope)
+        .group_by(Campaign.agent_id, LeadInteraction.status)
+    )
+    status_by_agent: dict[uuid.UUID, list[tuple[str, int]]] = {}
+    for agent_id, status, count in status_stats.all():
+        status_by_agent.setdefault(agent_id, []).append((status, int(count)))
+
+    channel_stats = await db.execute(
+        select(Campaign.agent_id, LeadInteraction.channel_type, func.count())
+        .select_from(LeadInteraction)
+        .join(Campaign, LeadInteraction.campaign_id == Campaign.id)
+        .where(campaign_scope)
+        .group_by(Campaign.agent_id, LeadInteraction.channel_type)
+    )
+    channel_by_agent: dict[uuid.UUID, list[tuple[str, int]]] = {}
+    for agent_id, channel, count in channel_stats.all():
+        channel_by_agent.setdefault(agent_id, []).append((channel, int(count)))
+
+    agents_out: list[AgentMetricsRow] = []
+    for agent_id, name, mode in agent_rows:
+        data = rows_by_id[agent_id]
+        metrics = _build_metrics_response(
+            total_leads=data["total_leads"],
+            total_acionamentos=data["total_acionamentos"],
+            status_rows=status_by_agent.get(agent_id, []),
+            channel_rows=channel_by_agent.get(agent_id, []),
+        )
+        agents_out.append(
+            AgentMetricsRow(
+                agent_id=agent_id,
+                agent_name=data["agent_name"],
+                mode=data["mode"],
+                total_leads=metrics.total_leads,
+                total_acionamentos=metrics.total_acionamentos,
+                por_status=metrics.por_status,
+                por_canal=metrics.por_canal,
+                taxa_conversao=metrics.taxa_conversao,
+                taxa_resposta=metrics.taxa_resposta,
+            )
+        )
+
+    return AgentMetricsResponse(agents=agents_out)

@@ -165,6 +165,10 @@ export async function getCampaignMetrics(campaignId: string): Promise<Response> 
   return apiFetch(`/api/v1/campaigns/${campaignId}/metrics`);
 }
 
+export async function getMetricsByAgent(): Promise<Response> {
+  return apiFetch("/api/v1/metrics/by-agent");
+}
+
 export async function getLeadBaseMetrics(leadBaseId: string): Promise<Response> {
   return apiFetch(`/api/v1/lead-bases/${leadBaseId}/metrics`);
 }
