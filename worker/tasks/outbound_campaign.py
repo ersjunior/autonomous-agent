@@ -20,8 +20,15 @@ from agents.channels.voice.twilio_voice_client import (
 )
 from agents.channels.whatsapp.twilio_client import send_whatsapp_message
 from agents.orchestrator.router import route_message
+from app.core.config import WhatsAppTemplatePurpose
 from app.core.database import AsyncSessionLocal
+from app.models.lead_interaction import LeadInteraction
 from app.services.voice_audio import gerar_audio_chamada
+from app.services.whatsapp_outbound import (
+    WhatsAppSendMode,
+    build_content_variables,
+    resolve_whatsapp_send_mode,
+)
 from app.models.agent import Agent, AgentMode
 from app.models.campaign import Campaign
 from app.models.lead import Lead
@@ -90,6 +97,26 @@ def _agent_context_for_campaign(
     return ctx
 
 
+async def _fetch_lead_interaction(
+    session: AsyncSession,
+    lead_id: uuid.UUID,
+    campaign_id: uuid.UUID,
+    channel_type: str,
+) -> LeadInteraction | None:
+    """LeadInteraction atual para (lead, campanha, canal), se existir."""
+    channel = channel_type.lower()
+    result = await session.execute(
+        select(LeadInteraction)
+        .where(
+            LeadInteraction.lead_id == lead_id,
+            LeadInteraction.campaign_id == campaign_id,
+            LeadInteraction.channel_type == channel,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def _block_non_active_outbound(
     session: AsyncSession,
     lead: Lead,
@@ -118,13 +145,23 @@ async def _deliver_message(
     campaign: Campaign,
     channel: str,
     recipient: str,
-    response: str,
+    response: str | None = None,
     *,
     first_touch: bool = True,
+    content_sid: str | None = None,
+    content_variables: dict[str, str] | None = None,
 ) -> DeliverResult:
     """Envia texto/mídia no canal. Retorna resultado com SID WhatsApp quando aplicável."""
     if channel == "whatsapp":
-        message_sid = send_whatsapp_message(recipient, response)
+        if content_sid:
+            variables = content_variables or build_content_variables(lead)
+            message_sid = send_whatsapp_message(
+                recipient,
+                content_sid=content_sid,
+                content_variables=variables,
+            )
+        else:
+            message_sid = send_whatsapp_message(recipient, response or "")
         return DeliverResult(
             ok=True,
             twilio_message_sid=message_sid,
@@ -212,6 +249,7 @@ async def _send_on_channel(
     *,
     followup: bool = False,
     agent_override: Agent | None = None,
+    force_whatsapp_template: bool = False,
 ) -> dict | None:
     channel = channel_type.lower()
     recipient = _resolve_recipient(lead, channel)
@@ -236,22 +274,62 @@ async def _send_on_channel(
     if agent is None:
         raise ValueError(f"Campaign {campaign.id} has no agent")
 
-    prompt = FOLLOWUP_TRIGGER_MESSAGE if followup else _build_initial_message(lead, campaign)
-    agent_context = _agent_context_for_campaign(agent, campaign, followup=followup)
-    result = await route_message(
-        prompt,
-        channel,
-        recipient,
-        agent_context=agent_context,
+    purpose: WhatsAppTemplatePurpose = "followup" if followup else "inicial"
+    record = await _fetch_lead_interaction(session, lead.id, campaign.id, channel)
+
+    whatsapp_send_mode: WhatsAppSendMode | None = None
+    if channel == "whatsapp":
+        whatsapp_send_mode = resolve_whatsapp_send_mode(
+            purpose,
+            record,
+            lead=lead,
+            ignore_service_window=force_whatsapp_template,
+        )
+
+    use_whatsapp_template = (
+        channel == "whatsapp"
+        and whatsapp_send_mode is not None
+        and whatsapp_send_mode.mode == "template"
     )
-    response = result.get("response", "")
+
+    response = ""
+    if use_whatsapp_template:
+        logger.info(
+            "WhatsApp outbound template purpose=%s lead=%s sid=%s (LLM skipped)",
+            purpose,
+            lead.id,
+            whatsapp_send_mode.content_sid,
+        )
+    else:
+        prompt = FOLLOWUP_TRIGGER_MESSAGE if followup else _build_initial_message(lead, campaign)
+        agent_context = _agent_context_for_campaign(agent, campaign, followup=followup)
+        result = await route_message(
+            prompt,
+            channel,
+            recipient,
+            agent_context=agent_context,
+        )
+        response = result.get("response", "")
 
     if channel in ("whatsapp", "telegram"):
-        if not (response or "").strip():
+        if not use_whatsapp_template and not (response or "").strip():
             logger.warning("Empty response for lead %s channel %s", lead.id, channel)
             return None
         try:
-            delivery = await _deliver_message(session, lead, campaign, channel, recipient, response)
+            delivery = await _deliver_message(
+                session,
+                lead,
+                campaign,
+                channel,
+                recipient,
+                response if not use_whatsapp_template else None,
+                content_sid=whatsapp_send_mode.content_sid if use_whatsapp_template else None,
+                content_variables=(
+                    whatsapp_send_mode.content_variables or build_content_variables(lead)
+                    if use_whatsapp_template
+                    else None
+                ),
+            )
         except Exception as exc:
             logger.error(
                 "Outbound delivery failed: channel=%s lead_id=%s recipient=%s error=%s",
@@ -270,6 +348,13 @@ async def _send_on_channel(
                 devolutiva=str(exc),
             )
             return None
+        followup_devolutiva: str | None = None
+        if followup:
+            followup_devolutiva = (
+                (response or "")[:500]
+                if response
+                else f"template:{purpose}"
+            )
         await upsert_lead_interaction(
             session,
             lead.id,
@@ -278,7 +363,7 @@ async def _send_on_channel(
             status="acionado",
             set_acionamento=not followup,
             record_outbound_attempt=True,
-            devolutiva=(response or "")[:500] if followup else None,
+            devolutiva=followup_devolutiva,
             twilio_message_sid=delivery.twilio_message_sid,
             last_delivery_status=delivery.initial_delivery_status,
         )
@@ -295,7 +380,14 @@ async def _send_on_channel(
         if not delivery.ok:
             return None
 
-    return {"channel": channel, "recipient": recipient, "response": response, "followup": followup}
+    return {
+        "channel": channel,
+        "recipient": recipient,
+        "response": response or None,
+        "followup": followup,
+        "whatsapp_template": use_whatsapp_template,
+        "content_sid": whatsapp_send_mode.content_sid if use_whatsapp_template else None,
+    }
 
 
 async def _send_test_dispatch(
@@ -306,7 +398,10 @@ async def _send_test_dispatch(
     agent: Agent,
 ) -> dict:
     """
-    Disparo ad-hoc síncrono: um canal, agente explícito, sem janela/cadência/scheduler.
+    Disparo ad-hoc síncrono: um canal, agente explícito, sem cadência/scheduler.
+
+    Com templates WhatsApp ON, ignora a janela de 24h e envia template inicial
+    (mesmo ``send_whatsapp_message`` + ``encode_content_variables`` do acionamento real).
     """
     channel = normalize_channel_type(channel_type)
     result = await _send_on_channel(
@@ -316,6 +411,7 @@ async def _send_test_dispatch(
         channel,
         followup=False,
         agent_override=agent,
+        force_whatsapp_template=True,
     )
     if result is None:
         return {

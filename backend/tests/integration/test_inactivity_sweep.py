@@ -51,12 +51,17 @@ async def test_inactivity_sweep_sends_warning_stays_em_andamento(
     db_session,
     seeded_catalog,
 ):
+    """Templates OFF (default): aviso de inatividade usa texto livre."""
     mock_dt.now.return_value = _NOW
     li = await _make_silent_li(db_session, owner_ctx)
 
-    with patch("worker.tasks.inactivity_sweep.settings") as mock_settings:
+    with (
+        patch("worker.tasks.inactivity_sweep.settings") as mock_settings,
+        patch("app.services.whatsapp_outbound.settings") as wa_settings,
+    ):
         mock_settings.inactivity_warning_minutes = 20
         mock_settings.inactivity_close_minutes = 20
+        wa_settings.whatsapp_templates_enabled.return_value = False
         stats = await _sweep_inactivity_with_session(db_session)
 
     assert stats["warnings_sent"] == 1
@@ -70,6 +75,53 @@ async def test_inactivity_sweep_sends_warning_stays_em_andamento(
         owner_ctx.lead.telefone_1,
         INACTIVITY_WARNING_MESSAGE,
     )
+
+
+@pytest.mark.asyncio
+@patch("worker.tasks.inactivity_sweep.send_whatsapp_message", return_value="SMtpl")
+@patch("worker.tasks.inactivity_sweep.datetime")
+async def test_inactivity_sweep_sends_retomada_template_when_templates_on(
+    mock_dt,
+    mock_send,
+    owner_ctx: OwnerContext,
+    db_session,
+    seeded_catalog,
+):
+    """Templates ON + fora da janela 24h: aviso usa template retomada."""
+    from app.services.whatsapp_outbound import WhatsAppSendMode
+
+    mock_dt.now.return_value = _NOW
+    li = await _make_silent_li(db_session, owner_ctx)
+
+    retomada_sid = "HXfebf2d00b102badb36d5e81c12a0b050"
+    template_mode = WhatsAppSendMode(
+        mode="template",
+        content_sid=retomada_sid,
+        content_variables={"1": owner_ctx.lead.nome_cliente},
+    )
+
+    with (
+        patch("worker.tasks.inactivity_sweep.settings") as mock_settings,
+        patch(
+            "worker.tasks.inactivity_sweep.resolve_whatsapp_send_mode",
+            return_value=template_mode,
+        ),
+    ):
+        mock_settings.inactivity_warning_minutes = 20
+        mock_settings.inactivity_close_minutes = 20
+        stats = await _sweep_inactivity_with_session(db_session)
+
+    assert stats["warnings_sent"] == 1
+    mock_send.assert_called_once_with(
+        owner_ctx.lead.telefone_1,
+        content_sid=retomada_sid,
+        content_variables={"1": owner_ctx.lead.nome_cliente},
+    )
+
+    refreshed = await db_session.get(LeadInteraction, li.id)
+    assert refreshed is not None
+    assert refreshed.twilio_message_sid == "SMtpl"
+    assert refreshed.last_delivery_status == "queued"
 
 
 @pytest.mark.asyncio

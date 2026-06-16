@@ -17,6 +17,7 @@ from agents.orchestrator.router import route_message
 from app.core.activation_defaults import MESSAGING_CHANNELS, normalize_channel_type
 from app.models.agent import Agent, AgentMode
 from app.models.lead import Lead
+from app.models.lead_interaction import LeadInteraction
 from app.services.activation_service import get_agent_channel_settings_row, merged_params
 from app.services.capacity_service import (
     ReceptiveCapacityHandle,
@@ -51,11 +52,24 @@ QUEUE_WAIT_MESSAGE = (
 )
 
 
-async def deliver_channel_text(channel: str, user_id: str, text: str) -> bool:
+async def deliver_channel_text(
+    channel: str,
+    user_id: str,
+    text: str,
+    *,
+    lead: Lead | None = None,
+    record: LeadInteraction | None = None,
+) -> bool:
     """Envio ativo WhatsApp/Telegram (import tardio para evitar ciclo)."""
     from worker.tasks.inbound_handler import _deliver_inbound_response
 
-    return await _deliver_inbound_response(channel, user_id, text)
+    return await _deliver_inbound_response(
+        channel,
+        user_id,
+        text,
+        lead=lead,
+        record=record,
+    )
 
 
 async def merged_receptive_params(
@@ -112,7 +126,20 @@ async def attend_inbound_message(
             agent_timings_out["rag_ms"] = float(result["rag_ms"])
         if "response_ms" in result:
             agent_timings_out["response_ms"] = float(result["response_ms"])
-    await deliver_channel_text(ch, user_id, response_text)
+
+    record: LeadInteraction | None = None
+    if lead is not None:
+        from worker.tasks.conversation_routing import get_latest_lead_interaction
+
+        record = await get_latest_lead_interaction(session, lead.id, ch)
+
+    await deliver_channel_text(
+        ch,
+        user_id,
+        response_text,
+        lead=lead,
+        record=record,
+    )
 
     escalated = bool(result.get("should_escalate"))
     await track_inbound_lead_interaction(

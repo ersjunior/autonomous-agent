@@ -290,7 +290,8 @@ async def test_dispatch(
     """
     Disparo ad-hoc síncrono para demonstração: um lead, um canal, agente escolhido.
 
-    Usa a campanha da base do lead para LeadInteraction; bypassa janela/cadência/scheduler.
+    Usa a campanha da base do lead para LeadInteraction; bypassa cadência/scheduler e,
+    com templates WhatsApp ligados, a janela de 24h Meta (força template inicial).
     """
     agent = await _get_agent(payload.agent_id, user, db)
     if agent.mode != AgentMode.ACTIVE:

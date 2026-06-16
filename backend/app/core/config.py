@@ -2,7 +2,7 @@
 
 import textwrap
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic_settings import BaseSettings
 
@@ -33,6 +33,8 @@ DEFAULT_VOICE_INBOUND_GREETING = (
     "Olá! Você ligou para o nosso atendimento. Como posso ajudar?"
 )
 
+WhatsAppTemplatePurpose = Literal["inicial", "followup", "retomada"]
+
 
 class Settings(BaseSettings):
     # App
@@ -62,6 +64,13 @@ class Settings(BaseSettings):
     twilio_phone_number: Optional[str] = None
     # PSTN dedicado à voz (opcional; senão usa twilio_phone_number sem prefixo whatsapp:)
     twilio_voice_number: Optional[str] = None
+
+    # WhatsApp Content Templates (Meta/Twilio) — W3
+    whatsapp_template_inicial: str = "HX564c9577120a14f2d7d5517c2e26982b"
+    whatsapp_template_followup: str = "HX6afa2ef98be8d7f1e67ef203bb751c95"
+    whatsapp_template_retomada: str = "HXfebf2d00b102badb36d5e81c12a0b050"
+    whatsapp_use_templates: bool = False
+    whatsapp_template_mode: str = "auto"  # auto | sandbox | production
 
     # URL pública do backend (ngrok, domínio, IP, Cloudflare Tunnel) — sem barra final
     public_base_url: Optional[str] = None
@@ -295,6 +304,38 @@ class Settings(BaseSettings):
         if raw.lower().startswith("whatsapp:"):
             return raw.split(":", 1)[1].strip()
         return raw
+
+    def _normalized_twilio_whatsapp_number(self) -> str:
+        raw = (self.twilio_phone_number or "").strip()
+        if raw.lower().startswith("whatsapp:"):
+            return raw.split(":", 1)[1].strip()
+        return raw
+
+    def is_twilio_whatsapp_sandbox_number(self) -> bool:
+        """True para o sandbox Twilio (+14155238886)."""
+        num = self._normalized_twilio_whatsapp_number()
+        digits = "".join(ch for ch in num if ch.isdigit())
+        return digits.endswith("4155238886")
+
+    def whatsapp_templates_enabled(self) -> bool:
+        """Master switch + modo sandbox/produção (templates Meta só em produção)."""
+        if not self.whatsapp_use_templates:
+            return False
+        mode = (self.whatsapp_template_mode or "auto").strip().lower()
+        if mode == "sandbox":
+            return False
+        if mode == "production":
+            return True
+        return not self.is_twilio_whatsapp_sandbox_number()
+
+    def resolved_whatsapp_template(self, purpose: WhatsAppTemplatePurpose) -> str | None:
+        mapping: dict[WhatsAppTemplatePurpose, str] = {
+            "inicial": self.whatsapp_template_inicial,
+            "followup": self.whatsapp_template_followup,
+            "retomada": self.whatsapp_template_retomada,
+        }
+        sid = (mapping.get(purpose) or "").strip()
+        return sid or None
 
     class Config:
         env_file = ".env"

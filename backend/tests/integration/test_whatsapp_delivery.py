@@ -54,3 +54,35 @@ async def test_deliver_message_whatsapp_returns_message_sid(
     assert result.ok is True
     assert result.twilio_message_sid == "SMoutbound456"
     assert result.initial_delivery_status == "queued"
+
+
+@patch(
+    "worker.tasks.outbound_campaign.send_whatsapp_message",
+    return_value="SMtemplate789",
+)
+async def test_deliver_message_whatsapp_template_returns_message_sid(
+    mock_send,
+    owner_ctx: OwnerContext,
+    db_session,
+) -> None:
+    from worker.tasks.outbound_campaign import _deliver_message
+
+    result = await _deliver_message(
+        db_session,
+        owner_ctx.lead,
+        owner_ctx.campaign,
+        "whatsapp",
+        owner_ctx.lead.telefone_1 or "+5511999999999",
+        response=None,
+        content_sid="HX564c9577120a14f2d7d5517c2e26982b",
+        content_variables={"1": "Maria"},
+    )
+
+    assert result.ok is True
+    assert result.twilio_message_sid == "SMtemplate789"
+    assert result.initial_delivery_status == "queued"
+    mock_send.assert_called_once_with(
+        owner_ctx.lead.telefone_1 or "+5511999999999",
+        content_sid="HX564c9577120a14f2d7d5517c2e26982b",
+        content_variables={"1": "Maria"},
+    )

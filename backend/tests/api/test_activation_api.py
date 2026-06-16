@@ -97,6 +97,11 @@ def mock_activation_channel_dispatch(monkeypatch):
 @pytest.fixture
 def mock_test_dispatch_stack(monkeypatch):
     """Sem Ollama nem Twilio/Telegram reais no test-dispatch."""
+    from app.core.config import settings
+
+    # Isola do .env: contrato legado testa caminho freeform (LLM + _deliver_message mock).
+    monkeypatch.setattr(settings, "whatsapp_use_templates", False)
+
     state: dict = {"route_calls": [], "deliver_calls": []}
 
     async def fake_route_message(prompt, channel, recipient, **kwargs):
@@ -682,6 +687,86 @@ async def test_test_dispatch_success_returns_contract(
     assert len(mock_test_dispatch_stack["deliver_calls"]) == 1
 
 
+async def test_test_dispatch_whatsapp_template_skips_llm_and_passes_dict_variables(
+    auth_client,
+    owner_ctx,
+    db_session,
+    clean_redis,
+    monkeypatch,
+) -> None:
+    """Com templates ON, test-dispatch força template mesmo dentro da janela 24h."""
+    import json
+    from unittest.mock import AsyncMock
+
+    from agents.channels.whatsapp.twilio_client import encode_content_variables
+    from app.models.lead_interaction import LeadInteraction
+
+    await add_lead_base_channel(db_session, owner_ctx.lead_base.id, "whatsapp")
+    owner_ctx.lead.nome_cliente = "Eliezer Ramos Silveira Junior"
+    await db_session.flush()
+
+    li = LeadInteraction(
+        lead_id=owner_ctx.lead.id,
+        campaign_id=owner_ctx.campaign.id,
+        channel_type="whatsapp",
+        status="nao_atendido",
+        data_ultimo_contato=datetime.now(timezone.utc),
+    )
+    db_session.add(li)
+    await db_session.flush()
+
+    send_calls: list[dict] = []
+
+    def fake_send_whatsapp(
+        to: str,
+        body: str | None = None,
+        *,
+        content_sid: str | None = None,
+        content_variables: dict | None = None,
+    ) -> str:
+        send_calls.append(
+            {
+                "to": to,
+                "body": body,
+                "content_sid": content_sid,
+                "content_variables": content_variables,
+            }
+        )
+        return "SMmock-template-test"
+
+    route_mock = AsyncMock()
+    monkeypatch.setattr(
+        "worker.tasks.outbound_campaign.send_whatsapp_message",
+        fake_send_whatsapp,
+    )
+    monkeypatch.setattr("worker.tasks.outbound_campaign.route_message", route_mock)
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "whatsapp_use_templates", True)
+    monkeypatch.setattr(settings, "whatsapp_template_mode", "production")
+    monkeypatch.setattr(settings, "twilio_phone_number", "+551150399542")
+
+    payload = {
+        "lead_id": str(owner_ctx.lead.id),
+        "agent_id": str(owner_ctx.agent.id),
+        "channel_type": "whatsapp",
+    }
+    response = await auth_client.post(f"{ACTIVATION}/test-dispatch", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "sucesso"
+    route_mock.assert_not_awaited()
+    assert len(send_calls) == 1
+    assert send_calls[0]["content_sid"]
+    assert send_calls[0]["content_variables"] == {
+        "1": "Eliezer Ramos Silveira Junior",
+    }
+    encoded = encode_content_variables(send_calls[0]["content_variables"])
+    assert json.loads(encoded) == {"1": "Eliezer Ramos Silveira Junior"}
+
+
 async def test_test_dispatch_dispatch_exception_returns_200_with_error(
     auth_client,
     owner_ctx,
@@ -690,10 +775,15 @@ async def test_test_dispatch_dispatch_exception_returns_200_with_error(
     monkeypatch,
 ) -> None:
     """Falha no LLM/entrega retorna 200 + status=erro (não HTTP 500 após rollback)."""
+    from app.core.config import settings
+
     await add_lead_base_channel(db_session, owner_ctx.lead_base.id, "whatsapp")
     err_msg = (
         "Client error '404 Not Found' for url 'http://ollama:11434/api/chat'"
     )
+
+    # Garante caminho freeform (route_message é chamado); evita vazamento do .env.
+    monkeypatch.setattr(settings, "whatsapp_use_templates", False)
 
     async def failing_route_message(*_args, **_kwargs):
         raise RuntimeError(err_msg)

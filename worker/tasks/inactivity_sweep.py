@@ -21,6 +21,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.inactivity_text import INACTIVITY_WARNING_MESSAGE
 from app.models.agent import AgentMode
 from app.models.campaign import Campaign
+from app.models.lead import Lead
 from app.models.lead_interaction import LeadInteraction
 from app.services.activation_cadence import client_is_silent, client_silent_since_warning
 from app.services.activation_slots import release_slot_for_lead
@@ -30,6 +31,7 @@ from app.services.capacity_service import (
 )
 from app.services.human_handoff import is_in_human_mode
 from app.services.tabulacao_assignment import apply_tabulacao
+from app.services.whatsapp_outbound import build_content_variables, resolve_whatsapp_send_mode
 from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 from worker.tasks.outbound_campaign import _resolve_recipient
@@ -64,22 +66,43 @@ def _base_candidate_filter():
     )
 
 
-async def _send_inactivity_warning(channel: str, recipient: str, text: str) -> bool:
+async def _send_inactivity_warning(
+    channel: str,
+    recipient: str,
+    text: str,
+    *,
+    record: LeadInteraction,
+    lead: Lead | None,
+) -> str | None:
+    """
+    Envia aviso de inatividade. Retorna Twilio message SID no WhatsApp; None no Telegram.
+
+    WhatsApp fora da janela 24h + templates ON → template ``retomada`` (evita 63016).
+    """
     ch = channel.lower()
     try:
         if ch == "whatsapp":
-            send_whatsapp_message(recipient, text)
-            return True
+            mode = resolve_whatsapp_send_mode("retomada", record, lead=lead)
+            if mode.mode == "template":
+                variables = mode.content_variables
+                if variables is None and lead is not None:
+                    variables = build_content_variables(lead)
+                return send_whatsapp_message(
+                    recipient,
+                    content_sid=mode.content_sid,
+                    content_variables=variables,
+                )
+            return send_whatsapp_message(recipient, text)
         if ch == "telegram":
             await send_telegram_message(recipient, text)
-            return True
+            return None
     except Exception:
         logger.exception(
             "Falha ao enviar aviso de inatividade channel=%s recipient=%s",
             channel,
             recipient,
         )
-    return False
+    return None
 
 
 async def _close_inactive_interaction(
@@ -152,10 +175,18 @@ async def _sweep_inactivity_with_session(session) -> dict[str, int]:
         if is_in_human_mode(record.channel_type, recipient):
             stats["skipped_human_mode"] += 1
             continue
-        if not await _send_inactivity_warning(
-            record.channel_type, recipient, INACTIVITY_WARNING_MESSAGE
-        ):
+        message_sid = await _send_inactivity_warning(
+            record.channel_type,
+            recipient,
+            INACTIVITY_WARNING_MESSAGE,
+            record=record,
+            lead=record.lead,
+        )
+        if message_sid is None and record.channel_type.lower() == "whatsapp":
             continue
+        if record.channel_type.lower() == "whatsapp" and message_sid:
+            record.twilio_message_sid = message_sid
+            record.last_delivery_status = "queued"
         record.inactivity_warning_sent_at = now
         record.data_ultima_tentativa = now
         stats["warnings_sent"] += 1

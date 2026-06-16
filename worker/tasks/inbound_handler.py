@@ -27,6 +27,13 @@ from app.services.inbound_attendance import (
     should_apply_receptive_queue,
 )
 from app.core.config import settings
+from app.models.lead import Lead
+from app.models.lead_interaction import LeadInteraction
+from app.services.whatsapp_outbound import (
+    build_content_variables,
+    is_within_whatsapp_service_window,
+    resolve_whatsapp_send_mode,
+)
 from worker.async_runner import run_celery_async
 from worker.celery_app import celery
 from worker.tasks.conversation_routing import resolve_inbound_agent
@@ -56,7 +63,14 @@ def try_claim_inbound_dedup(channel: str, dedup_key: str | None) -> bool:
     )
 
 
-async def _deliver_inbound_response(channel: str, user_id: str, response: str) -> bool:
+async def _deliver_inbound_response(
+    channel: str,
+    user_id: str,
+    response: str,
+    *,
+    lead: Lead | None = None,
+    record: LeadInteraction | None = None,
+) -> bool:
     """Envia resposta ao lead pelo canal (API ativa — não TwiML no webhook)."""
     text = (response or "").strip()
     if not text:
@@ -80,7 +94,47 @@ async def _deliver_inbound_response(channel: str, user_id: str, response: str) -
                     user_id,
                 )
                 return False
+
+            if (
+                record is not None
+                and settings.whatsapp_templates_enabled()
+                and not is_within_whatsapp_service_window(record)
+            ):
+                logger.warning(
+                    "WhatsApp inbound response outside 24h window (would fail 63016); "
+                    "using retomada template fallback user_id=%s lead_id=%s",
+                    user_id,
+                    lead.id if lead else None,
+                )
+                mode = resolve_whatsapp_send_mode("retomada", record, lead=lead)
+                if mode.mode == "template" and mode.content_sid:
+                    variables = mode.content_variables
+                    if variables is None and lead is not None:
+                        variables = build_content_variables(lead)
+                    sid = send_whatsapp_message(
+                        user_id,
+                        content_sid=mode.content_sid,
+                        content_variables=variables,
+                    )
+                    record.twilio_message_sid = sid
+                    record.last_delivery_status = "queued"
+                    logger.info(
+                        "WhatsApp inbound retomada template to=%s message_sid=%s",
+                        user_id,
+                        sid,
+                    )
+                    return True
+                logger.error(
+                    "WhatsApp inbound outside 24h window; no template available — "
+                    "blocking send user_id=%s",
+                    user_id,
+                )
+                return False
+
             sid = send_whatsapp_message(user_id, text)
+            if record is not None:
+                record.twilio_message_sid = sid
+                record.last_delivery_status = "queued"
             logger.info("WhatsApp inbound enviado to=%s message_sid=%s", user_id, sid)
             return True
 
