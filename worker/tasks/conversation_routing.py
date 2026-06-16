@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from agents.identity import non_identity_config
 from app.core.config import settings
 from app.models.agent import Agent, AgentMode
 from app.models.campaign import Campaign
@@ -116,8 +117,9 @@ def agent_personality_context(agent: Agent) -> str:
     parts = [f"Agente: {agent.name} (modo {agent.mode.value})"]
     if agent.description:
         parts.append(agent.description.strip())
-    if agent.config:
-        parts.append(f"Configuração: {agent.config}")
+    operational = non_identity_config(agent.config)
+    if operational:
+        parts.append(f"Configuração operacional: {operational}")
     return "\n".join(parts)
 
 
@@ -135,6 +137,7 @@ def agent_routing_metadata(agent: Agent) -> dict[str, Any]:
         "agent_name": agent.name,
         "agent_mode": agent.mode.value,
         "agent_personality": agent_personality_context(agent),
+        "agent_config": dict(agent.config or {}),
         "owner_user_id": str(agent.user_id),
     }
 

@@ -63,3 +63,4 @@ infra/**/.terraform/
 infra/**/*.tfstate
 infra/**/*.tfstate.backup
 infra/**/.terraform.lock.hcl
+set_identity.sql

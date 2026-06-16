@@ -2,6 +2,7 @@
 
 import logging
 
+from agents.identity import format_institutional_identity_block
 from agents.provider_factory import ProviderFactory
 from app.core.config import DEFAULT_AGENT_SYSTEM_PROMPT, settings
 
@@ -211,14 +212,16 @@ def build_response_messages(
     kb_chunks: list[dict] | None = None,
     agent_personality: str | None = None,
     agent_mode: str | None = None,
+    agent_config: dict | None = None,
 ) -> list[dict]:
     """
     Monta mensagens para o LLM de resposta (exposto para testes e generate_response).
 
     Ordem dos blocos de sistema:
-      1. prompt global → 2. personality → 3. RECEPTIVE (se aplicável)
-      4. VOZ (se canal voice) → 5. KB institucional → 6. memória de contato
-      7. canal/intent/entidades → 8. histórico → 9. mensagem atual
+      1. prompt global → 2. identidade institucional (se config.identity)
+      3. personality → 4. RECEPTIVE (se aplicável) → 5. VOZ (se canal voice)
+      6. KB institucional → 7. memória de contato → 8. canal/intent/entidades
+      9. histórico → 10. mensagem atual
     """
     context = (
         f"Canal: {channel}\n"
@@ -227,6 +230,22 @@ def build_response_messages(
     )
 
     messages: list[dict] = [{"role": "system", "content": _resolve_system_prompt()}]
+
+    identity_block = format_institutional_identity_block(agent_config)
+    identity_raw = (agent_config or {}).get("identity") if isinstance(agent_config, dict) else None
+    company = None
+    if isinstance(identity_raw, dict):
+        company = (identity_raw.get("display_name") or identity_raw.get("company_name") or "").strip() or None
+    logger.info(
+        "Identity prompt diagnostic channel=%s agent_config=%s identity_keys=%s block=%s company=%s",
+        channel,
+        "present" if agent_config else "absent",
+        list(identity_raw.keys()) if isinstance(identity_raw, dict) else None,
+        "present" if identity_block else "absent",
+        company or "-",
+    )
+    if identity_block:
+        messages.append({"role": "system", "content": identity_block})
 
     if agent_personality:
         messages.append({"role": "system", "content": agent_personality})
@@ -262,6 +281,7 @@ async def generate_response(
     kb_chunks: list[dict] | None = None,
     agent_personality: str | None = None,
     agent_mode: str | None = None,
+    agent_config: dict | None = None,
 ) -> str:
     llm = ProviderFactory.get_llm()
 
@@ -275,7 +295,11 @@ async def generate_response(
         kb_chunks=kb_chunks,
         agent_personality=agent_personality,
         agent_mode=agent_mode,
+        agent_config=agent_config,
     )
+
+    if format_institutional_identity_block(agent_config):
+        logger.debug("Institutional identity block injected for channel=%s", channel)
 
     if agent_mode and agent_mode.upper() == "RECEPTIVE":
         logger.debug(

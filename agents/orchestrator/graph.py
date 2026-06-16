@@ -198,6 +198,7 @@ async def generate_response(state: AgentState) -> AgentState:
         kb_chunks=kb_chunks,
         agent_personality=state.get("agent_personality"),
         agent_mode=state.get("agent_mode"),
+        agent_config=state.get("agent_config"),
     )
     response_ms = (time.perf_counter() - t0) * 1000
     if rag_ms > 0:

@@ -21,6 +21,7 @@ class AgentState(TypedDict):
     agent_name: NotRequired[str]
     agent_mode: NotRequired[str]
     agent_personality: NotRequired[str]
+    agent_config: NotRequired[dict | None]
     intent_ms: NotRequired[float]
     rag_ms: NotRequired[float]
     response_ms: NotRequired[float]
