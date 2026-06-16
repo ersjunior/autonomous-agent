@@ -209,7 +209,7 @@ class Settings(BaseSettings):
     # Comportamento do agente (gerenciável via UI / app_settings)
     intent_temperature: float = 0.0
     # Limite de tokens na classificação de intent (Ollama num_predict). 0 = sem limite.
-    intent_max_tokens: int = 20
+    intent_max_tokens: int = 128
     response_temperature: float = 0.3
     agent_system_prompt: str = DEFAULT_AGENT_SYSTEM_PROMPT
     rag_top_k: int = 5

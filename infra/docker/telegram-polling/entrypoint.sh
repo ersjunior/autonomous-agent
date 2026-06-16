@@ -1,17 +1,21 @@
 #!/bin/sh
 # Inicia Telegram polling — SOMENTE com TELEGRAM_MODE=polling (TUN-2).
+# Serviço opt-in: docker compose --profile telegram-polling up -d telegram-polling
 set -eu
 
-MODE="${TELEGRAM_MODE:-polling}"
-if [ "$MODE" = "webhook" ]; then
-  echo "[telegram-polling] ERRO: TELEGRAM_MODE=webhook — não inicie este serviço." >&2
-  echo "[telegram-polling] Use webhook no backend ou mude TELEGRAM_MODE=polling." >&2
-  exit 1
+MODE="$(printf '%s' "${TELEGRAM_MODE:-polling}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+
+if [ "$MODE" != "polling" ]; then
+  echo "[telegram-polling] AVISO: TELEGRAM_MODE=${TELEGRAM_MODE:-<vazio>} — polling não iniciado." >&2
+  echo "[telegram-polling] Em modo webhook use apenas o backend (setWebhook no startup)." >&2
+  echo "[telegram-polling] Para polling: TELEGRAM_MODE=polling e --profile telegram-polling." >&2
+  # exit 0 evita loop de restart (restart: unless-stopped) quando o profile é acionado por engano.
+  exit 0
 fi
 
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
   echo "[telegram-polling] TELEGRAM_BOT_TOKEN vazio — serviço encerrado." >&2
-  exit 1
+  exit 0
 fi
 
 echo "[telegram-polling] TELEGRAM_MODE=polling — iniciando run_polling..."
