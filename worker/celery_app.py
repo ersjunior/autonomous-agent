@@ -32,6 +32,7 @@ celery.conf.update(
         "worker.tasks.kb_ingestion",
         "worker.tasks.human_handoff_sweep",
         "worker.tasks.inactivity_sweep",
+        "worker.tasks.voice_inbound_turn",
     ),
     beat_schedule={
         "gerar-devolutivas-diarias": {

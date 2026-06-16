@@ -108,6 +108,13 @@ class Settings(BaseSettings):
     voice_inbound_greeting: str = DEFAULT_VOICE_INBOUND_GREETING
     voice_silence_warning_seconds: int = 30
     voice_silence_close_seconds: int = 15
+    # Twilio <Record>: segundos de silêncio após a fala para encerrar a gravação (responsivo).
+    voice_record_silence_timeout_sec: int = 2
+    # Twilio <Record>: duração máxima da fala do cliente (não é o gargalo de latência).
+    voice_record_max_length_sec: int = 30
+    # Voz inbound assíncrona — polling turn-ready (Redirect loop)
+    voice_turn_max_poll_attempts: int = 60
+    voice_turn_poll_pause_seconds: int = 1
 
     # Frontend
     frontend_url: str = "http://localhost:3000"
@@ -192,16 +199,24 @@ class Settings(BaseSettings):
 
     # Comportamento do agente (gerenciável via UI / app_settings)
     intent_temperature: float = 0.0
+    # Limite de tokens na classificação de intent (Ollama num_predict). 0 = sem limite.
+    intent_max_tokens: int = 20
     response_temperature: float = 0.3
     agent_system_prompt: str = DEFAULT_AGENT_SYSTEM_PROMPT
     rag_top_k: int = 5
+    # RAG mais enxuto só no canal voice (telefonia rápida) — aplica-se à memória, não ao KB.
+    voice_rag_top_k: int = 3
     rag_similarity_threshold: float = 0.0
+    # Memória de longo prazo na voz: evita puxar turnos fracos da mesma ligação (global costuma ser 0.0).
+    voice_rag_similarity_threshold: float = 0.5
     # KB-2 — recuperação semântica na base documental (mais seletiva que memória de contato)
     kb_top_k: int = 0  # 0 = usa rag_top_k
     kb_similarity_threshold: float = 0.62
+    # KB na voz: STT curto reduz similaridade; threshold menor que o global (WhatsApp/Telegram).
+    voice_kb_similarity_threshold: float = 0.50
     response_max_tokens: int = 0
     # Limite rígido só para respostas no canal voice (Ollama num_predict). 0 = sem limite.
-    voice_response_max_tokens: int = 120
+    voice_response_max_tokens: int = 35
 
     def resolved_kb_top_k(self) -> int:
         return self.rag_top_k if self.kb_top_k <= 0 else self.kb_top_k

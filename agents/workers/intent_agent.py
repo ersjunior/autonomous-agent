@@ -63,10 +63,12 @@ async def identify_intent(message: str, history: list[dict]) -> IntentResult:
         {"role": "user", "content": user_content},
     ]
 
+    max_tokens = settings.intent_max_tokens
     result = await llm.complete(
         messages,
         temperature=settings.intent_temperature,
         structured_output_schema=IntentResult,
+        max_tokens=max_tokens if max_tokens > 0 else None,
     )
     if not isinstance(result, IntentResult):
         raise TypeError(f"Expected IntentResult, got {type(result)}")

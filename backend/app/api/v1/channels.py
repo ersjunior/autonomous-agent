@@ -1,10 +1,13 @@
 """Channel CRUD and webhook API routes."""
 
+import asyncio
 import logging
 import re
 import uuid
 import xml.sax.saxutils
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from typing import Any
 
@@ -21,6 +24,18 @@ from app.core.security import get_current_user
 from app.models.channel import Channel
 from app.models.user import User
 from app.schemas.channel import ChannelCreate, ChannelResponse, ChannelUpdate
+from app.services.voice_cached_audio import (
+    ensure_greeting_audio_filename,
+    get_phrase_audio_filename,
+    is_allowed_cached_audio_filename,
+)
+from app.services.voice_turn_state import (
+    create_pending_turn,
+    get_voice_turn,
+    increment_turn_poll_count,
+    mark_turn_consumed,
+    mark_turn_error,
+)
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 whatsapp = WhatsAppHandler()
@@ -37,6 +52,13 @@ VOICE_INBOUND_RECORD_CALLBACK_PATH = (
 VOICE_INBOUND_STATUS_CALLBACK_PATH = (
     "/api/v1/channels/webhooks/voice/inbound/status"
 )
+VOICE_INBOUND_TURN_READY_PATH = (
+    "/api/v1/channels/webhooks/voice/inbound/turn-ready"
+)
+
+VOICE_TURN_TIMEOUT_MESSAGE = (
+    "Desculpe, estou demorando mais que o esperado. Vamos tentar de novo."
+)
 
 VOICE_MIN_RECORDING_DURATION_SEC = 1.0
 VOICE_ERROR_MESSAGE = "Desculpe, tive um problema. Vamos tentar de novo."
@@ -44,6 +66,77 @@ VOICE_ERROR_MESSAGE = "Desculpe, tive um problema. Vamos tentar de novo."
 VOICE_TERMINAL_CALL_STATUSES = frozenset(
     {"completed", "busy", "no-answer", "failed", "canceled"}
 )
+
+
+def _is_served_audio_filename(filename: str) -> bool:
+    return bool(
+        UUID_MP3_PATTERN.match(filename)
+        or is_allowed_cached_audio_filename(filename)
+    )
+
+
+def _voice_play_url(filename: str) -> str:
+    base = settings.require_public_base_url()
+    return f"{base}/api/v1/channels/webhooks/voice/audio/{filename}"
+
+
+def _turn_ready_redirect_url(call_sid: str, turn_id: str) -> str:
+    base = settings.require_public_base_url()
+    return (
+        f"{base}{VOICE_INBOUND_TURN_READY_PATH}"
+        f"?call_sid={quote(call_sid)}"
+        f"&turn_id={quote(turn_id)}"
+    )
+
+
+def _compute_wait_total_ms(turn: dict[str, Any]) -> float | None:
+    """Tempo desde create_pending_turn até entrega do áudio (latência percebida)."""
+    created = turn.get("created_at")
+    if not created or not isinstance(created, str):
+        return None
+    try:
+        created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        if created_dt.tzinfo is None:
+            created_dt = created_dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - created_dt).total_seconds() * 1000
+    except (ValueError, TypeError):
+        return None
+
+
+def _build_voice_turn_redirect_twiml(*, call_sid: str, turn_id: str) -> str:
+    """
+    Resposta imediata do record-callback: Redirect direto para turn-ready.
+
+    Sem <Play> de espera — o Twilio executa o áudio inteiro antes do Redirect,
+    bloqueando o polling por vários segundos.
+    """
+    redirect_url = xml.sax.saxutils.escape(_turn_ready_redirect_url(call_sid, turn_id))
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Response>\n"
+        f'  <Redirect method="POST">{redirect_url}</Redirect>\n'
+        "</Response>"
+    )
+
+
+def _build_voice_poll_twiml(*, call_sid: str, turn_id: str) -> str:
+    """Polling pending: Pause curto + Redirect (sem áudio que bloqueie o fluxo)."""
+    pause_sec = max(1, int(settings.voice_turn_poll_pause_seconds))
+    redirect_url = xml.sax.saxutils.escape(_turn_ready_redirect_url(call_sid, turn_id))
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Response>\n"
+        f'  <Pause length="{pause_sec}"/>\n'
+        f'  <Redirect method="POST">{redirect_url}</Redirect>\n'
+        "</Response>"
+    )
+
+
+def _build_voice_turn_timeout_twiml() -> str:
+    return _build_voice_turn_twiml(
+        VOICE_TURN_TIMEOUT_MESSAGE,
+        is_fallback=True,
+    )
 
 
 def _build_voice_say_only_twiml(text: str) -> str:
@@ -59,20 +152,18 @@ def _build_voice_say_only_twiml(text: str) -> str:
 
 def _build_voice_outbound_say_twiml(text: str) -> str:
     """TwiML outbound fallback <Say> + <Record> (entra no loop de turnos inbound)."""
-    return _build_voice_turn_twiml(
-        text,
-        is_fallback=True,
-        record_timeout_sec=settings.voice_silence_warning_seconds,
-    )
+    return _build_voice_turn_twiml(text, is_fallback=True)
 
 
 def _build_voice_outbound_play_twiml(filename: str) -> str:
     """TwiML outbound <Play> Coqui + <Record> (entra no loop de turnos inbound)."""
-    return _build_voice_turn_twiml(
-        filename,
-        is_fallback=False,
-        record_timeout_sec=settings.voice_silence_warning_seconds,
-    )
+    return _build_voice_turn_twiml(filename, is_fallback=False)
+
+
+def _voice_record_silence_timeout_sec(record_timeout_sec: int | None = None) -> int:
+    if record_timeout_sec is not None:
+        return max(1, int(record_timeout_sec))
+    return max(1, int(settings.voice_record_silence_timeout_sec))
 
 
 def _voice_record_block_xml(*, record_timeout_sec: int | None = None) -> str:
@@ -80,14 +171,21 @@ def _voice_record_block_xml(*, record_timeout_sec: int | None = None) -> str:
     record_action = xml.sax.saxutils.escape(
         f"{base}{VOICE_INBOUND_RECORD_CALLBACK_PATH}"
     )
-    timeout = (
-        record_timeout_sec
-        if record_timeout_sec is not None
-        else settings.voice_silence_warning_seconds
-    )
+    timeout = _voice_record_silence_timeout_sec(record_timeout_sec)
+    max_length = max(1, int(settings.voice_record_max_length_sec))
     return (
-        f'  <Record action="{record_action}" method="POST" maxLength="30" '
+        f'  <Record action="{record_action}" method="POST" maxLength="{max_length}" '
         f'timeout="{timeout}" playBeep="false" trim="trim-silence" />\n'
+    )
+
+
+def _build_voice_record_only_twiml() -> str:
+    """Reabre o microfone após silêncio parcial (sem fala do agente)."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Response>\n"
+        f"{_voice_record_block_xml()}"
+        "</Response>"
     )
 
 
@@ -105,12 +203,9 @@ def _build_voice_hangup_twiml(
             f'  <Say language="pt-BR" voice="Polly.Camila">{spoken}</Say>\n'
         )
     else:
-        if not UUID_MP3_PATTERN.match(play_filename_or_text):
+        if not _is_served_audio_filename(play_filename_or_text):
             raise HTTPException(status_code=400, detail="Invalid audio filename")
-        base = settings.require_public_base_url()
-        play_url = xml.sax.saxutils.escape(
-            f"{base}/api/v1/channels/webhooks/voice/audio/{play_filename_or_text}"
-        )
+        play_url = xml.sax.saxutils.escape(_voice_play_url(play_filename_or_text))
         speech_block = f"  <Play>{play_url}</Play>\n"
 
     return (
@@ -137,12 +232,9 @@ def _build_voice_turn_twiml(
             f'  <Say language="pt-BR" voice="Polly.Camila">{spoken}</Say>\n'
         )
     else:
-        if not UUID_MP3_PATTERN.match(play_filename_or_text):
+        if not _is_served_audio_filename(play_filename_or_text):
             raise HTTPException(status_code=400, detail="Invalid audio filename")
-        base = settings.require_public_base_url()
-        play_url = xml.sax.saxutils.escape(
-            f"{base}/api/v1/channels/webhooks/voice/audio/{play_filename_or_text}"
-        )
+        play_url = xml.sax.saxutils.escape(_voice_play_url(play_filename_or_text))
         speech_block = f"  <Play>{play_url}</Play>\n"
 
     return (
@@ -163,7 +255,6 @@ def _build_voice_inbound_twiml(
     return _build_voice_turn_twiml(
         greeting_filename_or_text,
         is_fallback=is_fallback,
-        record_timeout_sec=settings.voice_silence_warning_seconds,
     )
 
 
@@ -178,19 +269,28 @@ def _twiml_response(twiml: str) -> Response:
     return Response(content=twiml, media_type="application/xml")
 
 
+def _voice_silence_reason(
+    recording_url: str,
+    duration: float,
+    transcript: str | None = None,
+) -> str | None:
+    """Motivo de classificação como silêncio (metadados Twilio; sem STT no callback)."""
+    if not (recording_url or "").strip():
+        return "empty_recording_url"
+    if duration < VOICE_MIN_RECORDING_DURATION_SEC:
+        return f"short_duration:{duration}"
+    if transcript is not None and not (transcript or "").strip():
+        return "empty_transcript"
+    return None
+
+
 def _is_voice_silence(
     recording_url: str,
     duration: float,
     transcript: str | None = None,
 ) -> bool:
-    """Sem fala útil: URL/duração insuficiente ou STT vazio."""
-    if not (recording_url or "").strip():
-        return True
-    if duration < VOICE_MIN_RECORDING_DURATION_SEC:
-        return True
-    if transcript is not None and not (transcript or "").strip():
-        return True
-    return False
+    """Sem fala útil: URL/duração insuficiente ou STT vazio (quando transcript informado)."""
+    return _voice_silence_reason(recording_url, duration, transcript) is not None
 
 
 def _register_voice_call_status_callback(call_sid: str) -> None:
@@ -221,47 +321,43 @@ def _register_voice_call_status_callback(call_sid: str) -> None:
         )
 
 
-async def _build_spoken_twiml_with_record(
+def _build_spoken_twiml_with_record(
     text: str,
     *,
     record_timeout_sec: int | None = None,
 ) -> str:
-    """TTS Coqui + <Record> ou fallback <Say> + <Record>."""
-    from app.services.voice_audio import gerar_audio_chamada
-
-    cleaned = (text or "").strip()
-    if not cleaned:
-        cleaned = " "
-    try:
-        filename = await gerar_audio_chamada(cleaned)
+    """<Play> MP3 cacheado + <Record>, ou <Say> Polly se cache ausente (sem Coqui no webhook)."""
+    cleaned = (text or "").strip() or " "
+    filename = get_phrase_audio_filename(cleaned)
+    if filename:
         return _build_voice_turn_twiml(
             filename,
             is_fallback=False,
             record_timeout_sec=record_timeout_sec,
         )
-    except Exception as exc:
-        logger.warning("Coqui spoken twiml failed, fallback <Say>: %s", exc)
-        return _build_voice_turn_twiml(
-            cleaned,
-            is_fallback=True,
-            record_timeout_sec=record_timeout_sec,
-        )
+    logger.warning(
+        "Phrase cache miss for spoken twiml; using Polly <Say> fallback",
+    )
+    return _build_voice_turn_twiml(
+        cleaned,
+        is_fallback=True,
+        record_timeout_sec=record_timeout_sec,
+    )
 
 
-async def _build_voice_hangup_twiml_from_text(text: str) -> str:
-    from app.services.voice_audio import gerar_audio_chamada
-
+def _build_voice_hangup_twiml_from_text(text: str) -> str:
+    """<Play> MP3 cacheado + <Hangup>, ou <Say> Polly (sem Coqui no webhook)."""
     cleaned = (text or "").strip() or "Até logo."
-    try:
-        filename = await gerar_audio_chamada(cleaned)
+    filename = get_phrase_audio_filename(cleaned)
+    if filename:
         return _build_voice_hangup_twiml(filename, is_fallback=False)
-    except Exception as exc:
-        logger.warning("Coqui hangup twiml failed, fallback <Say>: %s", exc)
-        return _build_voice_hangup_twiml(cleaned, is_fallback=True)
+    logger.warning(
+        "Phrase cache miss for hangup twiml; using Polly <Say> fallback",
+    )
+    return _build_voice_hangup_twiml(cleaned, is_fallback=True)
 
 
 async def _handle_voice_silence_turn(
-    session: AsyncSession,
     *,
     call_sid: str,
     from_number: str,
@@ -270,30 +366,83 @@ async def _handle_voice_silence_turn(
         VOICE_SILENCE_CLOSE_MESSAGE,
         VOICE_SILENCE_WARNING_MESSAGE,
     )
+    from app.core.database import AsyncSessionLocal
     from app.services.voice_call_finalize import finalize_voice_call_terminal
     from app.services.voice_call_state import (
+        add_accumulated_silence,
         clear_voice_call_state,
         get_silence_stage,
         set_voice_call_state,
     )
 
+    delta = float(settings.voice_record_silence_timeout_sec)
+    accumulated = add_accumulated_silence(
+        call_sid,
+        delta,
+        from_number=from_number,
+    )
     stage = get_silence_stage(call_sid)
+    logger.info(
+        "Voice silence accumulated call_sid=%s stage=%s delta_sec=%s total_sec=%s",
+        call_sid or "?",
+        stage,
+        delta,
+        accumulated,
+    )
+
     if stage == 0:
-        set_voice_call_state(call_sid, silence_stage=1, from_number=from_number)
-        return await _build_spoken_twiml_with_record(
-            VOICE_SILENCE_WARNING_MESSAGE,
-            record_timeout_sec=settings.voice_silence_close_seconds,
+        if accumulated < settings.voice_silence_warning_seconds:
+            return _build_voice_record_only_twiml()
+        set_voice_call_state(
+            call_sid,
+            silence_stage=1,
+            from_number=from_number,
+            accumulated_silence_sec=0.0,
+        )
+        return _build_spoken_twiml_with_record(VOICE_SILENCE_WARNING_MESSAGE)
+
+    if accumulated < settings.voice_silence_close_seconds:
+        return _build_voice_record_only_twiml()
+
+    async with AsyncSessionLocal() as session:
+        await finalize_voice_call_terminal(
+            session,
+            call_sid=call_sid,
+            from_number=from_number,
+            origem="VOICE_SILENCE",
+        )
+        await session.commit()
+    clear_voice_call_state(call_sid)
+    return _build_voice_hangup_twiml_from_text(VOICE_SILENCE_CLOSE_MESSAGE)
+
+
+async def _enqueue_voice_inbound_turn(
+    *,
+    call_sid: str,
+    turn_id: str,
+    recording_url: str,
+    from_number: str,
+    duration: float,
+) -> None:
+    """Redis + Celery fora do event loop (ops síncronas)."""
+    from worker.tasks.voice_inbound_turn import process_voice_inbound_turn_task
+
+    def _sync_enqueue() -> None:
+        create_pending_turn(
+            call_sid=call_sid,
+            turn_id=turn_id,
+            recording_url=recording_url,
+            from_number=from_number,
+        )
+        process_voice_inbound_turn_task.delay(
+            call_sid,
+            turn_id,
+            recording_url,
+            from_number,
+            duration,
         )
 
-    await finalize_voice_call_terminal(
-        session,
-        call_sid=call_sid,
-        from_number=from_number,
-        origem="VOICE_SILENCE",
-    )
-    await session.commit()
-    clear_voice_call_state(call_sid)
-    return await _build_voice_hangup_twiml_from_text(VOICE_SILENCE_CLOSE_MESSAGE)
+    await asyncio.to_thread(_sync_enqueue)
 
 
 async def _run_voice_agent_turn(
@@ -303,64 +452,15 @@ async def _run_voice_agent_turn(
     transcript: str,
     call_sid: str | None = None,
 ) -> str:
-    """Roteamento receptivo + grafo (inline, sem Celery). Retorna texto da resposta."""
-    from app.services.inbound_attendance import attend_inbound_message
-    from app.services.settings_sync import ensure_settings_fresh_async
-    from worker.tasks.conversation_routing import resolve_inbound_agent
-    from worker.tasks.lead_tracking import find_lead_by_channel_user
+    """Compat: delega ao service (worker + testes)."""
+    from app.services.voice_turn_processor import run_voice_agent_turn
 
-    await ensure_settings_fresh_async()
-
-    user_id = (from_number or "").strip()
-    if not user_id:
-        raise ValueError("From vazio no callback de gravação")
-
-    lead = await find_lead_by_channel_user(session, "voice", user_id)
-    agent = await resolve_inbound_agent(session, lead, "voice", force_receptive=True)
-
-    logger.info(
-        "Voice record turn user_id=%s lead=%s agent=%s (%s)",
-        user_id,
-        lead.id if lead else None,
-        agent.name,
-        agent.mode.value,
-    )
-
-    response_text = await attend_inbound_message(
+    return await run_voice_agent_turn(
         session,
-        channel="voice",
-        user_id=user_id,
-        message=transcript,
-        agent=agent,
-        lead=lead,
-        bind_capacity=False,
-        twilio_call_sid=call_sid,
+        from_number=from_number,
+        transcript=transcript,
+        call_sid=call_sid,
     )
-    await session.commit()
-    return (response_text or "").strip()
-
-
-async def _build_agent_response_twiml(response_text: str) -> str:
-    from app.services.voice_audio import gerar_audio_chamada
-
-    cleaned = (response_text or "").strip()
-    if not cleaned:
-        cleaned = "Desculpe, não consegui formular uma resposta."
-
-    try:
-        filename = await gerar_audio_chamada(cleaned)
-        return _build_voice_turn_twiml(
-            filename,
-            is_fallback=False,
-            record_timeout_sec=settings.voice_silence_warning_seconds,
-        )
-    except Exception as exc:
-        logger.warning("Coqui response failed, fallback <Say>: %s", exc)
-        return _build_voice_turn_twiml(
-            cleaned,
-            is_fallback=True,
-            record_timeout_sec=settings.voice_silence_warning_seconds,
-        )
 
 
 async def _get_channel(
@@ -444,7 +544,7 @@ async def delete_channel(
 @router.get("/webhooks/voice/audio/{filename}")
 async def voice_audio_file(filename: str):
     """Serve MP3 gerado pelo worker para Twilio <Play>."""
-    if not UUID_MP3_PATTERN.match(filename):
+    if not _is_served_audio_filename(filename):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     path = Path(settings.voice_audio_root) / filename
@@ -531,7 +631,6 @@ async def voice_inbound_webhook(
 ):
     """TwiML inbound: saudação (Coqui ou Polly) + <Record> para capturar fala do cliente."""
     from app.services.settings_sync import ensure_settings_fresh_async
-    from app.services.voice_audio import gerar_audio_chamada
 
     await ensure_settings_fresh_async()
 
@@ -565,7 +664,7 @@ async def voice_inbound_webhook(
         _register_voice_call_status_callback(call_sid)
 
     try:
-        filename = await gerar_audio_chamada(greeting)
+        filename = await ensure_greeting_audio_filename(greeting)
         twiml = _build_voice_inbound_twiml(filename, is_fallback=False)
     except Exception as exc:
         logger.warning(
@@ -581,18 +680,13 @@ async def voice_inbound_webhook(
 @router.get("/webhooks/voice/inbound/record-callback")
 @router.post("/webhooks/voice/inbound/record-callback")
 async def voice_inbound_record_callback(
-    db: AsyncSession = Depends(get_db),
     CallSid: str = Form(""),
     From: str = Form(""),
     To: str = Form(""),
     RecordingUrl: str = Form(""),
     RecordingDuration: str = Form(""),
 ):
-    """STT → agente RECEPTIVE → TTS + novo <Record> (loop de conversa por turnos)."""
-    from agents.channels.voice.tts_stt import speech_to_text
-    from agents.channels.voice.twilio_voice_client import download_recording
-    from app.services.voice_call_state import reset_silence_stage
-
+    """Enfileira turno assíncrono (Celery) e responde rápido com Redirect para turn-ready."""
     call_sid = (CallSid or "").strip()
     from_number = _resolve_voice_customer_number(call_sid, From or "", To or "")
 
@@ -608,41 +702,38 @@ async def voice_inbound_record_callback(
         recording_url = (RecordingUrl or "").strip()
         duration = _parse_recording_duration(RecordingDuration)
 
-        if _is_voice_silence(recording_url, duration):
+        silence_reason = _voice_silence_reason(recording_url, duration)
+        if silence_reason:
+            logger.info(
+                "Voice record-callback silence reason=%s call_sid=%s duration=%s url_present=%s",
+                silence_reason,
+                call_sid or "?",
+                duration,
+                bool(recording_url),
+            )
             twiml = await _handle_voice_silence_turn(
-                db,
                 call_sid=call_sid,
                 from_number=from_number,
             )
             return _twiml_response(twiml)
 
-        audio_bytes = await download_recording(recording_url)
-        transcript = (
-            await speech_to_text(
-                audio_bytes,
-                filename="audio.wav",
-                content_type="audio/wav",
-            )
-        ).strip()
-
-        if _is_voice_silence(recording_url, duration, transcript):
-            twiml = await _handle_voice_silence_turn(
-                db,
-                call_sid=call_sid,
-                from_number=from_number,
+        if not call_sid:
+            logger.warning("Voice record-callback sem CallSid; fallback erro")
+            twiml = _build_voice_turn_twiml(
+                VOICE_ERROR_MESSAGE,
+                is_fallback=True,
             )
             return _twiml_response(twiml)
 
-        if call_sid:
-            reset_silence_stage(call_sid, from_number=from_number)
-
-        response_text = await _run_voice_agent_turn(
-            db,
+        turn_id = str(uuid.uuid4())
+        await _enqueue_voice_inbound_turn(
+            call_sid=call_sid,
+            turn_id=turn_id,
+            recording_url=recording_url,
             from_number=from_number,
-            transcript=transcript,
-            call_sid=call_sid or None,
+            duration=duration,
         )
-        twiml = await _build_agent_response_twiml(response_text)
+        twiml = _build_voice_turn_redirect_twiml(call_sid=call_sid, turn_id=turn_id)
         return _twiml_response(twiml)
 
     except Exception:
@@ -654,9 +745,112 @@ async def voice_inbound_record_callback(
         twiml = _build_voice_turn_twiml(
             VOICE_ERROR_MESSAGE,
             is_fallback=True,
-            record_timeout_sec=settings.voice_silence_warning_seconds,
         )
         return _twiml_response(twiml)
+
+
+@router.get("/webhooks/voice/inbound/turn-ready")
+@router.post("/webhooks/voice/inbound/turn-ready")
+async def voice_inbound_turn_ready(
+    call_sid: str = Query("", alias="call_sid"),
+    turn_id: str = Query("", alias="turn_id"),
+):
+    """Polling Redis — pending: Pause+Redirect; ready: Play+Record; error/silence tratados."""
+    sid = (call_sid or "").strip()
+    tid = (turn_id or "").strip()
+
+    if not sid or not tid:
+        return _twiml_response(_build_voice_turn_timeout_twiml())
+
+    turn = await asyncio.to_thread(get_voice_turn, sid, tid)
+    if turn is None:
+        logger.warning("Voice turn-ready missing call_sid=%s turn_id=%s", sid, tid)
+        return _twiml_response(_build_voice_turn_timeout_twiml())
+
+    status = (turn.get("status") or "").strip().lower()
+
+    if status == "consumed":
+        logger.info("Voice turn-ready already consumed call_sid=%s turn_id=%s", sid, tid)
+        return _twiml_response(
+            _build_voice_turn_twiml(
+                VOICE_ERROR_MESSAGE,
+                is_fallback=True,
+            )
+        )
+
+    if status == "pending":
+        poll_count = await asyncio.to_thread(increment_turn_poll_count, sid, tid)
+        max_polls = max(1, int(settings.voice_turn_max_poll_attempts))
+        if poll_count >= max_polls:
+            await asyncio.to_thread(mark_turn_error, sid, tid, error="poll_timeout")
+            await asyncio.to_thread(mark_turn_consumed, sid, tid)
+            logger.warning(
+                "Voice turn poll timeout call_sid=%s turn_id=%s polls=%s",
+                sid,
+                tid,
+                poll_count,
+            )
+            return _twiml_response(_build_voice_turn_timeout_twiml())
+        return _twiml_response(_build_voice_poll_twiml(call_sid=sid, turn_id=tid))
+
+    if status == "silence_stt":
+        await asyncio.to_thread(mark_turn_consumed, sid, tid)
+        from_number = (turn.get("from_number") or "").strip()
+        twiml = await _handle_voice_silence_turn(
+            call_sid=sid,
+            from_number=from_number,
+        )
+        return _twiml_response(twiml)
+
+    if status == "ready":
+        audio_filename = (turn.get("audio_filename") or "").strip()
+        wait_total_ms = _compute_wait_total_ms(turn)
+        poll_attempts = int(turn.get("poll_count") or 0)
+        await asyncio.to_thread(mark_turn_consumed, sid, tid)
+        if not audio_filename or not _is_served_audio_filename(audio_filename):
+            logger.warning(
+                "Voice turn ready but invalid audio call_sid=%s turn_id=%s file=%r",
+                sid,
+                tid,
+                audio_filename,
+            )
+            return _twiml_response(
+                _build_voice_turn_twiml(
+                    VOICE_ERROR_MESSAGE,
+                    is_fallback=True,
+                )
+            )
+        logger.info(
+            "Voice turn delivered call_sid=%s turn_id=%s wait_total_ms=%s "
+            "poll_attempts=%s audio=%s",
+            sid,
+            tid,
+            f"{wait_total_ms:.0f}" if wait_total_ms is not None else "?",
+            poll_attempts,
+            audio_filename,
+        )
+        twiml = _build_voice_turn_twiml(
+            audio_filename,
+            is_fallback=False,
+        )
+        return _twiml_response(twiml)
+
+    if status == "error":
+        await asyncio.to_thread(mark_turn_consumed, sid, tid)
+        return _twiml_response(
+            _build_voice_turn_twiml(
+                VOICE_ERROR_MESSAGE,
+                is_fallback=True,
+            )
+        )
+
+    logger.warning(
+        "Voice turn-ready unknown status=%r call_sid=%s turn_id=%s",
+        status,
+        sid,
+        tid,
+    )
+    return _twiml_response(_build_voice_turn_timeout_twiml())
 
 
 @router.get("/webhooks/voice/inbound/status")

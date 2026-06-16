@@ -123,24 +123,30 @@ class KnowledgeBaseRetriever:
         *,
         top_k: int | None = None,
         threshold: float | None = None,
+        query_embedding: list[float] | None = None,
     ) -> list[dict[str, Any]]:
         """Recuperação RAG KB com degradação graciosa (retorna [] se embed/busca falhar)."""
         if not (query or "").strip():
             return []
         try:
+            effective_top_k = top_k if top_k is not None else settings.resolved_kb_top_k()
+            effective_threshold = (
+                settings.kb_similarity_threshold if threshold is None else threshold
+            )
             chunks = await self.get_similar(
                 owner_user_id,
                 query,
                 limit=top_k,
                 threshold=threshold,
+                query_embedding=query_embedding,
             )
             if chunks:
                 logger.info(
                     "KB RAG: %s chunk(s) para owner_user_id=%s (top_k=%s, threshold=%s)",
                     len(chunks),
                     owner_user_id,
-                    top_k or settings.kb_top_k,
-                    threshold if threshold is not None else settings.kb_similarity_threshold,
+                    effective_top_k,
+                    effective_threshold,
                 )
                 for item in chunks:
                     logger.debug(
@@ -149,6 +155,32 @@ class KnowledgeBaseRetriever:
                         item.get("document_title"),
                         item.get("document_is_system"),
                         (item.get("content") or "")[:120],
+                    )
+            else:
+                peek = await self.get_similar(
+                    owner_user_id,
+                    query,
+                    limit=1,
+                    threshold=0.0,
+                    query_embedding=query_embedding,
+                )
+                best_sim = peek[0]["similarity"] if peek else None
+                if best_sim is not None:
+                    logger.info(
+                        "KB RAG: 0 chunks (best_sim=%.3f) para owner_user_id=%s "
+                        "(top_k=%s, threshold=%s)",
+                        best_sim,
+                        owner_user_id,
+                        effective_top_k,
+                        effective_threshold,
+                    )
+                else:
+                    logger.info(
+                        "KB RAG: 0 chunks (best_sim=n/a) para owner_user_id=%s "
+                        "(top_k=%s, threshold=%s)",
+                        owner_user_id,
+                        effective_top_k,
+                        effective_threshold,
                     )
             return chunks
         except Exception:
@@ -173,6 +205,8 @@ async def retrieve_kb_chunks(
     query: str,
     top_k: int | None = None,
     threshold: float | None = None,
+    *,
+    query_embedding: list[float] | None = None,
 ) -> list[dict[str, Any]]:
     """Atalho de módulo — espelha ``retrieve_similar_memories`` da memória de longo prazo."""
     return await _retriever.retrieve_kb_chunks(
@@ -180,4 +214,5 @@ async def retrieve_kb_chunks(
         query,
         top_k=top_k,
         threshold=threshold,
+        query_embedding=query_embedding,
     )

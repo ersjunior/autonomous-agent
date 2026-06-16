@@ -67,6 +67,7 @@ class LongTermMemory:
         query: str,
         limit: int | None = None,
         *,
+        threshold: float | None = None,
         query_embedding: list[float] | None = None,
         conn: asyncpg.Connection | None = None,
     ) -> list[dict]:
@@ -82,8 +83,10 @@ class LongTermMemory:
         if top_k <= 0:
             return []
 
-        threshold = settings.rag_similarity_threshold
-        fetch_limit = top_k * 3 if threshold > 0 else top_k
+        sim_threshold = (
+            settings.rag_similarity_threshold if threshold is None else threshold
+        )
+        fetch_limit = top_k * 3 if sim_threshold > 0 else top_k
 
         embedding = query_embedding if query_embedding is not None else await self._embed(query)
         async with use_pgvector_connection(self._get_pool, conn) as db_conn:
@@ -105,7 +108,7 @@ class LongTermMemory:
         results: list[dict] = []
         for row in rows:
             similarity = float(row["similarity"])
-            if threshold > 0 and similarity < threshold:
+            if sim_threshold > 0 and similarity < sim_threshold:
                 continue
             results.append(
                 {
@@ -124,19 +127,39 @@ class LongTermMemory:
 
         return results
 
-    async def retrieve_similar_memories(self, user_id: str, query: str) -> list[dict]:
+    async def retrieve_similar_memories(
+        self,
+        user_id: str,
+        query: str,
+        *,
+        limit: int | None = None,
+        threshold: float | None = None,
+        query_embedding: list[float] | None = None,
+    ) -> list[dict]:
         """Recuperação RAG com degradação graciosa (retorna [] se embed/busca falhar)."""
         if not (query or "").strip():
             return []
         try:
-            memories = await self.get_similar(user_id, query)
+            memories = await self.get_similar(
+                user_id,
+                query,
+                limit=limit,
+                threshold=threshold,
+                query_embedding=query_embedding,
+            )
             if memories:
+                effective_k = limit if limit is not None else settings.rag_top_k
+                effective_threshold = (
+                    settings.rag_similarity_threshold
+                    if threshold is None
+                    else threshold
+                )
                 logger.info(
                     "RAG: %s memória(s) para user_id=%s (top_k=%s, threshold=%s)",
                     len(memories),
                     user_id,
-                    settings.rag_top_k,
-                    settings.rag_similarity_threshold,
+                    effective_k,
+                    effective_threshold,
                 )
             return memories
         except Exception:

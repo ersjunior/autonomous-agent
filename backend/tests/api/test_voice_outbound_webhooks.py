@@ -14,7 +14,7 @@ FAKE_MP3 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.mp3"
 @pytest.fixture(autouse=True)
 def _public_base_url(monkeypatch):
     monkeypatch.setattr(settings, "public_base_url", "https://example.com")
-    monkeypatch.setattr(settings, "voice_silence_warning_seconds", 30)
+    monkeypatch.setattr(settings, "voice_record_silence_timeout_sec", 2)
 
 
 async def test_outbound_audio_webhook_returns_play_and_record(client) -> None:
@@ -28,7 +28,7 @@ async def test_outbound_audio_webhook_returns_play_and_record(client) -> None:
     assert FAKE_MP3 in body
     assert "<Play>" in body
     assert "<Record" in body
-    assert 'timeout="30"' in body
+    assert 'timeout="2"' in body
     assert "record-callback" in body
     assert "<Hangup" not in body
 

@@ -80,6 +80,7 @@ async def attend_inbound_message(
     bind_capacity: bool = True,
     message_sid: str | None = None,
     twilio_call_sid: str | None = None,
+    agent_timings_out: dict[str, float] | None = None,
 ) -> str:
     """
     Roteia pelo grafo, envia resposta e faz tracking.
@@ -104,6 +105,13 @@ async def attend_inbound_message(
             agent_context=agent_context,
         )
     response_text = result.get("response", "") or ""
+    if agent_timings_out is not None:
+        if "intent_ms" in result:
+            agent_timings_out["intent_ms"] = float(result["intent_ms"])
+        if "rag_ms" in result:
+            agent_timings_out["rag_ms"] = float(result["rag_ms"])
+        if "response_ms" in result:
+            agent_timings_out["response_ms"] = float(result["response_ms"])
     await deliver_channel_text(ch, user_id, response_text)
 
     escalated = bool(result.get("should_escalate"))

@@ -59,13 +59,20 @@ def set_voice_call_state(
     *,
     silence_stage: int,
     from_number: str | None = None,
+    accumulated_silence_sec: float | None = None,
 ) -> None:
     sid = (call_sid or "").strip()
     if not sid:
         return
+    existing = get_voice_call_state(sid) or {}
     payload: dict[str, Any] = {"silence_stage": int(silence_stage)}
-    if from_number:
-        payload["from_number"] = from_number.strip()
+    if accumulated_silence_sec is not None:
+        payload["accumulated_silence_sec"] = float(accumulated_silence_sec)
+    elif "accumulated_silence_sec" in existing:
+        payload["accumulated_silence_sec"] = existing["accumulated_silence_sec"]
+    from_n = (from_number or existing.get("from_number") or "").strip() or None
+    if from_n:
+        payload["from_number"] = from_n
     _get_redis().setex(
         _state_key(sid),
         VOICE_CALL_STATE_TTL_SECONDS,
@@ -73,9 +80,52 @@ def set_voice_call_state(
     )
 
 
+def get_accumulated_silence_sec(call_sid: str) -> float:
+    data = get_voice_call_state(call_sid)
+    if not data:
+        return 0.0
+    try:
+        return float(data.get("accumulated_silence_sec", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def add_accumulated_silence(
+    call_sid: str,
+    delta_sec: float,
+    *,
+    from_number: str | None = None,
+) -> float:
+    """Soma intervalo de silêncio (≈ timeout do Record) e retorna total acumulado."""
+    sid = (call_sid or "").strip()
+    if not sid or delta_sec <= 0:
+        return get_accumulated_silence_sec(sid)
+    data = get_voice_call_state(sid) or {}
+    stage = get_silence_stage(sid)
+    accumulated = get_accumulated_silence_sec(sid) + float(delta_sec)
+    from_n = (from_number or data.get("from_number") or "").strip() or None
+    payload: dict[str, Any] = {
+        "silence_stage": stage,
+        "accumulated_silence_sec": accumulated,
+    }
+    if from_n:
+        payload["from_number"] = from_n
+    _get_redis().setex(
+        _state_key(sid),
+        VOICE_CALL_STATE_TTL_SECONDS,
+        json.dumps(payload, ensure_ascii=False),
+    )
+    return accumulated
+
+
 def reset_silence_stage(call_sid: str, *, from_number: str | None = None) -> None:
     """Volta ao estágio normal após fala válida do cliente."""
-    set_voice_call_state(call_sid, silence_stage=0, from_number=from_number)
+    set_voice_call_state(
+        call_sid,
+        silence_stage=0,
+        from_number=from_number,
+        accumulated_silence_sec=0.0,
+    )
 
 
 def clear_voice_call_state(call_sid: str) -> None:

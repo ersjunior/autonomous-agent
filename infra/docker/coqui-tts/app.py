@@ -84,10 +84,26 @@ def _torch_cuda_available() -> bool:
         return False
 
 
-def _wav_to_mp3(wav_path: str) -> bytes:
-    """Transcode a WAV file to MP3 bytes using the bundled ffmpeg."""
+def _wav_to_telephony_mp3(wav_path: str) -> bytes:
+    """WAV XTTS → MP3 mono 16 kHz (formato final para Twilio; evita 2º ffmpeg no backend)."""
     proc = subprocess.run(
-        ["ffmpeg", "-y", "-i", wav_path, "-codec:a", "libmp3lame", "-q:a", "4", "-f", "mp3", "pipe:1"],
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            wav_path,
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-codec:a",
+            "libmp3lame",
+            "-q:a",
+            "5",
+            "-f",
+            "mp3",
+            "pipe:1",
+        ],
         capture_output=True,
     )
     if proc.returncode != 0:
@@ -153,7 +169,7 @@ async def synthesize(request: TTSRequest) -> Response:
             speaker_wav=speaker_path,
             language=request.language,
         )
-        audio_bytes = _wav_to_mp3(out_path)
+        audio_bytes = _wav_to_telephony_mp3(out_path)
         return Response(content=audio_bytes, media_type="audio/mpeg")
     finally:
         if os.path.exists(out_path):

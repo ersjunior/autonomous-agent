@@ -54,6 +54,9 @@ async def lifespan(app: FastAPI):
 
     await bootstrap_settings()
     log_resolved_public_urls()
+    from app.services.voice_cached_audio import prewarm_voice_webhook_audio
+
+    await prewarm_voice_webhook_audio()
     await configure_telegram_on_startup()
 
     yield

@@ -1,6 +1,8 @@
 """LangGraph orchestrator for customer service conversations."""
 
+import asyncio
 import logging
+import time
 
 from langgraph.graph import END, START, StateGraph
 
@@ -9,10 +11,13 @@ from agents.memory.long_term import LongTermMemory
 from agents.memory.short_term import ShortTermMemory
 from agents.orchestrator.router import route_after_escalation_check
 from agents.orchestrator.state import AgentState
-from agents.tools.knowledge_base import retrieve_kb_chunks
+from agents.services.embedding_service import embed_text
+from agents.tools.knowledge_base import _retriever as _kb_retriever
 from agents.escalation import resolve_should_escalate
 from agents.workers.intent_agent import identify_intent as run_identify_intent
 from agents.workers.response_agent import generate_response as run_generate_response
+from agents.workers.voice_intent_heuristic import identify_intent_voice_heuristic
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +65,25 @@ async def close_long_term_pgvector_pool() -> None:
 async def identify_intent(state: AgentState) -> AgentState:
     memory = _short_term_memory
     history = await memory.get_history(state["user_id"])
-    result = await run_identify_intent(
-        state["message"],
-        history,
-    )
+    channel = (state.get("channel") or "").lower()
+    t0 = time.perf_counter()
+
+    if channel == "voice":
+        result = identify_intent_voice_heuristic(state["message"])
+        intent_ms = (time.perf_counter() - t0) * 1000
+        logger.debug(
+            "Voice intent heuristic intent=%s confidence=%s intent_ms=%.0f",
+            result.intent,
+            result.confidence,
+            intent_ms,
+        )
+    else:
+        result = await run_identify_intent(
+            state["message"],
+            history,
+        )
+        intent_ms = (time.perf_counter() - t0) * 1000
+
     await publish_event_async(
         "intent_detected",
         {
@@ -82,6 +102,7 @@ async def identify_intent(state: AgentState) -> AgentState:
         "entities": result.entities,
         "complaint_severity": result.complaint_severity,
         "conversation_history": history,
+        "intent_ms": intent_ms,
     }
 
 
@@ -104,16 +125,69 @@ async def escalate(state: AgentState) -> AgentState:
     }
 
 
+async def _fetch_rag_context(state: AgentState) -> tuple[list[dict], list[dict], float]:
+    """
+    Um embedding + buscas memória/KB em paralelo.
+
+    Voice: memória com voice_rag_top_k + voice_rag_similarity_threshold;
+    KB com resolved_kb_top_k() global e voice_kb_similarity_threshold.
+    Demais canais: defaults globais (rag_top_k / kb_similarity_threshold).
+    """
+    message = (state.get("message") or "").strip()
+    if not message:
+        return [], [], 0.0
+
+    channel = (state.get("channel") or "").lower()
+    is_voice = channel == "voice"
+    memory_limit = settings.voice_rag_top_k if is_voice else None
+    memory_threshold = settings.voice_rag_similarity_threshold if is_voice else None
+    kb_top_k = None  # resolved_kb_top_k() dentro do retriever
+    kb_threshold = settings.voice_kb_similarity_threshold if is_voice else None
+
+    t0 = time.perf_counter()
+    try:
+        query_embedding = await embed_text(message)
+        rag_memories, kb_chunks = await asyncio.gather(
+            _long_term_memory.retrieve_similar_memories(
+                state["user_id"],
+                message,
+                limit=memory_limit,
+                threshold=memory_threshold,
+                query_embedding=query_embedding,
+            ),
+            _kb_retriever.retrieve_kb_chunks(
+                state.get("owner_user_id"),
+                message,
+                top_k=kb_top_k,
+                threshold=kb_threshold,
+                query_embedding=query_embedding,
+            ),
+        )
+    except Exception:
+        logger.warning(
+            "Parallel RAG failed user_id=%s; falling back to sequential",
+            state.get("user_id"),
+            exc_info=True,
+        )
+        rag_memories = await _long_term_memory.retrieve_similar_memories(
+            state["user_id"],
+            message,
+            limit=memory_limit,
+            threshold=memory_threshold,
+        )
+        kb_chunks = await _kb_retriever.retrieve_kb_chunks(
+            state.get("owner_user_id"),
+            message,
+            top_k=kb_top_k,
+            threshold=kb_threshold,
+        )
+    rag_ms = (time.perf_counter() - t0) * 1000
+    return rag_memories, kb_chunks, rag_ms
+
+
 async def generate_response(state: AgentState) -> AgentState:
-    # Dois RAGs complementares: memória do contato + base documental do dono/institucional.
-    rag_memories = await _long_term_memory.retrieve_similar_memories(
-        state["user_id"],
-        state["message"],
-    )
-    kb_chunks = await retrieve_kb_chunks(
-        state.get("owner_user_id"),
-        state["message"],
-    )
+    rag_memories, kb_chunks, rag_ms = await _fetch_rag_context(state)
+    t0 = time.perf_counter()
     text = await run_generate_response(
         state["message"],
         state.get("intent", "other"),
@@ -125,7 +199,24 @@ async def generate_response(state: AgentState) -> AgentState:
         agent_personality=state.get("agent_personality"),
         agent_mode=state.get("agent_mode"),
     )
-    return {"response": text, "rag_memories": rag_memories, "kb_chunks": kb_chunks}
+    response_ms = (time.perf_counter() - t0) * 1000
+    if rag_ms > 0:
+        logger.debug(
+            "RAG+LLM timings channel=%s rag_ms=%.0f response_ms=%.0f top_k=%s",
+            state.get("channel", ""),
+            rag_ms,
+            response_ms,
+            settings.voice_rag_top_k
+            if (state.get("channel") or "").lower() == "voice"
+            else settings.rag_top_k,
+        )
+    return {
+        "response": text,
+        "rag_memories": rag_memories,
+        "kb_chunks": kb_chunks,
+        "rag_ms": rag_ms,
+        "response_ms": response_ms,
+    }
 
 
 async def send_response(state: AgentState) -> AgentState:

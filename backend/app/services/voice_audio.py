@@ -84,10 +84,16 @@ async def gerar_audio_chamada(text: str) -> str:
     if not audio_bytes:
         raise RuntimeError("Coqui retornou áudio vazio")
 
-    try:
-        mp3_bytes = _transcode_to_telephony_mp3(audio_bytes)
-    except Exception as exc:
-        raise RuntimeError(f"Falha na conversão do áudio para MP3 telefonia: {exc}") from exc
+    # Coqui já entrega MP3 mono 16 kHz; outros provedores ainda passam por transcode.
+    if (settings.tts_provider or "").strip().lower() == "coqui":
+        mp3_bytes = audio_bytes
+    else:
+        try:
+            mp3_bytes = _transcode_to_telephony_mp3(audio_bytes)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Falha na conversão do áudio para MP3 telefonia: {exc}"
+            ) from exc
 
     root = Path(settings.voice_audio_root)
     root.mkdir(parents=True, exist_ok=True)

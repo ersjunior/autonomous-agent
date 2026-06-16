@@ -23,11 +23,16 @@ RECEPTIVE_BEHAVIOR_PROMPT = """Modo RECEPTIVO — como conduzir o atendimento:
 - Escale para atendente humano apenas quando necessário: reclamação grave, pedido explícito
   de atendente humano ou sinal claro de escalonamento — reconheça e indique a transferência."""
 
-# Inbound/outbound de voz (telefonia): respostas curtas para TTS e timeout da Twilio.
+# Inbound/outbound de voz (telefonia): respostas curtas para TTS e latência.
 VOICE_BEHAVIOR_PROMPT = """Modo VOZ (telefone) — como falar com o cliente:
-- Você está em uma LIGAÇÃO TELEFÔNICA; responda de forma CURTA e objetiva (no máximo 3 a 4 frases).
-- Use linguagem falada natural, direta ao ponto; evite listas, markdown, emojis e parágrafos longos.
-- Prefira frases curtas que soem bem quando lidas em voz alta; vá direto ao que o cliente precisa."""
+- Você está numa LIGAÇÃO TELEFÔNICA. Responda em 1 frase curta (máximo ~80 caracteres). Vá direto ao ponto.
+- Não liste, não explique demais, não repita a pergunta do cliente.
+- Use linguagem falada natural; evite markdown, emojis e parágrafos longos.
+- Se precisar de mais informação, faça UMA pergunta curta no final."""
+
+# Cap pós-LLM só para telefonia (TTS XTTS escala ~linearmente com o tamanho).
+VOICE_MAX_RESPONSE_SENTENCES = 1
+VOICE_MAX_RESPONSE_CHARS = 90
 
 
 def _resolve_system_prompt() -> str:
@@ -62,6 +67,72 @@ def trim_voice_response_to_complete_sentence(text: str) -> str:
         return cleaned
 
     return cleaned[: last_idx + 1].strip()
+
+
+def _split_voice_sentences(text: str) -> list[str]:
+    """Divide em frases completas (terminadas em . ! ?)."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return []
+
+    sentences: list[str] = []
+    start = 0
+    for idx, ch in enumerate(cleaned):
+        if ch in ".!?" and (idx + 1 >= len(cleaned) or cleaned[idx + 1].isspace()):
+            segment = cleaned[start : idx + 1].strip()
+            if segment:
+                sentences.append(segment)
+            start = idx + 1
+            while start < len(cleaned) and cleaned[start].isspace():
+                start += 1
+
+    tail = cleaned[start:].strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
+def _truncate_at_word_boundary(text: str, max_chars: int) -> str:
+    """Corta em limite de chars sem partir palavra; garante fim com pontuação."""
+    cleaned = (text or "").strip()
+    if not cleaned or len(cleaned) <= max_chars:
+        return cleaned
+
+    chunk = cleaned[:max_chars]
+    if (
+        max_chars < len(cleaned)
+        and chunk[-1].isalnum()
+        and cleaned[max_chars].isalnum()
+    ):
+        last_space = chunk.rfind(" ")
+        if last_space > 10:
+            chunk = chunk[:last_space]
+
+    chunk = chunk.rstrip(" ,;:–—")
+    if chunk and chunk[-1] not in ".!?":
+        chunk += "."
+    return chunk
+
+
+def cap_voice_response_for_telephony(text: str) -> str:
+    """
+    Limita resposta de voz a 1 frase curta (~90 chars), sem partir palavra.
+
+    Só deve ser usado no canal voice — WhatsApp/Telegram permanecem sem este cap.
+    """
+    cleaned = trim_voice_response_to_complete_sentence(text)
+    if not cleaned:
+        return cleaned
+
+    sentences = _split_voice_sentences(cleaned)
+    if not sentences:
+        return _truncate_at_word_boundary(cleaned, VOICE_MAX_RESPONSE_CHARS)
+
+    result = sentences[:VOICE_MAX_RESPONSE_SENTENCES]
+    merged = " ".join(result).strip()
+    if len(merged) > VOICE_MAX_RESPONSE_CHARS:
+        merged = _truncate_at_word_boundary(merged, VOICE_MAX_RESPONSE_CHARS)
+    return merged.strip()
 
 
 def _history_to_messages(history: list[dict]) -> list[dict]:
@@ -242,6 +313,6 @@ async def generate_response(
     text = result if isinstance(result, str) else str(result)
 
     if (channel or "").lower() == "voice":
-        text = trim_voice_response_to_complete_sentence(text)
+        text = cap_voice_response_for_telephony(text)
 
     return text
