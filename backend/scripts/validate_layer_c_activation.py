@@ -274,7 +274,7 @@ async def run_validation_async(client: httpx.Client, h: dict[str, str], tag: str
             )
         ).scalar_one()
         phone = get_phone(lead_row) or ""
-        ctx = _agent_context_for_campaign(camp_row.agent, camp_row, followup=True)
+        ctx = await _agent_context_for_campaign(db, camp_row.agent, camp_row, lead=lead_row, followup=True)
         route_result = await route_message(
             FOLLOWUP_TRIGGER_MESSAGE,
             "whatsapp",

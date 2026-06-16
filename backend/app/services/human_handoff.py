@@ -313,15 +313,10 @@ async def resolve_handoff_owner_for_escalation(
     lead: Lead | None,
 ) -> str:
     """Regra de escrita: campaign.user_id → lead.user_id → agent.user_id (órfão)."""
-    if lead is not None:
-        if lead.lead_base is not None and lead.lead_base.campaign_id is not None:
-            from app.models.campaign import Campaign
+    from app.services.tenant_resolution import resolve_tenant_user_id
 
-            campaign = await session.get(Campaign, lead.lead_base.campaign_id)
-            if campaign is not None:
-                return str(campaign.user_id)
-        return str(lead.user_id)
-    return str(agent.user_id)
+    tenant_id = await resolve_tenant_user_id(session, agent, lead=lead)
+    return str(tenant_id)
 
 
 def _lead_display_name(lead: Lead | None, user_id: str) -> str:

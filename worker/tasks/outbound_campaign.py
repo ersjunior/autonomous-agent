@@ -39,6 +39,7 @@ from app.services.activation_slots import release_slot
 from app.services.capacity_service import release_outbound_capacity_for_lead
 from worker.async_runner import run_celery_async
 from worker.celery_app import celery
+from app.services.agent_context import enrich_agent_context_with_identity
 from worker.tasks.conversation_routing import agent_personality_context, agent_routing_metadata
 from worker.tasks.lead_tracking import upsert_lead_interaction
 
@@ -82,10 +83,12 @@ def _resolve_recipient(lead: Lead, channel_type: str) -> str | None:
     return None
 
 
-def _agent_context_for_campaign(
+async def _agent_context_for_campaign(
+    session: AsyncSession,
     agent: Agent,
     campaign: Campaign,
     *,
+    lead: Lead | None = None,
     followup: bool = False,
 ) -> dict:
     ctx = agent_routing_metadata(agent)
@@ -94,7 +97,13 @@ def _agent_context_for_campaign(
     if followup:
         personality = f"{personality}\n\n{FOLLOWUP_TRIGGER_MESSAGE}"
     ctx["agent_personality"] = personality
-    return ctx
+    return await enrich_agent_context_with_identity(
+        session,
+        ctx,
+        agent,
+        lead=lead,
+        campaign=campaign,
+    )
 
 
 async def _fetch_lead_interaction(
@@ -302,7 +311,13 @@ async def _send_on_channel(
         )
     else:
         prompt = FOLLOWUP_TRIGGER_MESSAGE if followup else _build_initial_message(lead, campaign)
-        agent_context = _agent_context_for_campaign(agent, campaign, followup=followup)
+        agent_context = await _agent_context_for_campaign(
+            session,
+            agent,
+            campaign,
+            lead=lead,
+            followup=followup,
+        )
         result = await route_message(
             prompt,
             channel,

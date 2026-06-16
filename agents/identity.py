@@ -6,6 +6,14 @@ from typing import Any
 
 IDENTITY_CONFIG_KEY = "identity"
 
+IDENTITY_FIELD_KEYS: tuple[str, ...] = (
+    "company_name",
+    "display_name",
+    "tone",
+    "business_context",
+    "greeting_hint",
+)
+
 _IDENTITY_FIELDS: tuple[tuple[str, str], ...] = (
     ("company_name", "Empresa"),
     ("display_name", "Nome de exibição"),
@@ -36,6 +44,45 @@ def _coerce_identity_dict(config: dict[str, Any] | None) -> dict[str, str]:
         if text:
             result[key] = text
     return result
+
+
+def merge_institutional_identity(
+    workspace: dict[str, str] | None,
+    agent: dict[str, str] | None,
+) -> dict[str, str]:
+    """
+    Merge campo-a-campo: agente preenchido > workspace > omitido.
+    """
+    ws = workspace or {}
+    ag = agent or {}
+    merged: dict[str, str] = {}
+    for key in IDENTITY_FIELD_KEYS:
+        agent_val = str(ag.get(key) or "").strip()
+        workspace_val = str(ws.get(key) or "").strip()
+        if agent_val:
+            merged[key] = agent_val
+        elif workspace_val:
+            merged[key] = workspace_val
+    return merged
+
+
+def resolve_identity_config(
+    workspace_identity: dict[str, str] | None,
+    agent_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Combina workspace + ``agent_config.identity`` e retorna config pronto para o prompt.
+
+    Preserva chaves operacionais de ``agent_config`` (ex.: ``tipo``).
+    """
+    base = dict(agent_config or {})
+    agent_identity: dict[str, Any] = {}
+    raw_agent = base.get(IDENTITY_CONFIG_KEY)
+    if isinstance(raw_agent, dict):
+        agent_identity = raw_agent
+    merged = merge_institutional_identity(workspace_identity, agent_identity)
+    base[IDENTITY_CONFIG_KEY] = merged
+    return base
 
 
 def non_identity_config(config: dict[str, Any] | None) -> dict[str, Any]:

@@ -26,6 +26,7 @@ from app.services.capacity_service import (
     release_receptive_handle,
     try_acquire_receptive_capacity,
 )
+from app.services.agent_context import enrich_agent_context_with_identity
 from app.services.human_handoff import (
     enter_human_mode,
     handle_escalation_handoff,
@@ -110,6 +111,12 @@ async def attend_inbound_message(
         return wait_msg or ""
 
     agent_context = agent_routing_metadata(agent)
+    agent_context = await enrich_agent_context_with_identity(
+        session,
+        agent_context,
+        agent,
+        lead=lead,
+    )
     async with channel_typing_indicator(ch, user_id, message_sid=message_sid):
         result = await route_message(
             message,
