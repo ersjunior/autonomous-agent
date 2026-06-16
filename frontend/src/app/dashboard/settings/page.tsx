@@ -15,8 +15,10 @@ import {
   formatApiError,
   getSettings,
   getVoiceSampleInfo,
+  getWorkspaceIdentity,
   testVoice,
   updateSettings,
+  updateWorkspaceIdentity,
   uploadVoiceSample,
 } from "@/lib/api";
 import { fetchTunnelStatus } from "@/lib/api-tunnel";
@@ -28,6 +30,11 @@ import type {
   VoiceSampleUploadResponse,
   VoiceTestResponse,
 } from "@/lib/types/settings";
+import type { InstitutionalIdentity } from "@/lib/types/identity";
+import {
+  formValuesToIdentityUpdate,
+  identityToFormValues,
+} from "@/lib/types/identity";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { CopyButton } from "@/components/ui/CopyButton";
@@ -70,7 +77,7 @@ const LLM_CATEGORIES = new Set(["llm", "system"]);
 const AGENT_CATEGORIES = new Set(["agent"]);
 const AUDIO_CATEGORIES = new Set(["stt", "tts"]);
 
-type TabId = "llm" | "agent" | "audio" | "tunnel";
+type TabId = "llm" | "agent" | "identity" | "audio" | "tunnel";
 
 const TUNNEL_STATUS_LABELS: Record<TunnelStatusLevel, string> = {
   aguardando: "Aguardando URL pública",
@@ -291,6 +298,10 @@ export default function SettingsPage() {
   const [tunnelLoading, setTunnelLoading] = useState(false);
   const [tunnelError, setTunnelError] = useState("");
 
+  const [identityValues, setIdentityValues] = useState(identityToFormValues(null));
+  const [identityLoading, setIdentityLoading] = useState(false);
+  const [identitySaving, setIdentitySaving] = useState(false);
+
   const loadTunnelStatus = useCallback(async () => {
     const token = localStorage.getItem("access_token");
     if (!token) {
@@ -307,6 +318,34 @@ export default function SettingsPage() {
       setTunnelStatus(null);
     } finally {
       setTunnelLoading(false);
+    }
+  }, []);
+
+  const loadIdentity = useCallback(async () => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      window.location.href = "/";
+      return;
+    }
+
+    setIdentityLoading(true);
+    setError("");
+    try {
+      const res = await getWorkspaceIdentity();
+      if (!res.ok) {
+        if (res.status !== 401) {
+          setError(await formatApiError(res, "Erro ao carregar identidade da empresa"));
+        }
+        return;
+      }
+
+      const data: InstitutionalIdentity = await res.json();
+      const values = identityToFormValues(data);
+      setIdentityValues(values);
+    } catch {
+      setError("Erro de conexão ao carregar identidade da empresa.");
+    } finally {
+      setIdentityLoading(false);
     }
   }, []);
 
@@ -404,6 +443,12 @@ export default function SettingsPage() {
     }
   }, [activeTab, loadTunnelStatus]);
 
+  useEffect(() => {
+    if (activeTab === "identity") {
+      void loadIdentity();
+    }
+  }, [activeTab, loadIdentity]);
+
   const visibleCategories = useMemo(() => {
     const allowed =
       activeTab === "llm"
@@ -444,6 +489,37 @@ export default function SettingsPage() {
     }
 
     return changes;
+  }
+
+  async function handleSaveIdentity(e: FormEvent) {
+    e.preventDefault();
+    setIdentitySaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const payload = formValuesToIdentityUpdate(identityValues);
+      const res = await updateWorkspaceIdentity(payload);
+      if (!res.ok) {
+        if (res.status !== 401) {
+          setError(await formatApiError(res, "Erro ao salvar identidade da empresa"));
+        }
+        return;
+      }
+
+      const data: InstitutionalIdentity = await res.json();
+      const values = identityToFormValues(data);
+      setIdentityValues(values);
+      setSuccess("Identidade da empresa salva com sucesso.");
+    } catch {
+      setError("Erro de conexão ao salvar identidade da empresa.");
+    } finally {
+      setIdentitySaving(false);
+    }
+  }
+
+  function handleIdentityFieldChange(key: keyof typeof identityValues, value: string) {
+    setIdentityValues((prev) => ({ ...prev, [key]: value }));
+    setSuccess("");
   }
 
   async function handleSave(e: FormEvent) {
@@ -622,6 +698,17 @@ export default function SettingsPage() {
           onClick={() => setActiveTab("agent")}
         >
           Comportamento
+        </button>
+        <button
+          type="button"
+          className={`px-4 py-2 text-sm font-medium ${
+            activeTab === "identity"
+              ? "border-b-2 border-primary text-primary"
+              : "text-muted-foreground"
+          }`}
+          onClick={() => setActiveTab("identity")}
+        >
+          Identidade da empresa
         </button>
         <button
           type="button"
@@ -841,6 +928,103 @@ export default function SettingsPage() {
             </>
           ) : null}
         </div>
+      ) : activeTab === "identity" ? (
+        identityLoading ? (
+          <p className="text-sm text-muted-foreground">Carregando identidade da empresa...</p>
+        ) : (
+          <form onSubmit={handleSaveIdentity} className="space-y-8">
+            <div className="glass-card space-y-6 p-6">
+              <p className="text-sm text-muted-foreground">
+                Esta identidade vale para todos os agentes do seu workspace; cada agente pode
+                sobrescrever campos específicos na própria configuração.
+              </p>
+
+              <div>
+                <label htmlFor="company_name" className="mb-2 block text-sm font-medium text-foreground">
+                  Nome da empresa
+                </label>
+                <input
+                  id="company_name"
+                  type="text"
+                  className="input-field"
+                  value={identityValues.company_name}
+                  onChange={(e) => handleIdentityFieldChange("company_name", e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label htmlFor="display_name" className="mb-2 block text-sm font-medium text-foreground">
+                  Nome de exibição
+                </label>
+                <input
+                  id="display_name"
+                  type="text"
+                  className="input-field"
+                  value={identityValues.display_name}
+                  onChange={(e) => handleIdentityFieldChange("display_name", e.target.value)}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Nome usado nas conversas quando diferente da razão social.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="tone" className="mb-2 block text-sm font-medium text-foreground">
+                  Tom de voz
+                </label>
+                <input
+                  id="tone"
+                  type="text"
+                  className="input-field"
+                  value={identityValues.tone}
+                  onChange={(e) => handleIdentityFieldChange("tone", e.target.value)}
+                  placeholder="Ex.: formal e acolhedor, descontraído, técnico"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="business_context"
+                  className="mb-2 block text-sm font-medium text-foreground"
+                >
+                  Contexto do negócio
+                </label>
+                <textarea
+                  id="business_context"
+                  className="input-field min-h-[160px] resize-y"
+                  value={identityValues.business_context}
+                  maxLength={4000}
+                  onChange={(e) => handleIdentityFieldChange("business_context", e.target.value)}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Descreva o que a empresa faz em alto nível. NÃO coloque preços ou políticas
+                  aqui — esses vêm da Base de Conhecimento.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="greeting_hint" className="mb-2 block text-sm font-medium text-foreground">
+                  Dica de saudação
+                  <span className="ml-1 font-normal text-muted-foreground">(opcional)</span>
+                </label>
+                <input
+                  id="greeting_hint"
+                  type="text"
+                  className="input-field"
+                  value={identityValues.greeting_hint}
+                  onChange={(e) => handleIdentityFieldChange("greeting_hint", e.target.value)}
+                  placeholder="Ex.: Cumprimente pelo nome quando souber"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button type="submit" className="btn-primary" disabled={identitySaving}>
+                {identitySaving ? "Salvando..." : "Salvar identidade"}
+              </button>
+            </div>
+          </form>
+        )
       ) : loading ? (
         <p className="text-sm text-muted-foreground">Carregando configurações...</p>
       ) : (

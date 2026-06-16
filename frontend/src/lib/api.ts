@@ -1,4 +1,8 @@
 import type {
+  InstitutionalIdentity,
+  InstitutionalIdentityUpdate,
+} from "@/lib/types/identity";
+import type {
   SettingsResponse,
   VoiceSampleInfo,
   VoiceSampleUploadResponse,
@@ -271,6 +275,19 @@ export async function getSettings(): Promise<Response> {
   return apiFetch("/api/v1/settings");
 }
 
+export async function getWorkspaceIdentity(): Promise<Response> {
+  return apiFetch("/api/v1/settings/identity");
+}
+
+export async function updateWorkspaceIdentity(
+  payload: InstitutionalIdentityUpdate
+): Promise<Response> {
+  return apiFetch("/api/v1/settings/identity", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function updateSettings(
   changes: Record<string, string | null>
 ): Promise<Response> {
@@ -311,6 +328,10 @@ export async function fetchAudioBlob(path: string): Promise<Blob> {
   return res.blob();
 }
 
+export type {
+  InstitutionalIdentity,
+  InstitutionalIdentityUpdate,
+} from "@/lib/types/identity";
 export type {
   SettingsResponse,
   VoiceSampleInfo,

@@ -9,6 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.schemas.identity import (
+    InstitutionalIdentityResponse,
+    InstitutionalIdentityUpdate,
+    identity_dict_to_response,
+)
 from app.schemas.settings import (
     SettingsUpdateRequest,
     VoiceSampleInfoResponse,
@@ -16,6 +21,7 @@ from app.schemas.settings import (
     VoiceTestRequest,
     VoiceTestResponse,
 )
+from app.services.user_identity import load_user_identity, save_user_identity
 from app.services.settings_service import (
     build_settings_response_payload,
     get_effective_settings,
@@ -57,6 +63,29 @@ async def put_settings(
 ) -> dict:
     effective = await update_settings(db, payload.settings)
     return build_settings_response_payload(effective)
+
+
+@router.get("/identity", response_model=InstitutionalIdentityResponse)
+async def get_workspace_identity(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> InstitutionalIdentityResponse:
+    """Identidade institucional do workspace (scope=user) do usuário autenticado."""
+    stored = await load_user_identity(db, user.id)
+    return identity_dict_to_response(stored)
+
+
+@router.put("/identity", response_model=InstitutionalIdentityResponse)
+async def put_workspace_identity(
+    payload: InstitutionalIdentityUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> InstitutionalIdentityResponse:
+    """Persiste identidade do workspace (upsert por usuário)."""
+    await save_user_identity(db, user.id, payload.to_storage_dict())
+    await db.commit()
+    stored = await load_user_identity(db, user.id)
+    return identity_dict_to_response(stored)
 
 
 @router.get("/voice-sample/info", response_model=VoiceSampleInfoResponse)
