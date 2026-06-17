@@ -5,7 +5,12 @@ O comportamento do agente é orquestrado por um grafo (LangGraph) que identifica
 ## Grafo de agentes
 
 Definido em `agents/orchestrator/graph.py`, o fluxo é:
-identify_intent → check_escalation → (escalate | generate_response) → send_response → END
+
+```
+START → identify_intent → check_escalation ─┬─► generate_response ─┐
+                                            │                      ├─► send_response → END
+                                            └─► escalate ──────────┘
+```
 
 | Nó | Função |
 |---|---|

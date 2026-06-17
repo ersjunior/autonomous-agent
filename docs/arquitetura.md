@@ -88,40 +88,33 @@ Para receber webhooks (Twilio e Telegram em modo webhook), o backend precisa ser
 | Eventos | Redis pub/sub (`agent_events`) | Feed em tempo real do dashboard |
 
 ## Diagrama (alto nível)
-┌──────────┐   webhook/polling   ┌─────────┐   enfileira   ┌────────┐
 
-│  Canais  │ ──────────────────► │ Backend │ ────────────► │ Redis  │
+```
+                      webhook / polling             enfileira
+  ┌───────────┐  ──────────────────────►  ┌──────────┐  ─────────►  ┌──────────┐
+  │  Canais   │                            │ Backend  │             │  Redis   │
+  │ WA/TG/Voz │  ◄──────────────────────   │ FastAPI  │             │  broker  │
+  └───────────┘         resposta           └──────────┘             └────┬─────┘
+                                                                         │ consome
+                                                                         ▼
+  ┌────────────┐        ┌──────────────┐         grafo          ┌──────────────┐
+  │ PostgreSQL │ ◄────── │  LangGraph   │ ◄────────────────────  │    Worker    │
+  │ + pgvector │         │   + RAG      │                        │    Celery    │
+  └────────────┘         └──────┬───────┘                        └──────────────┘
+                                │
+                                ▼
+                         ┌──────────────┐
+                         │    Ollama    │
+                         │  LLM + embed │
+                         └──────────────┘
+```
 
-│ TG/WA/Voz│                     │ FastAPI │               │ broker │
+- **Canais → Backend:** mensagens chegam por webhook (WhatsApp/Twilio, Telegram em modo webhook, Voz/TwiML) ou polling (Telegram).
+- **Backend → Redis:** o backend deduplica, enfileira a tarefa no broker Celery e responde imediatamente (TwiML vazio / 200 OK).
+- **Worker → LangGraph + RAG:** o worker consome a fila e invoca o grafo de agentes, que enriquece a resposta com RAG (memória do contato + base de conhecimento).
+- **LangGraph → PostgreSQL/Ollama:** o grafo lê/grava memória semântica no pgvector e usa o Ollama (ou alternativa de nuvem) para LLM e embeddings.
+- **Backend → Canais:** a resposta gerada retorna ao cliente pela API do canal.
 
-└────▲─────┘                     └─────────┘               └───┬────┘
-
-│                                                         │
-
-│ resposta                                          consome│
-
-│                                                         ▼
-
-│                          ┌──────────┐   grafo    ┌────────────┐
-
-└──────────────────────────│  Worker  │ ─────────► │  LangGraph │
-
-│  Celery  │            │  + RAG     │
-
-└──────────┘            └─────┬──────┘
-
-│
-
-┌───────────────┴────────────┐
-
-▼                            ▼
-
-┌────────────┐              ┌──────────────┐
-
-│ PostgreSQL │              │   Ollama     │
-
-│ + pgvector │              │ LLM + embed  │
-
-└────────────┘              └──────────────┘
+> No modo de nuvem (opcional), `Ollama` é substituído por OpenAI (LLM/embeddings), `faster-whisper` pela Whisper API e `Coqui` pela ElevenLabs — sem alterar o restante do fluxo.
 
 Para detalhes de cada parte, veja [backend.md](backend.md), [canais.md](canais.md), [agentes.md](agentes.md) e [infra.md](infra.md).

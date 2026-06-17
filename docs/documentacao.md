@@ -56,7 +56,10 @@ O sistema é um conjunto de microsserviços orquestrados via Docker Compose. Uma
 | `telegram-polling` | profile `telegram-polling` | Polling do Telegram (opt-in) |
 
 ### Fluxo inbound
+
+```
 Cliente → Canal → HTTP/polling → Celery → Worker → Grafo de agentes → Envio da resposta
+```
 
 1. **Recepção:** WhatsApp via `POST /api/v1/channels/webhooks/whatsapp` (com deduplicação no Redis, resposta TwiML vazia imediata); Telegram via polling (serviço dedicado) ou webhook.
 2. **Worker** identifica o lead e resolve o agente (ACTIVE/RECEPTIVE).
@@ -134,7 +137,12 @@ Acionado antes do processamento e encerrado no envio. Telegram: loop a cada ~4s.
 ## 4. Agentes e orquestração
 
 O comportamento é orquestrado por um grafo (LangGraph), em `agents/orchestrator/graph.py`:
-identify_intent → check_escalation → (escalate | generate_response) → send_response → END
+
+```
+START → identify_intent → check_escalation ─┬─► generate_response ─┐
+                                            │                      ├─► send_response → END
+                                            └─► escalate ──────────┘
+```
 
 | Nó | Função |
 |---|---|
