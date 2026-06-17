@@ -4,7 +4,9 @@ Visão geral da arquitetura do Autonomous Agent: serviços, fluxos de mensagem e
 
 ## Visão geral
 
-O sistema é um conjunto de microsserviços orquestrados via Docker Compose. Uma mensagem entra por um canal (Telegram, WhatsApp ou Voz), é processada de forma assíncrona por um worker que invoca um grafo de agentes (LangGraph), e a resposta é gerada com apoio de RAG (memória do contato + base de conhecimento) antes de retornar pelo mesmo canal.
+O sistema é um conjunto de microsserviços orquestrados via Docker Compose. Uma mensagem entra por um canal (WhatsApp, Telegram ou Voz), é processada de forma assíncrona por um worker que invoca um grafo de agentes (LangGraph), e a resposta é gerada com apoio de RAG (memória do contato + base de conhecimento) antes de retornar pelo mesmo canal.
+
+A IA é **agnóstica de provedor** e roda a **stack OSS local por padrão** (Ollama, faster-whisper, Coqui), sem chaves de API. Qualquer camada (LLM/STT/TTS/embeddings) pode ser plugada a uma **alternativa de nuvem (opcional)** por variável de ambiente, sem alterar código (`agents/provider_factory.py`).
 
 O agente opera em dois perfis de negócio:
 
@@ -21,11 +23,24 @@ O agente opera em dois perfis de negócio:
 | `celery-beat` | Celery Beat | Agendador (devolutivas, sweeps, scheduler de acionamento, fila receptiva) |
 | `postgres` | pgvector/pgvector:pg16 | Banco relacional + extensão pgvector (memória de longo prazo) |
 | `redis` | redis:7-alpine | Histórico de chat (TTL), broker/result do Celery, pub/sub de eventos, modo humano, slots de capacidade |
-| `ollama` | Ollama | LLM (llama3.1) + embeddings (nomic-embed-text) — GPU opcional |
-| `faster-whisper` | REST :8001 | STT (transcrição de voz) |
-| `coqui-tts` | REST :8002 | TTS (síntese de voz, XTTS-v2, português) |
+| `ollama` | Ollama | LLM (llama3.1) + embeddings (nomic-embed-text) — GPU NVIDIA recomendada |
+| `faster-whisper` | REST :8001 | STT (transcrição de voz) — GPU NVIDIA recomendada |
+| `coqui-tts` | REST :8002 | TTS (síntese de voz, XTTS-v2, português) — GPU NVIDIA recomendada |
 | `cloudflared` | Cloudflare Tunnel | Expõe o backend publicamente (webhooks Twilio/Telegram) |
 | `telegram-polling` | profile `telegram-polling` | Polling do Telegram (serviço separado, opt-in) |
+
+### Seleção de provedor de IA (agnóstico)
+
+A `agents/provider_factory.py` instancia o provider de cada camada a partir de variáveis de ambiente, sem alterar código:
+
+| Camada | Padrão local (OSS) | Alternativa de nuvem (opcional) | Variável |
+|---|---|---|---|
+| LLM | Ollama `llama3.1` | OpenAI `gpt-4o` | `LLM_PROVIDER` |
+| STT | faster-whisper | OpenAI Whisper API | `STT_PROVIDER` |
+| TTS | Coqui XTTS-v2 | ElevenLabs | `TTS_PROVIDER` |
+| Embeddings | Ollama `nomic-embed-text` (768d) | OpenAI `text-embedding-3-small` (1536d) | acompanha `LLM_PROVIDER` / `EMBEDDING_DIMENSIONS` |
+
+Os serviços `ollama`/`faster-whisper`/`coqui-tts` só são exercitados no modo local; ao ativar uma alternativa de nuvem, a respectiva chave (`OPENAI_API_KEY`/`ELEVENLABS_API_KEY`) passa a ser necessária.
 
 ## Fluxo inbound (mensageria)
 Cliente → Canal → HTTP/polling → Celery → Worker → Grafo de agentes → Envio da resposta
@@ -56,7 +71,13 @@ Durante a geração da resposta, o grafo consulta duas fontes de contexto:
 1. **Memória do contato (longo prazo):** busca semântica nas interações passadas daquele usuário (`interactions` + pgvector), isolada por `user_id`.
 2. **Base de conhecimento (KB):** trechos de documentos institucionais (`kb_chunks`), filtrados por documentos prontos e escopo do dono.
 
+Além do RAG, o prompt recebe a **identidade institucional** (nome, tom, contexto de negócio), resolvida em duas camadas — workspace + override por agente — e separada da KB (a identidade define *quem* o agente é; a KB guarda os *fatos*). Ver [agentes.md](agentes.md).
+
 A resposta é persistida no histórico de curto prazo (Redis) e indexada no longo prazo (pgvector) para enriquecer conversas futuras.
+
+## Exposição pública (túnel Cloudflare)
+
+Para receber webhooks (Twilio e Telegram em modo webhook), o backend precisa ser acessível publicamente. O serviço `cloudflared` provê isso em dois modos: `temporary` (quick tunnel com URL `*.trycloudflare.com` aleatória) e `named` (URL fixa em domínio próprio, recomendado). Detalhes em [infra.md](infra.md).
 
 ## Memória
 

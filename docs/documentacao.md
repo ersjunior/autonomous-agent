@@ -2,7 +2,7 @@
 
 Documento consolidado e auto-contido do projeto. Reúne, em ordem de relevância, todas as partes do sistema. Cada seção também existe como documento dedicado em `docs/`, mas aqui o conteúdo está completo.
 
-> **Resumo:** sistema multi-agente de IA para atendimento autônomo omnichannel (Telegram, WhatsApp e Voz), com IA executada localmente por padrão, orquestração por grafo (LangGraph), memória de curto e longo prazo, RAG e dashboard de gestão. Desenvolvido como TCC (ICMC-USP).
+> **Resumo:** sistema multi-agente de IA para atendimento autônomo omnichannel (WhatsApp, Telegram e Voz), **agnóstico de provedor** e com a **stack OSS local por padrão** (sem chaves de API), orquestração por grafo (LangGraph), memória de curto e longo prazo, RAG e dashboard de gestão. Desenvolvido como TCC (ICMC-USP).
 
 ## Sumário
 
@@ -24,14 +24,14 @@ Documento consolidado e auto-contido do projeto. Reúne, em ordem de relevância
 
 ## 1. Visão geral
 
-O Autonomous Agent é uma plataforma que substitui fluxos tradicionais de telemarketing por um agente de IA autônomo. Ele identifica intenções, mantém contexto conversacional, consulta uma base de conhecimento e escala para humano quando necessário, atendendo por **Telegram, WhatsApp e Voz**.
+O Autonomous Agent é uma plataforma que substitui fluxos tradicionais de telemarketing por um agente de IA autônomo. Ele identifica intenções, mantém contexto conversacional, consulta uma base de conhecimento e escala para humano quando necessário, atendendo por **WhatsApp, Telegram e Voz**.
 
 Opera em dois perfis de negócio:
 
 - **ACTIVE (ativo/outbound):** campanhas que disparam mensagens para leads.
 - **RECEPTIVE (receptivo/inbound):** atendimento de mensagens recebidas, com fila e controle de capacidade.
 
-O diferencial técnico é executar a **IA localmente por padrão** (Ollama, faster-whisper, Coqui), sem dependência obrigatória de provedores de nuvem, mantendo-os como alternativa opcional configurável.
+O diferencial técnico é ser **agnóstico de provedor**: a **stack OSS local é o padrão** (Ollama, faster-whisper, Coqui), sem chaves de API nem custo de inferência. Cada camada (LLM/STT/TTS/embeddings) pode ser plugada a uma **alternativa de nuvem (opcional)** por variável de ambiente, sem alterar código (`agents/provider_factory.py`).
 
 ---
 
@@ -166,6 +166,15 @@ Atendimentos são classificados com códigos de tabulação (padrão call center
 - **Capacidade global:** teto ponderado entre canais.
 - **Erlang C:** a tela de Capacidade dimensiona atendimentos simultâneos para um nível de serviço (planejamento).
 
+### Identidade institucional
+
+A identidade que o agente assume (nome da empresa, nome de exibição, tom, contexto de negócio, dica de saudação) é configurável e **injetada no prompt** (`agents/identity.py`). É resolvida em duas camadas, com merge campo a campo:
+
+- **Workspace:** identidade padrão do dono da conta (`GET/PUT /api/v1/settings/identity`).
+- **Override por agente:** ajustes específicos de um agente (`PATCH /api/v1/agents/{id}/identity`), que prevalecem sobre o workspace quando preenchidos.
+
+A **identidade é separada da base de conhecimento (KB):** a identidade define *quem* o agente é e o autoriza a se apresentar com aquele nome/posicionamento; a KB guarda os *fatos* (preços, prazos, políticas). Sem identidade configurada, o agente se apresenta de forma neutra; sem KB relevante, não inventa fatos.
+
 ### Memória e RAG
 
 Memória de curto prazo (Redis) e longo prazo (pgvector). O RAG combina interações passadas semelhantes (isoladas por `user_id`) com a base de conhecimento (upload → chunking → embeddings → pgvector). Sem KB relevante, o agente atua de forma neutra, sem inventar identidade — reforçado no prompt padrão. A ingestão é assíncrona (`worker/tasks/kb_ingestion.py`).
@@ -196,8 +205,8 @@ backend/app/
 | Router | Função |
 |---|---|
 | `auth` | Cadastro e login (JWT) |
-| `agents` | CRUD de agentes |
-| `channels` | CRUD de canais + webhooks + áudio outbound |
+| `agents` | CRUD de agentes + identidade por agente (`PATCH /{id}/identity`) |
+| `channels` | CRUD de canais + webhooks (WhatsApp/Telegram/Voz) + status de entrega + áudio outbound |
 | `lead_bases` | Bases, import CSV, devolutiva Excel, métricas |
 | `leads` | CRUD de leads |
 | `campaigns` | CRUD + start/stop + métricas |
@@ -206,8 +215,8 @@ backend/app/
 | `capacity` | Estimativa (hardware + Erlang C) |
 | `monitoring` | WebSocket de eventos + histórico |
 | `handoff` | Modo humano: listar, assumir, finalizar, reativar |
-| `knowledge` | CRUD de documentos KB + upload |
-| `settings` | Settings com hot-reload + amostra/teste de voz |
+| `knowledge` | CRUD de documentos KB + upload (`.txt`/`.pdf`/`.docx`) e cadastro manual |
+| `settings` | Settings com hot-reload + identidade do workspace (`/settings/identity`) + amostra/teste de voz |
 | `tabulacoes` | Catálogo de tabulações |
 | `tunnel` | Status do túnel |
 
@@ -252,16 +261,16 @@ O token JWT fica no `localStorage`; a API é configurável via `NEXT_PUBLIC_API_
 
 **Frontend:** Next.js 15, React 19, Tailwind 3, Recharts, lucide-react, next-themes.
 
-**Modelos de IA (padrão local):**
+**Modelos de IA (stack OSS, padrão local):**
 
 | Função | Provider | Modelo |
 |---|---|---|
 | LLM | Ollama | `llama3.1` |
 | Embeddings | Ollama | `nomic-embed-text` (768d) |
-| STT | faster-whisper | `large-v3` (CPU) |
+| STT | faster-whisper | `large-v3` (default; `large-v3-turbo` recomendado) |
 | TTS | Coqui | XTTS-v2 (português) |
 
-**Alternativas comerciais:** OpenAI (`LLM_PROVIDER=openai`, `STT_PROVIDER=openai`), ElevenLabs (`TTS_PROVIDER=elevenlabs`).
+GPU NVIDIA é recomendada para a stack local (CPU como fallback). **Alternativas de nuvem (opcionais):** OpenAI (`LLM_PROVIDER=openai`, `STT_PROVIDER=openai`, embeddings `text-embedding-3-small` 1536d), ElevenLabs (`TTS_PROVIDER=elevenlabs`) — exigem a respectiva chave de API só quando ativadas.
 
 **Dados:** PostgreSQL 16 + pgvector; Redis 7 (DB0 cache/eventos/handoff/slots, DB1 broker, DB2 results).
 
@@ -314,21 +323,21 @@ No modo `named`, a URL é fixa: o webhook configurado na Twilio não precisa ser
 
 Configuração via `.env` (de `.env.example`). No Docker, `DATABASE_URL`/`REDIS_URL` usam `postgres`/`redis`; fora do Compose, `localhost`.
 
-**Grupos:** Aplicação (`DEBUG`, `SECRET_KEY`), PostgreSQL, Redis/Celery, Providers de IA (`LLM_PROVIDER`, `STT_PROVIDER`, `TTS_PROVIDER`, `EMBEDDING_DIMENSIONS`), Ollama, Whisper, Coqui, Motor de acionamento, Fila receptiva, SLA/abandono, Modo humano/handoff, KB, Capacidade/Erlang, Provedores comerciais (`OPENAI_*`, `ELEVENLABS_*`), Twilio, Túnel (`TUNNEL_MODE`, `CLOUDFLARE_TUNNEL_TOKEN`, `PUBLIC_BASE_URL`), Telegram, Frontend/API.
+**Grupos:** Aplicação (`DEBUG`, `SECRET_KEY`), PostgreSQL, Redis/Celery, Seleção de provider (`LLM_PROVIDER`, `STT_PROVIDER`, `TTS_PROVIDER`, `EMBEDDING_DIMENSIONS`), Ollama, Whisper, Coqui, Motor de acionamento, Fila receptiva, SLA/abandono, Modo humano/handoff, KB, Capacidade/Erlang, Alternativas de nuvem opcionais (`OPENAI_*`, `ELEVENLABS_*`), Twilio, Túnel (`TUNNEL_MODE`, `CLOUDFLARE_TUNNEL_TOKEN`, `PUBLIC_BASE_URL`), Telegram, Frontend/API.
 
-A stack de IA local é o padrão (`LLM_PROVIDER=ollama`, `STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui`). Canais externos exigem só as credenciais correspondentes (Telegram: `TELEGRAM_BOT_TOKEN`; WhatsApp/Voz: `TWILIO_*`; webhooks: túnel). O `.env` contém segredos e não é versionado.
+A **stack OSS local é o padrão** (`LLM_PROVIDER=ollama`, `STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui`, `EMBEDDING_DIMENSIONS=768`) e **não exige nenhuma chave de API**. As chaves de nuvem (`OPENAI_API_KEY`, `ELEVENLABS_API_KEY`) só são necessárias ao ativar a respectiva alternativa. Canais externos exigem só as credenciais correspondentes (Telegram: `TELEGRAM_BOT_TOKEN`; WhatsApp/Voz: `TWILIO_*`; webhooks: túnel). O `.env` contém segredos e não é versionado.
 
 ---
 
 ## 10. Testes
 
-Pirâmide com **453 testes**:
+Pirâmide com **683 testes**:
 
 | Camada | Marcador | Quantidade |
 |---|---|---|
-| Unitários | `@pytest.mark.unit` | 136 |
-| Integração | `@pytest.mark.integration` | 104 |
-| API | `@pytest.mark.api` | 213 |
+| Unitários | `@pytest.mark.unit` | 288 |
+| Integração | `@pytest.mark.integration` | 128 |
+| API | `@pytest.mark.api` | 267 |
 
 Execução: `make test` (unit), `make test-integration` (integração), `docker exec autonomous-agent-backend pytest tests/ -v` (completa). O CI roda os três jobs a cada push, com integração aplicando migrations em banco limpo.
 
@@ -342,9 +351,9 @@ Execução: `make test` (unit), `make test-integration` (integração), `docker 
 
 ## 12. Roadmap e pendências
 
-**Voz:** validar TTS Coqui (pt) na demo; conectar inbound de voz ao vivo (Twilio Media Streams); abandono real da fila de voz. **Telefonia:** discador SIP próprio; tabulação SIP automática (StatusCallback Twilio); callbacks de status. **Agentes:** workers dedicados de escalonamento e memória (TODO). **Tools:** integrações de CRM e calendário (TODO). **Infra:** GPU opcional para STT/TTS; módulos Terraform e guias de deploy em nuvem (TODO).
+**Voz:** conectar inbound de voz ao vivo (Twilio Media Streams); abandono real da fila de voz. **Telefonia:** discador SIP próprio; tabulação SIP automática a partir do StatusCallback de chamada Twilio. **Agentes:** workers dedicados de escalonamento e memória (TODO). **Tools:** integrações de CRM e calendário (TODO). **Infra:** módulos Terraform e guias de deploy em nuvem (TODO).
 
-**Concluído recentemente:** remoção do canal de vídeo (consolidação em três canais, stack de avatar removida, enum do banco ajustado); URL pública fixa (túnel named); indicador "digitando..."; calibração do escalonamento; agente neutro.
+**Concluído recentemente:** remoção do canal de vídeo (consolidação em três canais, stack de avatar removida, enum do banco ajustado); alinhamento do padrão local em todas as camadas (config/compose/.env); aceleração por GPU (NVIDIA) no Compose; rastreamento de entrega WhatsApp (status callback); Telegram via webhook; identidade institucional configurável (workspace + override por agente); URL pública fixa (túnel named); indicador "digitando..."; calibração do escalonamento; agente neutro.
 
 ---
 
@@ -352,4 +361,4 @@ Execução: `make test` (unit), `make test-integration` (integração), `docker 
 
 Trabalho de Conclusão de Curso intitulado **"Do operador ao Agente: Transformando um atendente de telemarketing em um Agente de IA Autônomo"**, apresentado ao Instituto de Ciências Matemáticas e de Computação (ICMC) da Universidade de São Paulo (USP).
 
-O objetivo acadêmico é demonstrar a viabilidade de substituir fluxos tradicionais de telemarketing por um agente autônomo capaz de identificar intenções, manter contexto conversacional e escalar para atendimento humano quando necessário — integrando múltiplos canais de comunicação em uma arquitetura moderna baseada em microsserviços e modelos de linguagem executados localmente.
+O objetivo acadêmico é demonstrar a viabilidade de substituir fluxos tradicionais de telemarketing por um agente autônomo capaz de identificar intenções, manter contexto conversacional e escalar para atendimento humano quando necessário — integrando múltiplos canais de comunicação em uma arquitetura moderna baseada em microsserviços e **modelos de linguagem executados localmente por padrão**, mantendo a flexibilidade de plugar provedores de nuvem sem alterar código.

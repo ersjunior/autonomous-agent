@@ -76,9 +76,9 @@ COQUI_VOICE_SAMPLE=/voices/reference.wav
 
 Admin padrão (seed): `admin@admin.com` / `admin` — altere antes de produção.
 
-## Modo comercial (opcional)
+## Alternativa de nuvem (opcional)
 
-Edite `.env`:
+Para plugar uma alternativa de nuvem (sem alterar código), edite `.env`:
 
 ```env
 LLM_PROVIDER=openai

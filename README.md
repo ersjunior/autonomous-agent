@@ -21,7 +21,7 @@ A stack open source (OSS) é o **modo padrão** em **todas as camadas** (código
 | TTS (texto → voz) | Coqui XTTS-v2 | ElevenLabs | `TTS_PROVIDER=coqui \| elevenlabs` |
 | Embeddings (RAG) | Ollama `nomic-embed-text` (768d) | OpenAI `text-embedding-3-small` (1536d) | acompanha `LLM_PROVIDER`; dimensão em `EMBEDDING_DIMENSIONS` |
 
-No modo local **não é necessária nenhuma chave de API**. As chaves comerciais (`OPENAI_API_KEY`, `ELEVENLABS_API_KEY`) só são exigidas se você optar pela respectiva alternativa de nuvem.
+No modo local **não é necessária nenhuma chave de API**. As chaves de nuvem (`OPENAI_API_KEY`, `ELEVENLABS_API_KEY`) só são exigidas se você optar pela respectiva alternativa de nuvem.
 
 > Os embeddings seguem o provedor de LLM ativo: com Ollama, usam `nomic-embed-text` (768 dimensões); com OpenAI, usam `text-embedding-3-small` (1536). Ao trocar, ajuste `EMBEDDING_DIMENSIONS` de forma coerente (`768` local, `1536` OpenAI) e rode as migrations.
 

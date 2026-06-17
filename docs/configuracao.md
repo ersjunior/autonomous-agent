@@ -17,7 +17,7 @@ No Docker, `DATABASE_URL` e `REDIS_URL` usam os hostnames internos `postgres` e 
 | Aplicação | `DEBUG`, `SECRET_KEY` | Modo de execução e chave do JWT |
 | PostgreSQL | `POSTGRES_*`, `DATABASE_URL`, `TEST_DATABASE_URL`, `POSTGRES_PORT` | Banco da aplicação e de testes |
 | Redis / Celery | `REDIS_*`, `CELERY_*` | Cache, broker e backend de resultados |
-| Providers de IA | `LLM_PROVIDER`, `STT_PROVIDER`, `TTS_PROVIDER`, `EMBEDDING_DIMENSIONS` | Escolha dos provedores (padrão local) |
+| Seleção de provider | `LLM_PROVIDER`, `STT_PROVIDER`, `TTS_PROVIDER`, `EMBEDDING_DIMENSIONS` | Escolha do provider por camada (stack OSS local por padrão) |
 | Ollama | `OLLAMA_*`, `OLLAMA_KEEP_ALIVE` | LLM e embeddings locais |
 | Whisper | `WHISPER_*` | STT local (faster-whisper) |
 | Coqui | `COQUI_*` | TTS local e caminho da amostra de voz |
@@ -27,7 +27,7 @@ No Docker, `DATABASE_URL` e `REDIS_URL` usam os hostnames internos `postgres` e 
 | Modo humano / handoff | `HUMAN_MODE_*`, `HUMAN_HANDOFF_*` | Modo humano, notificação ao operador e sweeps |
 | Base de conhecimento | `KB_*` | Upload, chunking e parâmetros de recuperação |
 | Capacidade / Erlang | `CHANNEL_COST_*`, `CAPACITY_*`, `DEFAULT_AHT_SECONDS`, `ERLANG_TARGET_SERVICE_LEVEL` | Estimativa de capacidade e dimensionamento |
-| Provedores comerciais | `OPENAI_*`, `ELEVENLABS_*` | Alternativas pagas de LLM/STT/TTS |
+| Alternativas de nuvem (opcionais) | `OPENAI_*`, `ELEVENLABS_*` | Alternativas de nuvem de LLM/STT/TTS (chave exigida só se ativadas) |
 | Twilio | `TWILIO_*` | Credenciais de WhatsApp e Voz |
 | Túnel | `TUNNEL_MODE`, `CLOUDFLARE_TUNNEL_TOKEN`, `TUNNEL_URL_FILE`, `PUBLIC_BASE_URL` | Exposição pública (webhooks) |
 | Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_MODE` | Bot e modo (polling/webhook) |
@@ -48,5 +48,5 @@ Para um ambiente local mínimo (IA local, sem canais externos), bastam as config
 
 ## Notas
 
-- A stack de IA local é o padrão: `LLM_PROVIDER=ollama`, `STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui`. Trocar para provedores comerciais é questão de ajustar essas variáveis e fornecer as chaves correspondentes.
+- O sistema é **agnóstico de provedor** e a **stack OSS local é o padrão**: `LLM_PROVIDER=ollama`, `STT_PROVIDER=faster_whisper`, `TTS_PROVIDER=coqui` — sem chaves de API. Trocar para uma **alternativa de nuvem (opcional)** é questão de ajustar essas variáveis e fornecer a chave correspondente (`OPENAI_API_KEY`/`ELEVENLABS_API_KEY`), sem alterar código.
 - `EMBEDDING_DIMENSIONS` deve ser coerente com o modelo de embeddings usado (padrão `768`, do `nomic-embed-text`).

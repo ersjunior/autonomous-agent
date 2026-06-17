@@ -32,6 +32,21 @@ Quando em **modo humano**, a IA é curto-circuitada: as mensagens daquele contat
 
 Um sweep periódico (Celery Beat) devolve o atendimento ao bot após um tempo de inatividade configurável. A interface de modo humano fica na tela de Monitoramento, e há endpoints para assumir, finalizar e reativar (`/api/v1/handoff/...`).
 
+## Identidade institucional
+
+A identidade que o agente assume é **configurável** e **injetada no prompt** (`agents/identity.py`), separada da base de conhecimento. Ela define *quem* o agente é (e o autoriza a se apresentar assim); a KB guarda os *fatos* (preços, prazos, políticas).
+
+Campos: `company_name`, `display_name`, `tone`, `business_context`, `greeting_hint`.
+
+Resolução em **duas camadas**, com merge campo a campo (agente preenchido > workspace > omitido):
+
+| Camada | Escopo | Endpoint |
+|---|---|---|
+| Workspace | Identidade padrão do dono da conta | `GET/PUT /api/v1/settings/identity` |
+| Override por agente | Ajustes específicos de um agente | `PATCH /api/v1/agents/{id}/identity` |
+
+A função `resolve_identity_config` combina workspace + `agent.config.identity` antes do grafo (`enrich_agent_context_with_identity`), e `format_institutional_identity_block` monta o bloco de sistema. Sem identidade configurada, o agente se apresenta de forma neutra (sem adotar marca/empresa de terceiros).
+
 ## Tabulação
 
 Cada atendimento pode ser classificado com um código de tabulação (padrão de call center, ex.: códigos SIP/NEG). O seed cria 16 códigos iniciais. A atribuição pode ser por regra ou assistida por IA. A tabulação automática a partir de eventos de chamada (Twilio) está prevista, mas ainda não conectada — veja [roadmap.md](roadmap.md).

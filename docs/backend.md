@@ -40,8 +40,8 @@ Todas as rotas têm prefixo `/api/v1` (exceto `/health`). As rotas autenticadas 
 | Router | Função |
 |---|---|
 | `auth` | Cadastro e login (retorna JWT) |
-| `agents` | CRUD de agentes (ACTIVE/RECEPTIVE) |
-| `channels` | CRUD de canais + webhooks (WhatsApp/Telegram/Voz) + serve áudio outbound |
+| `agents` | CRUD de agentes (ACTIVE/RECEPTIVE) + identidade por agente (`PATCH /{id}/identity`) |
+| `channels` | CRUD de canais + webhooks (WhatsApp/Telegram/Voz) + status de entrega WhatsApp + serve áudio outbound |
 | `lead_bases` | Bases de leads, importação CSV, devolutiva em Excel, métricas por base |
 | `leads` | CRUD de leads |
 | `campaigns` | CRUD de campanhas + start/stop + métricas |
@@ -50,8 +50,8 @@ Todas as rotas têm prefixo `/api/v1` (exceto `/health`). As rotas autenticadas 
 | `capacity` | Estimativa de capacidade (hardware + Erlang C) |
 | `monitoring` | WebSocket de eventos em tempo real + histórico de atendimentos |
 | `handoff` | Modo humano: listar, assumir, finalizar, reativar |
-| `knowledge` | CRUD de documentos da base de conhecimento (KB) + upload |
-| `settings` | Leitura/escrita de settings com hot-reload + amostra/teste de voz |
+| `knowledge` | CRUD de documentos da base de conhecimento (KB) + upload (`.txt`/`.pdf`/`.docx`) e cadastro manual |
+| `settings` | Leitura/escrita de settings com hot-reload + identidade do workspace (`/settings/identity`) + amostra/teste de voz |
 | `tabulacoes` | Catálogo de tabulações (call center) |
 | `tunnel` | Status do túnel Cloudflare |
 
@@ -65,7 +65,7 @@ Todas as rotas têm prefixo `/api/v1` (exceto `/health`). As rotas autenticadas 
 
 ## Settings dinâmicas (hot-reload)
 
-O sistema permite alterar parâmetros de operação (provider de LLM/STT/TTS, prompts, parâmetros de RAG, voz, handoff) **sem reiniciar** os serviços.
+O sistema permite alterar parâmetros de operação (seleção de provider de LLM/STT/TTS, prompts, parâmetros de RAG, voz, handoff) **sem reiniciar** os serviços. A identidade institucional (workspace e por agente) também é editável em runtime, separada da KB.
 
 - As configurações ficam na tabela `app_settings`, restritas a uma whitelist (`MANAGED_SETTINGS`) organizada em categorias: `llm`, `stt`, `tts`, `agent`, `system`.
 - Ao salvar via `PUT /api/v1/settings`, o sistema incrementa uma versão no Redis e publica um evento de invalidação.

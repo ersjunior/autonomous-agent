@@ -54,7 +54,7 @@ frontend/src/
 | Monitoramento | Eventos em tempo real (WebSocket) + histórico de conversas + modo humano |
 | Métricas | Funil de campanha/base e fila de call center (gráficos) |
 | Capacidade | Estimativa de hardware + dimensionamento por Erlang C |
-| Configurações | Providers de IA, prompts, parâmetros de RAG, voz, handoff, status do túnel |
+| Configurações | Seleção de providers de IA, prompts/RAG, identidade da empresa, áudio (voz) e túnel |
 
 ## Autenticação
 

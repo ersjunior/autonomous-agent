@@ -8,7 +8,7 @@ Documentação técnica do projeto autonomous-agent.
 2. [Deploy local com Docker](deployment/local-docker.md) — passo a passo da stack DEV
 3. [infra/docker/README.md](../infra/docker/README.md) — compose, portas, serviços OSS
 
-O modo padrão é a stack **open source** (Ollama + faster-whisper + Coqui), sem chaves pagas de LLM/STT/TTS.
+O sistema é **agnóstico de provedor** e roda a **stack OSS local por padrão** (Ollama + faster-whisper + Coqui + `nomic-embed-text`), **sem chaves de API**. Cada camada pode ser plugada a uma **alternativa de nuvem (opcional)** por variável de ambiente, sem alterar código.
 
 ## Documentação principal
 
@@ -24,7 +24,7 @@ O modo padrão é a stack **open source** (Ollama + faster-whisper + Coqui), sem
 | [infra.md](infra.md) | Docker, Makefile, CI, Celery Beat |
 | [configuracao.md](configuracao.md) | Variáveis de ambiente |
 | [scripts.md](scripts.md) | Scripts `validate_*` |
-| [testes.md](testes.md) | Pirâmide de testes (453 testes) |
+| [testes.md](testes.md) | Pirâmide de testes (683 testes) |
 | [roadmap.md](roadmap.md) | Pendências e trabalho futuro |
 
 ## Apresentação e demo
@@ -39,7 +39,8 @@ O modo padrão é a stack **open source** (Ollama + faster-whisper + Coqui), sem
 
 | Pasta | Conteúdo |
 |-------|----------|
-| [`architecture/`](architecture/) | Visão geral do sistema, design dos agentes, diagramas |
-| [`deployment/`](deployment/) | Deploy local (Docker), AWS, Azure, GCP |
-| [`api/`](api/) | Referência da API REST |
-| [`fine-tuning/`](fine-tuning/) | Fine-tuning de LLM, STT e TTS (comercial e open source) |
+| [`architecture/`](architecture/) | Visão geral do sistema, design dos agentes, diagramas (parcialmente planejado) |
+| [`deployment/`](deployment/) | Deploy local (Docker) implementado; AWS/Azure/GCP planejados |
+| [`api/`](api/) | Referência da API REST (use `/docs` Swagger; doc dedicada planejada) |
+| [`fine-tuning/`](fine-tuning/) | Fine-tuning de LLM, STT e TTS (stack OSS e alternativas de nuvem) |
+| [`kb-templates/`](kb-templates/) | Modelos para estruturar a base de conhecimento (KB) |

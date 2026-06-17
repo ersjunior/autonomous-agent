@@ -1,6 +1,6 @@
 # Canais
 
-O sistema atende por três canais: **Telegram**, **WhatsApp** e **Voz**. Cada canal tem um caminho de entrada (inbound) e de saída (outbound), além do indicador de "digitando...".
+O sistema atende por três canais: **WhatsApp**, **Telegram** e **Voz**. Cada canal tem um caminho de entrada (inbound) e de saída (outbound), além do indicador de "digitando...".
 
 > Os canais são representados pelo enum `ChannelType` (`WHATSAPP`, `TELEGRAM`, `VOICE`). O seed cria um agente/canal padrão para cada um: `WhatsApp_Agent`, `Telegram_Agent`, `Voice_Agent`.
 
@@ -58,7 +58,8 @@ Falhas no indicador são registradas em log, mas nunca interrompem o atendimento
 | Canal | Endpoint |
 |---|---|
 | WhatsApp (inbound) | `POST /api/v1/channels/webhooks/whatsapp` |
+| WhatsApp (status de entrega) | `POST /api/v1/channels/webhooks/whatsapp/status` |
 | Telegram (inbound, modo webhook) | `POST /api/v1/channels/webhooks/telegram` |
-| Voz (outbound TwiML) | rotas sob `/api/v1/channels/webhooks/voice/...` |
+| Voz (inbound/outbound TwiML) | rotas sob `/api/v1/channels/webhooks/voice/...` |
 
 Todos os webhooks externos dependem da URL pública fornecida pelo túnel Cloudflare (veja [infra.md](infra.md)).
