@@ -32,10 +32,13 @@ def _lead() -> MagicMock:
 @pytest.mark.asyncio
 @patch("agents.channels.whatsapp.twilio_client.send_whatsapp_message", return_value="SMfree")
 @patch("worker.tasks.inbound_handler.settings")
+@patch("app.services.whatsapp_outbound.datetime")
 async def test_inbound_within_24h_uses_freeform_llm_text(
+    mock_dt,
     settings_mock,
     send_mock,
 ) -> None:
+    mock_dt.now.return_value = _NOW
     settings_mock.twilio_account_sid = "ACtest"
     settings_mock.twilio_auth_token = "token"
     settings_mock.twilio_phone_number = "+551150399542"
