@@ -16,6 +16,7 @@ from app.models.base import Base
 if TYPE_CHECKING:
     from app.models.agent_activation import AgentActivation
     from app.models.agent_channel_settings import AgentChannelSettings
+    from app.models.appointment import Appointment
     from app.models.campaign import Campaign
     from app.models.user import User
 
@@ -48,3 +49,4 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    appointments: Mapped[list["Appointment"]] = relationship(back_populates="agent")

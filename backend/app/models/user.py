@@ -14,6 +14,7 @@ from app.models.base import Base
 
 if TYPE_CHECKING:
     from app.models.agent import Agent
+    from app.models.appointment import Appointment
     from app.models.campaign import Campaign
     from app.models.channel import Channel
     from app.models.knowledge import KBDocument
@@ -46,6 +47,10 @@ class User(Base):
         cascade="all, delete-orphan",
     )
     kb_documents: Mapped[list["KBDocument"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    appointments: Mapped[list["Appointment"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )

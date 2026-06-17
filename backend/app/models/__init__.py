@@ -1,6 +1,7 @@
 """SQLAlchemy ORM models."""
 
 from app.models.agent import Agent, AgentMode
+from app.models.appointment import Appointment, AppointmentSource, AppointmentStatus
 from app.models.agent_activation import AgentActivation
 from app.models.agent_channel_settings import AgentChannelSettings
 from app.models.app_setting import AppSetting
@@ -21,6 +22,9 @@ __all__ = [
     "AgentActivation",
     "AgentChannelSettings",
     "AgentMode",
+    "Appointment",
+    "AppointmentSource",
+    "AppointmentStatus",
     "AppSetting",
     "Base",
     "Campaign",

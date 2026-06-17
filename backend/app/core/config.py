@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     whatsapp_use_templates: bool = False
     whatsapp_template_mode: str = "auto"  # auto | sandbox | production
 
+    # Appointments (internal calendar — Fase A defaults)
+    appointment_slot_minutes: int = 30
+    appointment_window_start: str = "09:00"
+    appointment_window_end: str = "18:00"
+
     # URL pública do backend (ngrok, domínio, IP, Cloudflare Tunnel) — sem barra final
     public_base_url: Optional[str] = None
 
@@ -342,5 +347,12 @@ class Settings(BaseSettings):
 
 
 ACTIVATION_TIMEZONE = "America/Sao_Paulo"
+
+# Appointments (Fase A — defaults; availability_rules table in Fase D)
+APPOINTMENT_TIMEZONE = ACTIVATION_TIMEZONE
+APPOINTMENT_DEFAULT_WEEKDAYS = frozenset({0, 1, 2, 3, 4})  # seg–sex (weekday() Monday=0)
+APPOINTMENT_DEFAULT_WINDOW_START = "09:00"
+APPOINTMENT_DEFAULT_WINDOW_END = "18:00"
+APPOINTMENT_DEFAULT_SLOT_MINUTES = 30
 
 settings = Settings()
