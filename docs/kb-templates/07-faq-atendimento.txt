@@ -1,0 +1,26 @@
+# MODELO — PERGUNTAS FREQUENTES (FAQ)
+# Cada pergunta-e-resposta em seu próprio bloco, começando pela pergunta.
+# Escreva a resposta de forma completa, pois cada bloco é buscado isoladamente.
+# Repita o formato "PERGUNTA: / Resposta." quantas vezes precisar.
+# Apague as linhas de comentário (#) antes de carregar.
+
+PERGUNTA: Quais são os horários de atendimento?
+A [NOME DA EMPRESA] atende de [DIA] a [DIA], das [HH:MM] às [HH:MM] (horário de [FUSO]). [INFORMAÇÃO SOBRE FINS DE SEMANA E FERIADOS.]
+
+PERGUNTA: Como faço para comprar / contratar?
+Para [COMPRAR/CONTRATAR] com a [NOME DA EMPRESA], o cliente deve [PASSO A PASSO RESUMIDO]. O processo leva [TEMPO ESTIMADO] e pode ser feito por [CANAIS].
+
+PERGUNTA: Quais formas de pagamento são aceitas?
+A [NOME DA EMPRESA] aceita [FORMAS DE PAGAMENTO]. [CONDIÇÕES DE PARCELAMENTO E DESCONTOS, SE HOUVER.]
+
+PERGUNTA: Vocês oferecem garantia ou posso trocar?
+[RESUMO DA POLÍTICA DE GARANTIA/TROCA: prazo e condições principais. Para detalhes completos, mantenha o arquivo de políticas comerciais.]
+
+PERGUNTA: Quanto tempo leva para entregar / começar?
+[RESUMO DO PRAZO DE ENTREGA OU IMPLANTAÇÃO. Inclua a variação por região ou plano, se houver.]
+
+PERGUNTA: Como falo com uma pessoa / atendente?
+Para falar com um atendente humano da [NOME DA EMPRESA], basta pedir durante a conversa (ex.: "quero falar com um atendente"). O atendimento humano está disponível [HORÁRIO/CONDIÇÕES].
+
+PERGUNTA: [OUTRA DÚVIDA COMUM DO SEU NEGÓCIO]
+[RESPOSTA COMPLETA E OBJETIVA. Crie um bloco para cada dúvida que sua equipe recebe com frequência — quanto mais cobrir aqui, menos o agente precisa escalar para um humano.]

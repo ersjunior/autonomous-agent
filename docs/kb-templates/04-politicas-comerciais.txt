@@ -1,0 +1,21 @@
+# MODELO — POLÍTICAS COMERCIAIS
+# Cada política em seu próprio bloco. Use linguagem clara e objetiva.
+# Apague as linhas de comentário (#) e os blocos que não se aplicam ao seu negócio.
+
+POLÍTICA DE TROCA
+A [NOME DA EMPRESA] aceita troca de [PRODUTO/ITEM] em até [N] dias após [O RECEBIMENTO/A COMPRA], desde que [CONDIÇÕES: ex. produto sem uso, com etiqueta, na embalagem original]. Para solicitar, o cliente deve [PASSO A PASSO RESUMIDO]. [QUEM ARCA COM O FRETE DA TROCA, SE APLICÁVEL.]
+
+POLÍTICA DE CANCELAMENTO
+O cancelamento de [COMPRA/ASSINATURA/SERVIÇO] pode ser feito [QUANDO E COMO]. [SE HOUVER PRAZO OU MULTA: O cancelamento dentro de [PRAZO] não gera cobrança; após esse prazo, aplica-se [REGRA/MULTA].] Para cancelar, entre em contato por [CANAL].
+
+POLÍTICA DE REEMBOLSO
+Em caso de reembolso, a [NOME DA EMPRESA] devolve [O QUE É DEVOLVIDO: valor integral ou parcial] em até [N] dias úteis, pelo mesmo meio de pagamento utilizado na compra. [CONDIÇÕES PARA O REEMBOLSO SER APROVADO.] [SE HOUVER: Direito de arrependimento de 7 dias para compras online, conforme o Código de Defesa do Consumidor.]
+
+GARANTIA
+Os [PRODUTOS/SERVIÇOS] da [NOME DA EMPRESA] têm garantia de [PERÍODO]. A garantia cobre [O QUE É COBERTO] e não cobre [O QUE NÃO É COBERTO: ex. mau uso, desgaste natural]. Para acionar a garantia, o cliente deve [COMO ACIONAR].
+
+PRIVACIDADE E DADOS PESSOAIS
+A [NOME DA EMPRESA] trata os dados pessoais dos clientes conforme a [LEI APLICÁVEL, ex. LGPD]. Coletamos [QUAIS DADOS] para [FINALIDADE] e não compartilhamos com terceiros sem consentimento, exceto [EXCEÇÕES, SE HOUVER]. O cliente pode solicitar [ACESSO/CORREÇÃO/EXCLUSÃO] dos seus dados pelo canal [CANAL/ E-MAIL DO ENCARREGADO].
+
+CONDIÇÕES GERAIS
+[OUTRAS REGRAS IMPORTANTES DO SEU NEGÓCIO: ex. idade mínima, pré-requisitos, limites de uso, regras de agendamento. Um bloco por regra.]

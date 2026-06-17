@@ -1,0 +1,22 @@
+# MODELO — PRODUTOS E SERVIÇOS
+# Descreva cada produto/serviço em seu próprio bloco (separado por linha em branco).
+# Repita o bloco "PRODUTO/SERVIÇO" quantas vezes precisar.
+# Apague as linhas de comentário (#) antes de carregar.
+
+VISÃO GERAL DA OFERTA
+A [NOME DA EMPRESA] oferece [RESUMO DO QUE A EMPRESA VENDE: ex. cursos online de tecnologia, planos de internet, consultoria contábil]. Nossos principais [PRODUTOS/SERVIÇOS/PLANOS] são [LISTAR OS PRINCIPAIS]. A seguir, os detalhes de cada um.
+
+PRODUTO/SERVIÇO: [NOME DO PRODUTO 1]
+[NOME DO PRODUTO 1] é [DESCRIÇÃO DO QUE É E PARA QUEM SERVE]. Inclui [O QUE ESTÁ INCLUÍDO: itens, funcionalidades, carga horária, quantidade]. É indicado para [PERFIL DE CLIENTE]. [DIFERENCIAL OU BENEFÍCIO PRINCIPAL].
+
+PRODUTO/SERVIÇO: [NOME DO PRODUTO 2]
+[NOME DO PRODUTO 2] é [DESCRIÇÃO]. Inclui [O QUE ESTÁ INCLUÍDO]. É indicado para [PERFIL DE CLIENTE]. [DIFERENCIAL OU BENEFÍCIO PRINCIPAL].
+
+PRODUTO/SERVIÇO: [NOME DO PRODUTO 3]
+[NOME DO PRODUTO 3] é [DESCRIÇÃO]. Inclui [O QUE ESTÁ INCLUÍDO]. É indicado para [PERFIL DE CLIENTE]. [DIFERENCIAL OU BENEFÍCIO PRINCIPAL].
+
+DIFERENCIAIS DA [NOME DA EMPRESA]
+O que distingue a [NOME DA EMPRESA] dos concorrentes é [DIFERENCIAIS: ex. atendimento personalizado, garantia estendida, certificação reconhecida, suporte 24h]. [DETALHE OS DIFERENCIAIS EM UMA OU DUAS FRASES.]
+
+PARA QUEM NÃO SERVE / O QUE NÃO OFERECEMOS
+A [NOME DA EMPRESA] não oferece [O QUE ESTÁ FORA DO ESCOPO]. [SE APLICÁVEL: Para [NECESSIDADE FORA DO ESCOPO], recomendamos [ALTERNATIVA OU ENCAMINHAMENTO].] Esse bloco ajuda o agente a ser honesto quando a pergunta foge do que a empresa faz.

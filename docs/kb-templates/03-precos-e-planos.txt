@@ -1,0 +1,25 @@
+# MODELO — PREÇOS E PLANOS
+# Coloque cada plano/valor em seu próprio bloco. Seja específico com números.
+# Mantenha estes dados sempre atualizados: o agente responde exatamente o que estiver aqui.
+# Apague as linhas de comentário (#) antes de carregar.
+
+VISÃO GERAL DE PREÇOS
+Os valores da [NOME DA EMPRESA] variam conforme [O QUE DEFINE O PREÇO: plano, quantidade, duração]. A seguir estão os preços vigentes. [SE APLICÁVEL: Valores válidos a partir de [DATA] e sujeitos a alteração.]
+
+PREÇO: [NOME DO PLANO/PRODUTO 1]
+O [NOME DO PLANO/PRODUTO 1] custa [VALOR] [POR PERÍODO, ex. por mês / à vista / por unidade]. [O QUE ESTÁ INCLUÍDO NESSE VALOR]. [SE HOUVER: Parcelável em até [N]x de [VALOR] sem juros.]
+
+PREÇO: [NOME DO PLANO/PRODUTO 2]
+O [NOME DO PLANO/PRODUTO 2] custa [VALOR] [POR PERÍODO]. [O QUE ESTÁ INCLUÍDO]. [CONDIÇÕES DE PARCELAMENTO, SE HOUVER.]
+
+PREÇO: [NOME DO PLANO/PRODUTO 3]
+O [NOME DO PLANO/PRODUTO 3] custa [VALOR] [POR PERÍODO]. [O QUE ESTÁ INCLUÍDO]. [CONDIÇÕES DE PARCELAMENTO, SE HOUVER.]
+
+FORMAS DE PAGAMENTO
+A [NOME DA EMPRESA] aceita as seguintes formas de pagamento: [LISTAR: PIX, cartão de crédito, cartão de débito, boleto bancário, transferência]. [SE HOUVER: No PIX há [DESCONTO]% de desconto.] [CONDIÇÕES DE PARCELAMENTO NO CARTÃO.]
+
+DESCONTOS E PROMOÇÕES
+[SE HOUVER: A [NOME DA EMPRESA] oferece desconto de [VALOR/PERCENTUAL] para [CONDIÇÃO: ex. pagamento à vista, primeira compra, indicação, plano anual]. [REGRAS E VALIDADE DA PROMOÇÃO.] | SE NÃO HOUVER: remova este bloco.]
+
+TESTE GRATUITO / DEMONSTRAÇÃO
+[SE APLICÁVEL: A [NOME DA EMPRESA] oferece [TESTE GRÁTIS DE N DIAS / DEMONSTRAÇÃO / AMOSTRA]. Para começar, basta [COMO SOLICITAR]. [O QUE ESTÁ INCLUÍDO NO TESTE E O QUE NÃO ESTÁ.] | SE NÃO HOUVER: remova este bloco.]

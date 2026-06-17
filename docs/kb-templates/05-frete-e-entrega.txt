@@ -1,0 +1,22 @@
+# MODELO — FRETE, ENTREGA E PRAZOS
+# Para empresas de produto físico, foque em frete/entrega.
+# Para serviços/SaaS, adapte para prazos de implantação/início.
+# Apague as linhas de comentário (#) e os blocos que não se aplicam.
+
+REGIÕES ATENDIDAS
+A [NOME DA EMPRESA] entrega para [REGIÕES/ESTADOS/PAÍSES]. [SE HOUVER RESTRIÇÃO: Não entregamos em [REGIÕES NÃO ATENDIDAS].] [SE FOR SERVIÇO: Atendemos clientes em [REGIÃO/REMOTAMENTE].]
+
+CUSTO DE FRETE
+O frete é calculado por [CRITÉRIO: CEP, peso, valor da compra]. [SE HOUVER FRETE FIXO POR REGIÃO: Para a região [REGIÃO], o frete é [VALOR]. Para [OUTRA REGIÃO], [VALOR].] [SE HOUVER FRETE GRÁTIS: Frete grátis para compras acima de [VALOR] ou para a região [REGIÃO].]
+
+PRAZO DE ENTREGA
+O prazo de entrega é de [N] a [N] dias úteis após [A CONFIRMAÇÃO DO PAGAMENTO/O ENVIO], dependendo da região. [SE HOUVER OPÇÃO EXPRESSA: Há opção de entrega expressa em [PRAZO] por [VALOR ADICIONAL].]
+
+RASTREAMENTO DO PEDIDO
+Após o envio, a [NOME DA EMPRESA] disponibiliza o código de rastreamento por [CANAL: e-mail, WhatsApp, painel do cliente]. O cliente pode acompanhar o pedido em [ONDE/COMO]. Em caso de atraso, [O QUE FAZER / COMO A EMPRESA PROCEDE].
+
+PRAZO DE IMPLANTAÇÃO / INÍCIO DO SERVIÇO
+[PARA SERVIÇOS/SAAS: Após a contratação, o início do [SERVIÇO/ACESSO] ocorre em [PRAZO]. O processo de implantação inclui [ETAPAS] e leva em média [TEMPO]. | PARA PRODUTO FÍSICO: remova este bloco.]
+
+RETIRADA NO LOCAL
+[SE HOUVER: O cliente pode retirar o pedido diretamente em [ENDEREÇO], de [DIA] a [DIA], das [HH:MM] às [HH:MM], apresentando [DOCUMENTO/COMPROVANTE]. | SE NÃO HOUVER: remova este bloco.]

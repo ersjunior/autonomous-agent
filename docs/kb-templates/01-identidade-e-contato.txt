@@ -1,0 +1,22 @@
+# MODELO — IDENTIDADE E CONTATO
+# Substitua os campos entre colchetes pelos dados da sua empresa.
+# Apague estas linhas de comentário (que começam com #) e os blocos que não se aplicam.
+# Mantenha uma linha em branco entre cada bloco. Escreva frases completas e autoexplicativas.
+
+SOBRE A [NOME DA EMPRESA]
+A [NOME DA EMPRESA] é uma [DESCRIÇÃO DO NEGÓCIO: ex. loja de calçados, escola de idiomas, software de gestão] que atende [PÚBLICO/REGIÃO]. Atuamos desde [ANO] oferecendo [O QUE A EMPRESA FAZ EM UMA FRASE]. Nosso objetivo é [PROPOSTA DE VALOR / O QUE PROMETEMOS AO CLIENTE].
+
+HORÁRIO DE ATENDIMENTO
+O atendimento da [NOME DA EMPRESA] funciona de [DIA INICIAL] a [DIA FINAL], das [HH:MM] às [HH:MM] (horário de [FUSO/REGIÃO]). [SE HOUVER: Aos sábados atendemos das [HH:MM] às [HH:MM].] Não há atendimento em [DIAS SEM ATENDIMENTO, ex. domingos e feriados nacionais].
+
+CANAIS DE ATENDIMENTO
+Você pode falar com a [NOME DA EMPRESA] pelos seguintes canais: WhatsApp no número [NÚMERO], telefone [NÚMERO], e-mail [E-MAIL] e pelo site [ENDEREÇO DO SITE]. O canal mais rápido para dúvidas é [CANAL PREFERENCIAL].
+
+ENDEREÇO E LOCALIZAÇÃO
+[SE TIVER LOJA/UNIDADE FÍSICA: A [NOME DA EMPRESA] fica em [ENDEREÇO COMPLETO: rua, número, bairro, cidade, estado, CEP]. Pontos de referência: [REFERÊNCIAS]. | SE FOR 100% ONLINE: O atendimento da [NOME DA EMPRESA] é totalmente online; não temos loja física.]
+
+REDES SOCIAIS
+Acompanhe a [NOME DA EMPRESA] nas redes sociais: Instagram [@PERFIL], Facebook [PÁGINA], LinkedIn [PÁGINA]. Publicamos [TIPO DE CONTEÚDO: novidades, promoções, conteúdo educativo] regularmente.
+
+IDIOMAS DE ATENDIMENTO
+O atendimento é realizado em [IDIOMA(S)]. [SE APLICÁVEL: Também atendemos em [OUTRO IDIOMA] mediante solicitação.]

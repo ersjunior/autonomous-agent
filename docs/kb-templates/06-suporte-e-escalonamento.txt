@@ -1,0 +1,21 @@
+# MODELO — SUPORTE E ESCALONAMENTO
+# Define como o cliente obtém suporte e quando o atendimento passa para um humano.
+# Apague as linhas de comentário (#) e os blocos que não se aplicam.
+
+CANAIS DE SUPORTE
+O suporte da [NOME DA EMPRESA] está disponível por [CANAIS: WhatsApp, e-mail, telefone, chat do site]. O horário de suporte é [HORÁRIO]. Para questões [TIPO: técnicas, financeiras, comerciais], use preferencialmente [CANAL ESPECÍFICO].
+
+PRAZO DE RESPOSTA (SLA)
+A [NOME DA EMPRESA] responde solicitações de suporte em até [PRAZO: ex. 24 horas úteis]. [SE HOUVER NÍVEIS: Para clientes do plano [PLANO], o prazo é de [PRAZO MENOR].] Casos urgentes envolvendo [SITUAÇÃO] são tratados com prioridade.
+
+QUANDO FALAR COM UM ATENDENTE HUMANO
+O cliente pode pedir atendimento humano a qualquer momento dizendo, por exemplo, "quero falar com um atendente". O atendimento humano da [NOME DA EMPRESA] está disponível [HORÁRIO/CONDIÇÕES]. [O QUE ACONTECE AO SOLICITAR: ex. a conversa é transferida para a equipe e alguém responde em [PRAZO].]
+
+PROBLEMAS TÉCNICOS COMUNS
+[SE APLICÁVEL: Para problemas como [PROBLEMA COMUM], o cliente pode resolver sozinho seguindo [PASSO A PASSO RESUMIDO]. Se não resolver, [COMO ESCALAR]. Repita um bloco por problema frequente. | SE NÃO APLICÁVEL: remova este bloco.]
+
+RECLAMAÇÕES E OUVIDORIA
+Reclamações podem ser registradas por [CANAL]. A [NOME DA EMPRESA] se compromete a [COMO TRATA RECLAMAÇÕES E EM QUE PRAZO]. [SE HOUVER OUVIDORIA OU CANAL FORMAL: detalhe aqui.]
+
+ACOMPANHAMENTO PÓS-VENDA
+[SE APLICÁVEL: Após a [COMPRA/CONTRATAÇÃO], a [NOME DA EMPRESA] oferece [O QUE: onboarding, acompanhamento, treinamento]. O cliente pode contar com [RECURSO DE PÓS-VENDA]. | SE NÃO APLICÁVEL: remova este bloco.]
