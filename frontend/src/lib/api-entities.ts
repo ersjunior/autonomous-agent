@@ -14,6 +14,12 @@ import type {
   TabulacaoCreatePayload,
   TabulacaoUpdatePayload,
 } from "@/lib/types/tabulacoes";
+import type {
+  Appointment,
+  AppointmentCreatePayload,
+  AppointmentListFilters,
+  AppointmentUpdatePayload,
+} from "@/lib/types/appointment";
 
 async function parseError(res: Response, context: string): Promise<never> {
   throw new Error(await formatApiError(res, context));
@@ -265,4 +271,73 @@ export async function deleteKnowledgeDocument(id: string): Promise<void> {
   if (!res.ok) {
     await parseError(res, "Erro ao excluir documento");
   }
+}
+
+function buildAppointmentsQuery(filters?: AppointmentListFilters): string {
+  const params = new URLSearchParams();
+  if (filters?.status) {
+    params.set("status", filters.status);
+  }
+  if (filters?.lead_id) {
+    params.set("lead_id", filters.lead_id);
+  }
+  if (filters?.from) {
+    params.set("from", filters.from);
+  }
+  if (filters?.to) {
+    params.set("to", filters.to);
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function fetchAppointments(
+  filters?: AppointmentListFilters,
+): Promise<Appointment[]> {
+  const res = await apiFetch(`/api/v1/appointments/${buildAppointmentsQuery(filters)}`);
+  if (!res.ok) {
+    await parseError(res, "Erro ao listar agendamentos");
+  }
+  return res.json();
+}
+
+export async function createAppointment(
+  payload: AppointmentCreatePayload,
+): Promise<Appointment> {
+  const res = await apiFetch("/api/v1/appointments/", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    if (res.status === 409) {
+      throw new Error(
+        "Este horário já está ocupado. Escolha outro intervalo ou cancele o agendamento existente.",
+      );
+    }
+    await parseError(res, "Erro ao criar agendamento");
+  }
+  return res.json();
+}
+
+export async function updateAppointment(
+  id: string,
+  payload: AppointmentUpdatePayload,
+): Promise<Appointment> {
+  const res = await apiFetch(`/api/v1/appointments/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    if (res.status === 409) {
+      throw new Error(
+        "Este horário já está ocupado. Escolha outro intervalo.",
+      );
+    }
+    await parseError(res, "Erro ao atualizar agendamento");
+  }
+  return res.json();
+}
+
+export async function cancelAppointment(id: string): Promise<Appointment> {
+  return updateAppointment(id, { status: "CANCELLED" });
 }

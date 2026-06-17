@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/agents", label: "Agentes", icon: "bot" },
   { href: "/dashboard/campaigns", label: "Campanhas", icon: "megaphone" },
   { href: "/dashboard/tabulacoes", label: "Tabulações", icon: "tag" },
+  { href: "/dashboard/appointments", label: "Agendamentos", icon: "calendar" },
   { href: "/dashboard/activation", label: "Acionamento", icon: "activation" },
   { href: "/dashboard/knowledge", label: "Conhecimento", icon: "book" },
   { href: "/dashboard/monitoring", label: "Monitoramento", icon: "activity" },
@@ -119,6 +120,13 @@ function NavIcon({ name }: { name: (typeof NAV_ITEMS)[number]["icon"] }) {
         <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+      );
+    case "calendar":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="4" width="18" height="18" rx="2" />
+          <path d="M16 2v4M8 2v4M3 10h18" />
         </svg>
       );
   }

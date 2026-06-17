@@ -60,3 +60,23 @@ async def foreign_tabulacao_id(db_session) -> uuid.UUID:
     db_session.add(tab)
     await db_session.flush()
     return tab.id
+
+
+async def foreign_appointment_id(db_session) -> uuid.UUID:
+    from datetime import datetime, timezone
+
+    from app.services.appointment_service import create_appointment
+
+    ctx = await foreign_owner_context(db_session, suffix="foreign-appt")
+    starts = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    ends = datetime(2026, 8, 1, 12, 30, tzinfo=timezone.utc)
+    appt = await create_appointment(
+        db_session,
+        ctx.user.id,
+        ctx.lead.id,
+        starts,
+        ends,
+        title="Foreign",
+    )
+    await db_session.flush()
+    return appt.id

@@ -175,15 +175,18 @@ async def _fetch_blocking_appointments(
     user_id: uuid.UUID,
     from_dt: datetime,
     to_dt: datetime,
+    *,
+    exclude_appointment_id: uuid.UUID | None = None,
 ) -> list[Appointment]:
-    result = await session.execute(
-        select(Appointment).where(
-            Appointment.user_id == user_id,
-            Appointment.status.in_(ACTIVE_BLOCKING_STATUSES),
-            Appointment.starts_at < ensure_utc(to_dt),
-            Appointment.ends_at > ensure_utc(from_dt),
-        )
+    query = select(Appointment).where(
+        Appointment.user_id == user_id,
+        Appointment.status.in_(ACTIVE_BLOCKING_STATUSES),
+        Appointment.starts_at < ensure_utc(to_dt),
+        Appointment.ends_at > ensure_utc(from_dt),
     )
+    if exclude_appointment_id is not None:
+        query = query.where(Appointment.id != exclude_appointment_id)
+    result = await session.execute(query)
     return list(result.scalars().all())
 
 
@@ -326,3 +329,69 @@ async def list_appointments(
     query = query.order_by(Appointment.starts_at.asc())
     result = await session.execute(query)
     return list(result.scalars().all())
+
+
+async def get_appointment_for_tenant(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    appointment_id: uuid.UUID,
+) -> Appointment:
+    appointment = await session.get(Appointment, appointment_id)
+    if appointment is None:
+        raise AppointmentNotFoundError("Appointment not found")
+    if appointment.user_id != user_id:
+        raise AppointmentOwnershipError("Appointment does not belong to tenant")
+    return appointment
+
+
+async def update_appointment(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    appointment_id: uuid.UUID,
+    *,
+    status: AppointmentStatus | str | None = None,
+    notes: str | None = None,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    unset_notes: bool = False,
+) -> Appointment:
+    appointment = await get_appointment_for_tenant(session, user_id, appointment_id)
+
+    new_starts = ensure_utc(starts_at) if starts_at is not None else appointment.starts_at
+    new_ends = ensure_utc(ends_at) if ends_at is not None else appointment.ends_at
+    if new_ends <= new_starts:
+        raise AppointmentError("ends_at must be after starts_at")
+
+    rescheduling = (
+        starts_at is not None and ensure_utc(starts_at) != appointment.starts_at
+    ) or (ends_at is not None and ensure_utc(ends_at) != appointment.ends_at)
+
+    if rescheduling:
+        blocking = await _fetch_blocking_appointments(
+            session,
+            user_id,
+            new_starts,
+            new_ends,
+            exclude_appointment_id=appointment.id,
+        )
+        for existing in blocking:
+            if intervals_overlap(new_starts, new_ends, existing.starts_at, existing.ends_at):
+                raise AppointmentSlotConflictError(
+                    "Slot overlaps an existing appointment for this tenant"
+                )
+        appointment.starts_at = new_starts
+        appointment.ends_at = new_ends
+
+    if status is not None:
+        status_value = status.value if isinstance(status, AppointmentStatus) else str(status)
+        appointment.status = status_value
+
+    if unset_notes:
+        appointment.notes = None
+    elif notes is not None:
+        appointment.notes = notes
+
+    appointment.updated_at = datetime.now(timezone.utc)
+    await session.flush()
+    await session.refresh(appointment)
+    return appointment
