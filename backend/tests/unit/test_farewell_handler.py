@@ -36,12 +36,18 @@ def _voice_state(**overrides) -> dict:
 
 
 def test_farewell_explicit_sets_hangup() -> None:
-    with patch(
-        "agents.orchestrator.farewell_handler.get_booking_state",
-        return_value=None,
+    with (
+        patch(
+            "agents.orchestrator.farewell_handler.get_booking_state",
+            return_value=None,
+        ),
+        patch(
+            "agents.orchestrator.farewell_handler.clear_wrap_up_pending",
+        ) as clear_wrap,
     ):
         result = process_farewell_turn(_voice_state(message="tchau"))
 
+    clear_wrap.assert_called_once_with("CA-farewell-test")
     assert result.get("should_hangup") is True
     assert result.get("response") == VOICE_FAREWELL_PHRASE
     assert result.get("intent") == "farewell"

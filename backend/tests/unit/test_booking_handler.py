@@ -80,7 +80,10 @@ def mock_redis():
     client.setex = setex
     client.get = get
     client.delete = delete
-    with patch.object(bs, "_get_redis", return_value=client):
+    with (
+        patch.object(bs, "_get_redis", return_value=client),
+        patch("app.services.voice_call_state._get_redis", return_value=client),
+    ):
         yield store
 
 
@@ -220,7 +223,9 @@ async def test_voice_restart_booking_after_done(mock_redis) -> None:
         new=AsyncMock(
             return_value={"ok": True, "appointment": {"id": str(uuid4())}}
         ),
-    ):
+    ), patch(
+        "app.services.voice_call_state.set_wrap_up_pending",
+    ) as set_wrap:
         done_result = await process_booking_turn(
             _base_state(
                 channel="voice",
@@ -230,6 +235,7 @@ async def test_voice_restart_booking_after_done(mock_redis) -> None:
             )
         )
 
+    set_wrap.assert_called_once_with("CA-restart", from_number="+5511999999999")
     assert done_result.get("booking_phase") == "done"
     assert bs.get_booking_state("voice", "+5511999999999") is None
 
