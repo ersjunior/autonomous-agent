@@ -49,6 +49,20 @@ export async function updateAgent(id: string, payload: AgentUpdatePayload): Prom
   return res.json();
 }
 
+export async function updateAgentIdentity(
+  id: string,
+  payload: import("@/lib/types/identity").InstitutionalIdentityUpdate,
+): Promise<import("@/lib/types/identity").InstitutionalIdentity> {
+  const res = await apiFetch(`/api/v1/agents/${id}/identity`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    await parseError(res, "Erro ao salvar identidade do agente");
+  }
+  return res.json();
+}
+
 export async function deleteAgent(id: string): Promise<void> {
   const res = await apiFetch(`/api/v1/agents/${id}`, { method: "DELETE" });
   if (!res.ok) {

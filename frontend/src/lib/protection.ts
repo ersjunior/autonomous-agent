@@ -2,6 +2,8 @@ export interface RecordActions {
   canView: boolean;
   canEdit: boolean;
   canDelete: boolean;
+  /** Override de identidade em agentes is_system (demais campos permanecem read-only). */
+  canEditIdentity?: boolean;
 }
 
 export interface OwnableRecord {
@@ -13,6 +15,24 @@ export function actionsFor(record: OwnableRecord): RecordActions {
     return { canView: true, canEdit: false, canDelete: false };
   }
   return { canView: true, canEdit: true, canDelete: true };
+}
+
+/** Agentes is_system: só config.identity é editável; nome/modo/config geral permanecem protegidos. */
+export function agentActionsFor(record: OwnableRecord): RecordActions {
+  if (record.is_system) {
+    return {
+      canView: true,
+      canEdit: false,
+      canDelete: false,
+      canEditIdentity: true,
+    };
+  }
+  return {
+    canView: true,
+    canEdit: true,
+    canDelete: true,
+    canEditIdentity: true,
+  };
 }
 
 /** Campanhas is_system: editáveis e operáveis pelo dono; exclusão bloqueada. */

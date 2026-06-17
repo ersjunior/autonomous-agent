@@ -1,14 +1,23 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   createAgent,
   deleteAgent,
   fetchAgents,
   updateAgent,
+  updateAgentIdentity,
 } from "@/lib/api-entities";
-import { actionsFor } from "@/lib/protection";
+import { agentActionsFor } from "@/lib/protection";
 import type { Agent, AgentMode } from "@/lib/types/agents";
+import {
+  configWithoutIdentity,
+  formValuesToIdentityUpdate,
+  identityFromAgentConfig,
+  identityToFormValues,
+} from "@/lib/types/identity";
+import type { InstitutionalIdentity } from "@/lib/types/identity";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { ConfirmDeleteModal } from "@/components/ui/ConfirmDeleteModal";
@@ -21,6 +30,55 @@ const AGENT_MODES: AgentMode[] = ["ACTIVE", "RECEPTIVE"];
 
 type FormMode = "create" | "edit" | "view" | null;
 
+function populateAgentForm(agent: Agent | null) {
+  const config = agent?.config ?? {};
+  return {
+    name: agent?.name ?? "",
+    description: agent?.description ?? "",
+    mode: agent?.mode ?? ("RECEPTIVE" as AgentMode),
+    identityValues: identityToFormValues(identityFromAgentConfig(config)),
+    configJson: JSON.stringify(configWithoutIdentity(config), null, 2),
+  };
+}
+
+function identityPatchFromForm(
+  values: Record<keyof InstitutionalIdentity, string>
+): ReturnType<typeof formValuesToIdentityUpdate> {
+  return formValuesToIdentityUpdate(values);
+}
+
+function buildConfigWithIdentity(
+  configJson: string,
+  identityValues: Record<keyof InstitutionalIdentity, string>
+): Record<string, unknown> | null {
+  let config: Record<string, unknown> = {};
+  try {
+    config = configJson.trim() ? JSON.parse(configJson) : {};
+  } catch {
+    return null;
+  }
+  return mergeIdentityIntoConfig(config, identityPatchFromForm(identityValues));
+}
+
+function mergeIdentityIntoConfig(
+  config: Record<string, unknown>,
+  identityPayload: ReturnType<typeof formValuesToIdentityUpdate>
+): Record<string, unknown> {
+  const merged = { ...config };
+  const identity: Record<string, string> = {};
+  for (const [key, value] of Object.entries(identityPayload)) {
+    if (value != null) {
+      identity[key] = value;
+    }
+  }
+  if (Object.keys(identity).length > 0) {
+    merged.identity = identity;
+  } else {
+    delete merged.identity;
+  }
+  return merged;
+}
+
 export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +87,11 @@ export default function AgentsPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [mode, setMode] = useState<AgentMode>("RECEPTIVE");
+  const [identityValues, setIdentityValues] = useState(
+    identityToFormValues(null)
+  );
   const [configJson, setConfigJson] = useState("{}");
+  const [advancedConfigOpen, setAdvancedConfigOpen] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -58,10 +120,13 @@ export default function AgentsPage() {
 
   function openCreate() {
     setSelected(null);
-    setName("");
-    setDescription("");
-    setMode("RECEPTIVE");
-    setConfigJson("{}");
+    const form = populateAgentForm(null);
+    setName(form.name);
+    setDescription(form.description);
+    setMode(form.mode);
+    setIdentityValues(form.identityValues);
+    setConfigJson(form.configJson);
+    setAdvancedConfigOpen(false);
     setFormMode("create");
     setError("");
     setSuccess("");
@@ -69,20 +134,26 @@ export default function AgentsPage() {
 
   function openView(agent: Agent) {
     setSelected(agent);
-    setName(agent.name);
-    setDescription(agent.description ?? "");
-    setMode(agent.mode);
-    setConfigJson(JSON.stringify(agent.config ?? {}, null, 2));
+    const form = populateAgentForm(agent);
+    setName(form.name);
+    setDescription(form.description);
+    setMode(form.mode);
+    setIdentityValues(form.identityValues);
+    setConfigJson(form.configJson);
+    setAdvancedConfigOpen(false);
     setFormMode("view");
     setError("");
   }
 
   function openEdit(agent: Agent) {
     setSelected(agent);
-    setName(agent.name);
-    setDescription(agent.description ?? "");
-    setMode(agent.mode);
-    setConfigJson(JSON.stringify(agent.config ?? {}, null, 2));
+    const form = populateAgentForm(agent);
+    setName(form.name);
+    setDescription(form.description);
+    setMode(form.mode);
+    setIdentityValues(form.identityValues);
+    setConfigJson(form.configJson);
+    setAdvancedConfigOpen(false);
     setFormMode("edit");
     setError("");
     setSuccess("");
@@ -99,17 +170,26 @@ export default function AgentsPage() {
     setSuccess("");
     setSubmitting(true);
 
-    let config: Record<string, unknown> = {};
+    let operationalConfig: Record<string, unknown> = {};
     try {
-      config = configJson.trim() ? JSON.parse(configJson) : {};
+      operationalConfig = configJson.trim() ? JSON.parse(configJson) : {};
     } catch {
       setError("Config inválido: use JSON válido.");
       setSubmitting(false);
       return;
     }
 
+    const identityPayload = identityPatchFromForm(identityValues);
+    const isSystemAgent = Boolean(selected?.is_system);
+
     try {
       if (formMode === "create") {
+        const config = buildConfigWithIdentity(configJson, identityValues);
+        if (!config) {
+          setError("Config inválido: use JSON válido.");
+          setSubmitting(false);
+          return;
+        }
         await createAgent({
           name,
           description: description || null,
@@ -118,13 +198,18 @@ export default function AgentsPage() {
         });
         setSuccess("Agente criado com sucesso.");
       } else if (formMode === "edit" && selected) {
-        await updateAgent(selected.id, {
-          name,
-          description: description || null,
-          mode,
-          config,
-        });
-        setSuccess("Agente atualizado com sucesso.");
+        await updateAgentIdentity(selected.id, identityPayload);
+        if (!isSystemAgent) {
+          await updateAgent(selected.id, {
+            name,
+            description: description || null,
+            mode,
+            config: mergeIdentityIntoConfig(operationalConfig, identityPayload),
+          });
+          setSuccess("Agente atualizado com sucesso.");
+        } else {
+          setSuccess("Identidade do agente salva com sucesso.");
+        }
       }
       closeForm();
       await loadAgents();
@@ -154,6 +239,10 @@ export default function AgentsPage() {
   }
 
   const readOnly = formMode === "view";
+  const isSystemAgent = Boolean(selected?.is_system);
+  const coreFieldsReadOnly = readOnly || isSystemAgent;
+  const identityEditable = !readOnly;
+  const configJsonReadOnly = readOnly || isSystemAgent;
   const showInlineForm = formMode === "create";
 
   return (
@@ -178,12 +267,20 @@ export default function AgentsPage() {
             name={name}
             description={description}
             mode={mode}
+            identityValues={identityValues}
             configJson={configJson}
-            readOnly={false}
+            advancedConfigOpen={advancedConfigOpen}
+            coreFieldsReadOnly={false}
+            identityEditable
+            configJsonReadOnly={false}
             onNameChange={setName}
             onDescriptionChange={setDescription}
             onModeChange={setMode}
+            onIdentityChange={(key, value) =>
+              setIdentityValues((prev) => ({ ...prev, [key]: value }))
+            }
             onConfigChange={setConfigJson}
+            onAdvancedConfigToggle={() => setAdvancedConfigOpen((v) => !v)}
             onSubmit={handleSubmit}
             submitting={submitting}
             submitLabel="Salvar agente"
@@ -214,7 +311,7 @@ export default function AgentsPage() {
             </thead>
             <tbody className="divide-y divide-border">
               {agents.map((agent) => {
-                const actions = actionsFor(agent);
+                const actions = agentActionsFor(agent);
                 return (
                   <tr key={agent.id} className="transition hover:bg-muted/30">
                     <td className="px-6 py-4 text-sm">
@@ -258,9 +355,11 @@ export default function AgentsPage() {
         title={
           formMode === "view"
             ? "Visualizar agente"
-            : formMode === "edit"
-              ? "Editar agente"
-              : ""
+            : formMode === "edit" && isSystemAgent
+              ? "Editar identidade do agente"
+              : formMode === "edit"
+                ? "Editar agente"
+                : ""
         }
         onClose={closeForm}
         wide={formMode === "view"}
@@ -269,15 +368,27 @@ export default function AgentsPage() {
           name={name}
           description={description}
           mode={mode}
+          identityValues={identityValues}
           configJson={configJson}
-          readOnly={readOnly}
+          advancedConfigOpen={advancedConfigOpen}
+          coreFieldsReadOnly={coreFieldsReadOnly}
+          identityEditable={identityEditable}
+          configJsonReadOnly={configJsonReadOnly}
           onNameChange={setName}
           onDescriptionChange={setDescription}
           onModeChange={setMode}
+          onIdentityChange={(key, value) =>
+            setIdentityValues((prev) => ({ ...prev, [key]: value }))
+          }
           onConfigChange={setConfigJson}
+          onAdvancedConfigToggle={() => setAdvancedConfigOpen((v) => !v)}
           onSubmit={handleSubmit}
           submitting={submitting}
-          submitLabel="Salvar alterações"
+          submitLabel={
+            isSystemAgent && formMode === "edit"
+              ? "Salvar identidade"
+              : "Salvar alterações"
+          }
           hideSubmit={readOnly}
         />
       </Modal>
@@ -298,12 +409,18 @@ function AgentFormFields({
   name,
   description,
   mode,
+  identityValues,
   configJson,
-  readOnly,
+  advancedConfigOpen,
+  coreFieldsReadOnly,
+  identityEditable,
+  configJsonReadOnly,
   onNameChange,
   onDescriptionChange,
   onModeChange,
+  onIdentityChange,
   onConfigChange,
+  onAdvancedConfigToggle,
   onSubmit,
   submitting,
   submitLabel,
@@ -312,12 +429,18 @@ function AgentFormFields({
   name: string;
   description: string;
   mode: AgentMode;
+  identityValues: Record<keyof InstitutionalIdentity, string>;
   configJson: string;
-  readOnly: boolean;
+  advancedConfigOpen: boolean;
+  coreFieldsReadOnly: boolean;
+  identityEditable: boolean;
+  configJsonReadOnly: boolean;
   onNameChange: (v: string) => void;
   onDescriptionChange: (v: string) => void;
   onModeChange: (v: AgentMode) => void;
+  onIdentityChange: (key: keyof InstitutionalIdentity, value: string) => void;
   onConfigChange: (v: string) => void;
+  onAdvancedConfigToggle: () => void;
   onSubmit: (e: FormEvent) => void;
   submitting: boolean;
   submitLabel: string;
@@ -333,7 +456,7 @@ function AgentFormFields({
           id="agentName"
           type="text"
           required
-          disabled={readOnly}
+          disabled={coreFieldsReadOnly}
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           className="input-field disabled:opacity-70"
@@ -346,8 +469,8 @@ function AgentFormFields({
         </label>
         <textarea
           id="agentDesc"
-          rows={readOnly ? 6 : 3}
-          disabled={readOnly}
+          rows={coreFieldsReadOnly ? 6 : 3}
+          disabled={coreFieldsReadOnly}
           value={description}
           onChange={(e) => onDescriptionChange(e.target.value)}
           className="input-field resize-none disabled:opacity-70"
@@ -360,7 +483,7 @@ function AgentFormFields({
         </label>
         <select
           id="agentMode"
-          disabled={readOnly}
+          disabled={coreFieldsReadOnly}
           value={mode}
           onChange={(e) => onModeChange(e.target.value as AgentMode)}
           className="input-field disabled:opacity-70"
@@ -373,18 +496,129 @@ function AgentFormFields({
         </select>
       </div>
 
+      <div className="glass-card space-y-4 p-4">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Identidade (override)</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Deixe vazio para herdar da Identidade da empresa (Configurações). Preencha só o que
+            este agente deve sobrescrever.
+          </p>
+        </div>
+
+        <div>
+          <label
+            htmlFor="agentCompanyName"
+            className="mb-2 block text-sm font-medium text-foreground"
+          >
+            Nome da empresa
+          </label>
+          <input
+            id="agentCompanyName"
+            type="text"
+            disabled={!identityEditable}
+            value={identityValues.company_name}
+            onChange={(e) => onIdentityChange("company_name", e.target.value)}
+            className="input-field disabled:opacity-70"
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="agentDisplayName"
+            className="mb-2 block text-sm font-medium text-foreground"
+          >
+            Nome de exibição
+          </label>
+          <input
+            id="agentDisplayName"
+            type="text"
+            disabled={!identityEditable}
+            value={identityValues.display_name}
+            onChange={(e) => onIdentityChange("display_name", e.target.value)}
+            className="input-field disabled:opacity-70"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="agentTone" className="mb-2 block text-sm font-medium text-foreground">
+            Tom
+          </label>
+          <input
+            id="agentTone"
+            type="text"
+            disabled={!identityEditable}
+            value={identityValues.tone}
+            onChange={(e) => onIdentityChange("tone", e.target.value)}
+            placeholder="Ex.: formal e acolhedor"
+            className="input-field disabled:opacity-70"
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="agentBusinessContext"
+            className="mb-2 block text-sm font-medium text-foreground"
+          >
+            Contexto do negócio
+          </label>
+          <textarea
+            id="agentBusinessContext"
+            rows={4}
+            disabled={!identityEditable}
+            value={identityValues.business_context}
+            maxLength={4000}
+            onChange={(e) => onIdentityChange("business_context", e.target.value)}
+            className="input-field resize-y disabled:opacity-70"
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="agentGreetingHint"
+            className="mb-2 block text-sm font-medium text-foreground"
+          >
+            Dica de saudação
+          </label>
+          <input
+            id="agentGreetingHint"
+            type="text"
+            disabled={!identityEditable}
+            value={identityValues.greeting_hint}
+            onChange={(e) => onIdentityChange("greeting_hint", e.target.value)}
+            placeholder="Ex.: Cumprimente pelo nome quando souber"
+            className="input-field disabled:opacity-70"
+          />
+        </div>
+      </div>
+
       <div>
-        <label htmlFor="agentConfig" className="mb-2 block text-sm font-medium text-foreground">
-          Config (JSON)
-        </label>
-        <textarea
-          id="agentConfig"
-          rows={4}
-          disabled={readOnly}
-          value={configJson}
-          onChange={(e) => onConfigChange(e.target.value)}
-          className="input-field resize-none font-mono text-xs disabled:opacity-70"
-        />
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 text-left text-sm font-medium text-foreground"
+          onClick={onAdvancedConfigToggle}
+        >
+          {advancedConfigOpen ? (
+            <ChevronDown className="h-4 w-4 shrink-0" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0" />
+          )}
+          JSON avançado (config)
+        </button>
+        {advancedConfigOpen && (
+          <div className="mt-2">
+            <textarea
+              id="agentConfig"
+              rows={6}
+              disabled={configJsonReadOnly}
+              value={configJson}
+              onChange={(e) => onConfigChange(e.target.value)}
+              className="input-field resize-none font-mono text-xs disabled:opacity-70"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Config operacional (tipo, etc.). A identidade é editada na seção acima.
+            </p>
+          </div>
+        )}
       </div>
 
       {!hideSubmit && (

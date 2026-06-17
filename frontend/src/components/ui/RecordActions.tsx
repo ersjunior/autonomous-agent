@@ -53,6 +53,17 @@ export function RecordActionsBar({
           <Pencil className="h-4 w-4" />
         </button>
       )}
+      {!actions.canEdit && actions.canEditIdentity && onEdit && (
+        <button
+          type="button"
+          className={iconBtn}
+          title="Editar identidade"
+          aria-label="Editar identidade"
+          onClick={onEdit}
+        >
+          <Pencil className="h-4 w-4" />
+        </button>
+      )}
       {onStart && actions.canEdit && (
         <button
           type="button"

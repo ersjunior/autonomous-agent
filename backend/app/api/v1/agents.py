@@ -12,6 +12,11 @@ from app.core.security import get_current_user
 from app.models.agent import Agent
 from app.models.user import User
 from app.schemas.agent import AgentCreate, AgentResponse, AgentUpdate
+from app.schemas.identity import InstitutionalIdentityResponse, InstitutionalIdentityUpdate
+from app.services.agent_identity import (
+    agent_identity_response_from_config,
+    apply_agent_identity_patch,
+)
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -80,6 +85,25 @@ async def update_agent(
     await db.commit()
     await db.refresh(agent)
     return agent
+
+
+@router.patch("/{agent_id}/identity", response_model=InstitutionalIdentityResponse)
+async def patch_agent_identity(
+    agent_id: uuid.UUID,
+    payload: InstitutionalIdentityUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> InstitutionalIdentityResponse:
+    """
+    Atualiza apenas agent.config.identity.
+
+    Exceção: permitido em agentes is_system (demais campos continuam protegidos).
+    """
+    agent = await _get_agent(agent_id, user, db)
+    agent.config = apply_agent_identity_patch(agent.config, payload)
+    await db.commit()
+    await db.refresh(agent)
+    return agent_identity_response_from_config(agent.config)
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)

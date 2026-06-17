@@ -44,3 +44,34 @@ export function formValuesToIdentityUpdate(
     greeting_hint: normalize(values.greeting_hint),
   };
 }
+
+export function identityFromAgentConfig(
+  config: Record<string, unknown> | null | undefined
+): InstitutionalIdentity {
+  const raw = config?.identity;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ...EMPTY_INSTITUTIONAL_IDENTITY };
+  }
+  const identity = raw as Record<string, unknown>;
+  const field = (key: keyof InstitutionalIdentity): string | null => {
+    const value = identity[key];
+    if (value == null) return null;
+    const text = String(value).trim();
+    return text || null;
+  };
+  return {
+    company_name: field("company_name"),
+    display_name: field("display_name"),
+    tone: field("tone"),
+    business_context: field("business_context"),
+    greeting_hint: field("greeting_hint"),
+  };
+}
+
+export function configWithoutIdentity(
+  config: Record<string, unknown> | null | undefined
+): Record<string, unknown> {
+  if (!config) return {};
+  const { identity: _identity, ...rest } = config;
+  return rest;
+}
