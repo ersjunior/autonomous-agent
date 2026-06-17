@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/campaigns", label: "Campanhas", icon: "megaphone" },
   { href: "/dashboard/tabulacoes", label: "Tabulações", icon: "tag" },
   { href: "/dashboard/appointments", label: "Agendamentos", icon: "calendar" },
+  { href: "/dashboard/availability", label: "Disponibilidade", icon: "clock" },
   { href: "/dashboard/activation", label: "Acionamento", icon: "activation" },
   { href: "/dashboard/knowledge", label: "Conhecimento", icon: "book" },
   { href: "/dashboard/monitoring", label: "Monitoramento", icon: "activity" },
@@ -127,6 +128,13 @@ function NavIcon({ name }: { name: (typeof NAV_ITEMS)[number]["icon"] }) {
         <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="4" width="18" height="18" rx="2" />
           <path d="M16 2v4M8 2v4M3 10h18" />
+        </svg>
+      );
+    case "clock":
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 3" />
         </svg>
       );
   }

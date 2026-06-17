@@ -42,6 +42,15 @@ def _is_voice_channel(channel: str) -> bool:
     return (channel or "").lower() == "voice"
 
 
+def _agent_id_for_slots(state: AgentState) -> str | None:
+    """agent_id do AgentState (str) para resolução de disponibilidade; None se ausente."""
+    raw = state.get("agent_id")
+    if not raw:
+        return None
+    value = str(raw).strip()
+    return value or None
+
+
 def _booking_applicable(state: AgentState) -> bool:
     channel = (state.get("channel") or "").lower()
     if channel not in BOOKING_CHANNELS:
@@ -95,16 +104,26 @@ def _index_offered_slots(raw_slots: list[dict], max_slots: int) -> list[dict]:
     return indexed
 
 
-async def _fetch_offered_slots(owner_user_id: str) -> list[dict]:
+async def _fetch_offered_slots(
+    owner_user_id: str,
+    agent_id: str | None = None,
+) -> list[dict]:
     from_dt, to_dt = booking_search_range()
-    slots = await list_available_slots(owner_user_id, from_dt, to_dt)
+    slots = await list_available_slots(
+        owner_user_id, from_dt, to_dt, agent_id=agent_id
+    )
     return _index_offered_slots(slots, settings.booking_max_offered_slots)
 
 
-async def _fetch_voice_slot_pool(owner_user_id: str) -> list[dict]:
+async def _fetch_voice_slot_pool(
+    owner_user_id: str,
+    agent_id: str | None = None,
+) -> list[dict]:
     """Pool completo de slots para iteração 1-por-vez na voz."""
     from_dt, to_dt = booking_search_range()
-    slots = await list_available_slots(owner_user_id, from_dt, to_dt)
+    slots = await list_available_slots(
+        owner_user_id, from_dt, to_dt, agent_id=agent_id
+    )
     if not slots:
         return []
     return _index_offered_slots(slots, len(slots))
@@ -314,7 +333,9 @@ async def _commit_booking(
                 return await _voice_advance_after_conflict(
                     state, channel, user_id, owner_user_id, booking
                 )
-            fresh = await _fetch_offered_slots(owner_user_id)
+            fresh = await _fetch_offered_slots(
+                owner_user_id, _agent_id_for_slots(state)
+            )
             if fresh:
                 set_booking_state(
                     channel,
@@ -361,7 +382,7 @@ async def _start_booking_text(
     user_id: str,
     owner_user_id: str,
 ) -> dict:
-    slots = await _fetch_offered_slots(owner_user_id)
+    slots = await _fetch_offered_slots(owner_user_id, _agent_id_for_slots(state))
     if not slots:
         clear_booking_state(channel, user_id)
         return {"booking_context": _no_slots_context(), "booking_phase": "done"}
@@ -390,7 +411,9 @@ async def _start_booking_voice(
 
         clear_wrap_up_pending(call_sid)
 
-    all_slots = await _fetch_voice_slot_pool(owner_user_id)
+    all_slots = await _fetch_voice_slot_pool(
+        owner_user_id, _agent_id_for_slots(state)
+    )
     if not all_slots:
         clear_booking_state(channel, user_id)
         return _voice_booking_result(voice_no_slots_phrase(), phase="done")
@@ -461,7 +484,9 @@ async def _voice_advance_after_conflict(
     owner_user_id: str,
     booking: dict,
 ) -> dict:
-    fresh = await _fetch_voice_slot_pool(owner_user_id)
+    fresh = await _fetch_voice_slot_pool(
+        owner_user_id, _agent_id_for_slots(state)
+    )
     if not fresh:
         clear_booking_state(channel, user_id)
         return _voice_booking_result(voice_no_slots_phrase(), phase="done")
@@ -502,7 +527,9 @@ async def _handle_voice_awaiting_choice(
     )
 
     if is_yes:
-        fresh = await _fetch_voice_slot_pool(owner_user_id)
+        fresh = await _fetch_voice_slot_pool(
+            owner_user_id, _agent_id_for_slots(state)
+        )
         if not _slot_still_in_list(selected, fresh):
             return await _voice_advance_after_conflict(
                 state, channel, user_id, owner_user_id, booking
@@ -570,7 +597,9 @@ async def _handle_awaiting_choice(
         }
 
     selected = parse_slot(selected_raw)
-    fresh_slots = await _fetch_offered_slots(owner_user_id)
+    fresh_slots = await _fetch_offered_slots(
+        owner_user_id, _agent_id_for_slots(state)
+    )
     if not _slot_still_in_list(selected, fresh_slots):
         if fresh_slots:
             set_booking_state(

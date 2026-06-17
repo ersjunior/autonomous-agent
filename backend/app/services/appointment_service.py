@@ -21,6 +21,7 @@ from app.core.config import (
     settings,
 )
 from app.models.appointment import Appointment, AppointmentSource, AppointmentStatus
+from app.models.availability_rule import AvailabilityRule
 from app.models.lead import Lead
 
 ACTIVE_BLOCKING_STATUSES = (
@@ -174,6 +175,31 @@ def default_availability() -> AvailabilityConfig:
     )
 
 
+@dataclass(frozen=True)
+class AvailabilityDayRule:
+    start: str
+    end: str
+    slot_minutes: int
+
+
+@dataclass(frozen=True)
+class AvailabilitySchedule:
+    """
+    Schedule por weekday (seg=0..dom=6).
+
+    O agendamento atual é homogêneo (mesma faixa e duração nos dias úteis). Esta
+    estrutura permite janelas heterogêneas por dia sem quebrar chamadores antigos.
+    """
+
+    timezone: str
+    rules: dict[int, AvailabilityDayRule]
+
+
+def schedule_from_config(cfg: AvailabilityConfig) -> AvailabilitySchedule:
+    rule = AvailabilityDayRule(start=cfg.start, end=cfg.end, slot_minutes=cfg.slot_minutes)
+    return AvailabilitySchedule(timezone=cfg.timezone, rules={d: rule for d in cfg.weekdays})
+
+
 def ensure_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
@@ -195,6 +221,7 @@ def generate_candidate_slots(
     from_dt: datetime,
     to_dt: datetime,
     *,
+    schedule: AvailabilitySchedule | None = None,
     availability: AvailabilityConfig | None = None,
     slot_minutes: int | None = None,
 ) -> list[tuple[datetime, datetime]]:
@@ -204,26 +231,35 @@ def generate_candidate_slots(
     Uses the same [start, end) window semantics as ``activation_window``.
     """
     cfg = availability or default_availability()
-    minutes = slot_minutes if slot_minutes is not None else cfg.slot_minutes
-    if minutes <= 0:
+    resolved_schedule = schedule or schedule_from_config(cfg)
+    if not resolved_schedule.rules:
         return []
 
-    tz = ZoneInfo(cfg.timezone)
+    tz = ZoneInfo(resolved_schedule.timezone)
     range_start = ensure_utc(from_dt)
     range_end = ensure_utc(to_dt)
     if range_end <= range_start:
         return []
-
-    window_start = _parse_hhmm(cfg.start)
-    window_end = _parse_hhmm(cfg.end)
-    slot_delta = timedelta(minutes=minutes)
 
     slots: list[tuple[datetime, datetime]] = []
     current_day: date = range_start.astimezone(tz).date()
     last_day: date = range_end.astimezone(tz).date()
 
     while current_day <= last_day:
-        if current_day.weekday() in cfg.weekdays:
+        weekday = current_day.weekday()
+        day_rule = resolved_schedule.rules.get(weekday)
+        if day_rule is not None:
+            effective_minutes = (
+                slot_minutes if slot_minutes is not None else int(day_rule.slot_minutes)
+            )
+            if effective_minutes <= 0:
+                current_day += timedelta(days=1)
+                continue
+
+            window_start = _parse_hhmm(day_rule.start)
+            window_end = _parse_hhmm(day_rule.end)
+            slot_delta = timedelta(minutes=effective_minutes)
+
             day_start = datetime.combine(current_day, window_start, tzinfo=tz)
             day_end = datetime.combine(current_day, window_end, tzinfo=tz)
             cursor = day_start
@@ -237,6 +273,85 @@ def generate_candidate_slots(
         current_day += timedelta(days=1)
 
     return slots
+
+
+async def resolve_availability(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    agent_id: uuid.UUID | None = None,
+) -> AvailabilitySchedule:
+    """
+    Resolve a agenda (schedule) por weekday com hierarquia por substituição:
+
+      1) Regras ativas do agente (agent_id=X). Se existir pelo menos 1, usa só elas.
+      2) Senão, regras ativas do tenant (agent_id IS NULL). Se existir, usa elas.
+      3) Senão, cai no default global atual (default_availability()).
+
+    Herança de campos (para suportar colunas NULL sem complementar o conjunto de dias):
+      - timezone: NULL herda do tenant (quando agente) ou do default (quando tenant).
+      - slot_minutes: NULL idem.
+    """
+
+    async def _fetch_rules(scoped_agent_id: uuid.UUID | None) -> list[AvailabilityRule]:
+        query = (
+            select(AvailabilityRule)
+            .where(
+                AvailabilityRule.user_id == user_id,
+                AvailabilityRule.agent_id == scoped_agent_id,
+                AvailabilityRule.is_active.is_(True),
+            )
+            .order_by(AvailabilityRule.weekday.asc())
+        )
+        result = await session.execute(query)
+        return list(result.scalars().all())
+
+    tenant_rules = await _fetch_rules(None)
+
+    agent_rules: list[AvailabilityRule] = []
+    if agent_id is not None:
+        agent_rules = await _fetch_rules(agent_id)
+
+    fallback_cfg = default_availability()
+
+    if agent_rules:
+        tenant_by_weekday = {int(r.weekday): r for r in tenant_rules}
+        schedule_tz = fallback_cfg.timezone
+        rules: dict[int, AvailabilityDayRule] = {}
+        for row in agent_rules:
+            weekday = int(row.weekday)
+            tenant_row = tenant_by_weekday.get(weekday)
+
+            effective_tz = (
+                row.timezone
+                or (tenant_row.timezone if tenant_row else None)
+                or fallback_cfg.timezone
+            )
+            effective_minutes = (
+                row.slot_minutes
+                or (tenant_row.slot_minutes if tenant_row else None)
+                or fallback_cfg.slot_minutes
+            )
+            schedule_tz = effective_tz
+            rules[weekday] = AvailabilityDayRule(
+                start=row.start_time,
+                end=row.end_time,
+                slot_minutes=int(effective_minutes),
+            )
+        return AvailabilitySchedule(timezone=schedule_tz, rules=rules)
+
+    if tenant_rules:
+        schedule_tz = next((r.timezone for r in tenant_rules if r.timezone), None) or fallback_cfg.timezone
+        rules = {
+            int(row.weekday): AvailabilityDayRule(
+                start=row.start_time,
+                end=row.end_time,
+                slot_minutes=int(row.slot_minutes or fallback_cfg.slot_minutes),
+            )
+            for row in tenant_rules
+        }
+        return AvailabilitySchedule(timezone=schedule_tz, rules=rules)
+
+    return schedule_from_config(fallback_cfg)
 
 
 def filter_available_slots(
@@ -307,21 +422,39 @@ async def list_available_slots(
     from_dt: datetime,
     to_dt: datetime,
     *,
+    agent_id: uuid.UUID | None = None,
     slot_minutes: int | None = None,
+    schedule: AvailabilitySchedule | None = None,
     availability: AvailabilityConfig | None = None,
 ) -> list[dict[str, Any]]:
-    cfg = availability or default_availability()
-    effective_minutes = slot_minutes if slot_minutes is not None else cfg.slot_minutes
+    """
+    Lista slots livres no intervalo, subtraindo compromissos ativos do tenant.
+
+    Precedência da janela de disponibilidade:
+      1. ``schedule`` explícito
+      2. ``availability`` explícito (convertido via ``schedule_from_config``)
+      3. ``resolve_availability(session, user_id, agent_id)`` (agente > tenant > default)
+      4. sem regras no banco → mesmo resultado que ``default_availability()`` (retrocompatível)
+
+    A subtração de conflitos permanece por ``user_id`` (agenda compartilhada do tenant).
+    """
+    if schedule is not None:
+        resolved_schedule = schedule
+    elif availability is not None:
+        resolved_schedule = schedule_from_config(availability)
+    else:
+        resolved_schedule = await resolve_availability(session, user_id, agent_id)
+
     candidates = generate_candidate_slots(
         from_dt,
         to_dt,
-        availability=cfg,
-        slot_minutes=effective_minutes,
+        schedule=resolved_schedule,
+        slot_minutes=slot_minutes,
     )
     blocking = await _fetch_blocking_appointments(session, user_id, from_dt, to_dt)
     free = filter_available_slots(candidates, blocking)
     return [
-        slot_to_dict(starts_at, ends_at, tz=cfg.timezone)
+        slot_to_dict(starts_at, ends_at, tz=resolved_schedule.timezone)
         for starts_at, ends_at in free
     ]
 

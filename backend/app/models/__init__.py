@@ -4,6 +4,7 @@ from app.models.agent import Agent, AgentMode
 from app.models.appointment import Appointment, AppointmentSource, AppointmentStatus
 from app.models.agent_activation import AgentActivation
 from app.models.agent_channel_settings import AgentChannelSettings
+from app.models.availability_rule import AvailabilityRule
 from app.models.app_setting import AppSetting
 from app.models.base import Base
 from app.models.campaign import Campaign, CampaignChannel

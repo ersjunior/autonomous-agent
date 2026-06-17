@@ -18,7 +18,6 @@ from app.services.appointment_service import (
     AppointmentSlotConflictError,
     AvailabilityConfig,
     create_appointment as svc_create_appointment,
-    default_availability,
     list_available_slots as svc_list_available_slots,
 )
 
@@ -44,6 +43,21 @@ def _parse_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
         return value
     raw = str(value).strip()
     return uuid.UUID(raw) if raw else None
+
+
+def _parse_optional_uuid_safe(value: str | uuid.UUID | None) -> uuid.UUID | None:
+    """Como ``_parse_optional_uuid``, mas retorna None em UUID inválido (não quebra o booking)."""
+    if value is None:
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(raw)
+    except ValueError:
+        return None
 
 
 def _appointment_to_dict(appointment: Any) -> dict[str, Any]:
@@ -91,18 +105,21 @@ class CalendarTool:
         from_dt: datetime,
         to_dt: datetime,
         *,
+        agent_id: str | uuid.UUID | None = None,
         slot_minutes: int | None = None,
         availability: AvailabilityConfig | None = None,
         session: AsyncSession | None = None,
     ) -> list[dict[str, Any]]:
         try:
             uid = _parse_user_id(user_id)
+            aid = _parse_optional_uuid_safe(agent_id)
             async with _session_scope(session) as db:
                 slots = await svc_list_available_slots(
                     db,
                     uid,
                     from_dt,
                     to_dt,
+                    agent_id=aid,
                     slot_minutes=slot_minutes,
                     availability=availability,
                 )
@@ -193,6 +210,7 @@ async def list_available_slots(
     from_dt: datetime,
     to_dt: datetime,
     *,
+    agent_id: str | uuid.UUID | None = None,
     slot_minutes: int | None = None,
     availability: AvailabilityConfig | None = None,
     session: AsyncSession | None = None,
@@ -202,8 +220,9 @@ async def list_available_slots(
         user_id,
         from_dt,
         to_dt,
+        agent_id=agent_id,
         slot_minutes=slot_minutes,
-        availability=availability or default_availability(),
+        availability=availability,
         session=session,
     )
 

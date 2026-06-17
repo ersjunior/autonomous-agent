@@ -11,6 +11,8 @@ import pytest
 
 from agents.memory import booking_state as bs
 from agents.orchestrator.booking_handler import (
+    _agent_id_for_slots,
+    _fetch_offered_slots,
     booking_search_range,
     process_booking_turn,
     voice_offer_phrase,
@@ -602,3 +604,29 @@ def test_booking_search_range_covers_weekdays() -> None:
 
 def test_booking_state_key_format() -> None:
     assert bs.booking_state_key("WhatsApp", "+5511") == "booking:whatsapp:+5511"
+
+
+def test_agent_id_for_slots_from_state() -> None:
+    aid = str(uuid4())
+    state = _base_state(agent_id=aid)
+    assert _agent_id_for_slots(state) == aid
+
+
+def test_agent_id_for_slots_missing_returns_none() -> None:
+    state = _base_state()
+    state.pop("agent_id", None)
+    assert _agent_id_for_slots(state) is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_offered_slots_passes_agent_id_to_calendar() -> None:
+    aid = str(uuid4())
+    owner = str(uuid4())
+    with patch(
+        "agents.orchestrator.booking_handler.list_available_slots",
+        new=AsyncMock(return_value=[]),
+    ) as mock_list:
+        await _fetch_offered_slots(owner, aid)
+    mock_list.assert_awaited_once()
+    assert mock_list.await_args.kwargs["agent_id"] == aid
+

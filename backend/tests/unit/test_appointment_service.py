@@ -11,6 +11,8 @@ from app.core.config import APPOINTMENT_TIMEZONE
 from app.models.appointment import Appointment, AppointmentStatus
 from app.services.appointment_service import (
     AvailabilityConfig,
+    AvailabilityDayRule,
+    AvailabilitySchedule,
     filter_available_slots,
     format_slot_label,
     format_slot_label_spoken,
@@ -71,6 +73,24 @@ class TestGenerateCandidateSlots:
         from_dt = _utc(2026, 6, 17, 12, 0)
         to_dt = _utc(2026, 6, 17, 9, 0)
         assert generate_candidate_slots(from_dt, to_dt) == []
+
+    def test_schedule_allows_heterogeneous_weekdays(self) -> None:
+        # Sáb 2026-06-20 09:00–12:00 (60 min) + Seg 2026-06-22 09:00–18:00 (30 min)
+        schedule = AvailabilitySchedule(
+            timezone=APPOINTMENT_TIMEZONE,
+            rules={
+                5: AvailabilityDayRule(start="09:00", end="12:00", slot_minutes=60),  # sábado
+                0: AvailabilityDayRule(start="09:00", end="18:00", slot_minutes=30),  # segunda
+            },
+        )
+        from_dt = _utc(2026, 6, 20, 0, 0)
+        to_dt = _utc(2026, 6, 23, 0, 0)
+        slots = generate_candidate_slots(from_dt, to_dt, schedule=schedule)
+
+        sat = [s for s in slots if s[0].astimezone(TZ).weekday() == 5]
+        mon = [s for s in slots if s[0].astimezone(TZ).weekday() == 0]
+        assert len(sat) == 3  # 09–12, 60 min
+        assert len(mon) == 18  # 09–18, 30 min
 
 
 class TestFilterAvailableSlots:
