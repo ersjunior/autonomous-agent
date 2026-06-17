@@ -57,3 +57,60 @@ class TestVoiceIntentHeuristic:
         result = identify_intent_voice_heuristic("Qual o horário de funcionamento?")
         assert result.intent == "question"
         assert result.intent != "schedule"
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "tem outro horario",
+            "queria ver outro dia",
+            "tem outra data",
+            "ver outros horarios",
+            "outra agenda",
+            "outro horario por favor",
+            "tem um novo horario",
+        ],
+    )
+    def test_schedule_follow_up_after_booking(self, message: str) -> None:
+        result = identify_intent_voice_heuristic(message)
+        assert result.intent == "schedule"
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "qual o endereco?",
+            "quanto custa?",
+            "como funciona o produto?",
+            "ate outro dia, obrigado",
+        ],
+    )
+    def test_non_schedule_stays_question(self, message: str) -> None:
+        result = identify_intent_voice_heuristic(message)
+        assert result.intent == "question"
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "tchau",
+            "era so isso",
+            "pode desligar",
+            "nao preciso de mais nada",
+            "nao, era so isso",
+        ],
+    )
+    def test_farewell_intent(self, message: str) -> None:
+        result = identify_intent_voice_heuristic(message)
+        assert result.intent == "farewell"
+        assert result.confidence >= 0.9
+
+    def test_bare_nao_is_not_farewell(self) -> None:
+        result = identify_intent_voice_heuristic("não")
+        assert result.intent == "question"
+
+    def test_bare_obrigado_is_not_farewell(self) -> None:
+        result = identify_intent_voice_heuristic("obrigado")
+        assert result.intent == "question"
+
+    def test_schedule_follow_up_not_farewell(self) -> None:
+        result = identify_intent_voice_heuristic("tem outro horario")
+        assert result.intent == "schedule"
+        assert result.intent != "farewell"

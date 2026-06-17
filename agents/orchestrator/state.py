@@ -26,6 +26,8 @@ class AgentState(TypedDict):
     lead_name: NotRequired[str | None]
     booking_context: NotRequired[str | None]
     booking_phase: NotRequired[str | None]
+    twilio_call_sid: NotRequired[str | None]
+    should_hangup: NotRequired[bool]
     intent_ms: NotRequired[float]
     rag_ms: NotRequired[float]
     response_ms: NotRequired[float]

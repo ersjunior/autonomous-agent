@@ -15,6 +15,7 @@ IntentType = Literal[
     "cancel",
     "escalate",
     "schedule",
+    "farewell",
     "other",
 ]
 

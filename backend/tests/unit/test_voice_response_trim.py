@@ -76,6 +76,14 @@ def test_cap_voice_response_realistic_long_reply() -> None:
     assert len(result) <= VOICE_MAX_RESPONSE_CHARS
 
 
+def test_cap_voice_response_respects_settings_override(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "voice_max_response_chars", 50)
+    text = "Esta frase é propositalmente longa demais para caber no limite configurado."
+    result = cap_voice_response_for_telephony(text)
+    assert len(result) <= 50
+    assert result.endswith(".")
+
+
 def test_resolve_max_tokens_voice_uses_voice_cap(monkeypatch) -> None:
     monkeypatch.setattr(settings, "voice_response_max_tokens", 35)
     monkeypatch.setattr(settings, "response_max_tokens", 0)

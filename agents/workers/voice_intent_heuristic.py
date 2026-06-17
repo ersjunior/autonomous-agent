@@ -64,11 +64,42 @@ _SCHEDULE_PATTERNS = (
     r"\bquero\s+marcar\b",
     r"\bposso\s+marcar\b",
     r"\bhor[aá]rio\s+dispon",
+    # Follow-ups após agendamento concluído na mesma ligação
+    r"\boutr[oa]\s+hor[aá]rio",
+    r"\boutr[oa]s?\s+hor[aá]rios",
+    r"\bnovo\s+hor[aá]rio",
+    r"\boutra\s+agenda",
+    r"\b(?:ver|mostrar|tem|tinha|teria|queria)\s+.{0,20}hor[aá]rio",
+    # data/dia com verbo de busca (evita falso positivo em "até outro dia")
+    r"\b(?:tem|tinha|teria|ver|mostrar|queria|quero|preciso)\s+(?:\w+\s+){0,3}outr[oa]\s+(?:data|dia)\b",
+)
+
+_FAREWELL_PATTERNS = (
+    r"\btchau\b",
+    r"\bate\s+(?:logo|mais|breve)\b",
+    r"\b(?:era|e)\s+so\s+isso\b",
+    r"\bso\s+isso\s+mesmo\b",
+    r"\bnao\s+preciso\s+de\s+mais\s+nada\b",
+    r"\bpode\s+(?:encerrar|desligar)\b",
+    r"\bpodemos\s+encerrar\b",
+    r"\bso\s+isso\s+obrigad",
+    r"\bnao,?\s+(?:era\s+)?so\s+isso\b",
+)
+
+# Só com wrap_up_pending ativo (resposta a "mais alguma coisa?").
+_WRAP_UP_DECLINE_PATTERNS = (
+    r"^(?:nao|não)$",
+    r"^so\s+isso\b",
+    r"^nao\s+preciso\b",
+    r"^nao,?\s+obrigad",
+    r"^obrigad",
 )
 
 _GREETING_PATTERNS = (
     r"^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite|al[oô]|e\s+a[ií])\b",
 )
+
+FAREWELL_CONFIDENCE = 0.92
 
 
 def _normalize(text: str) -> str:
@@ -79,6 +110,21 @@ def _normalize(text: str) -> str:
 
 def _matches_any(normalized: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(pat, normalized) for pat in patterns)
+
+
+def matches_farewell_heuristic(message: str) -> bool:
+    normalized = _normalize(message)
+    if not normalized:
+        return False
+    return _matches_any(normalized, _FAREWELL_PATTERNS)
+
+
+def matches_wrap_up_decline(message: str) -> bool:
+    """Recusa curta após 'mais alguma coisa?' — só usar com wrap_up_pending."""
+    normalized = _normalize(message)
+    if not normalized or len(normalized) > 40:
+        return False
+    return _matches_any(normalized, _WRAP_UP_DECLINE_PATTERNS)
 
 
 def identify_intent_voice_heuristic(message: str) -> IntentResult:
@@ -110,6 +156,9 @@ def identify_intent_voice_heuristic(message: str) -> IntentResult:
 
     if _matches_any(normalized, _SCHEDULE_PATTERNS):
         return IntentResult(intent="schedule", confidence=0.9)
+
+    if _matches_any(normalized, _FAREWELL_PATTERNS):
+        return IntentResult(intent="farewell", confidence=FAREWELL_CONFIDENCE)
 
     if len(normalized) <= 40 and _matches_any(normalized, _GREETING_PATTERNS):
         return IntentResult(intent="greeting", confidence=0.9)

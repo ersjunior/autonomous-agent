@@ -26,14 +26,20 @@ RECEPTIVE_BEHAVIOR_PROMPT = """Modo RECEPTIVO — como conduzir o atendimento:
 
 # Inbound/outbound de voz (telefonia): respostas curtas para TTS e latência.
 VOICE_BEHAVIOR_PROMPT = """Modo VOZ (telefone) — como falar com o cliente:
-- Você está numa LIGAÇÃO TELEFÔNICA. Responda em 1 frase curta (máximo ~80 caracteres). Vá direto ao ponto.
+- Você está numa LIGAÇÃO TELEFÔNICA. Responda em 1 frase curta (máximo ~70 caracteres). Vá direto ao ponto.
 - Não liste, não explique demais, não repita a pergunta do cliente.
 - Use linguagem falada natural; evite markdown, emojis e parágrafos longos.
-- Se precisar de mais informação, faça UMA pergunta curta no final."""
+- Se precisar de mais informação, faça UMA pergunta curta no final.
+- O encerramento da ligação é controlado pelo sistema; responda ao cliente e não invente despedidas longas."""
 
 # Cap pós-LLM só para telefonia (TTS XTTS escala ~linearmente com o tamanho).
 VOICE_MAX_RESPONSE_SENTENCES = 1
-VOICE_MAX_RESPONSE_CHARS = 90
+VOICE_MAX_RESPONSE_CHARS = 70
+
+
+def _resolved_voice_max_chars() -> int:
+    cap = settings.voice_max_response_chars
+    return cap if cap > 0 else VOICE_MAX_RESPONSE_CHARS
 
 
 def _resolve_system_prompt() -> str:
@@ -117,22 +123,23 @@ def _truncate_at_word_boundary(text: str, max_chars: int) -> str:
 
 def cap_voice_response_for_telephony(text: str) -> str:
     """
-    Limita resposta de voz a 1 frase curta (~90 chars), sem partir palavra.
+    Limita resposta de voz a 1 frase curta (~70 chars), sem partir palavra.
 
     Só deve ser usado no canal voice — WhatsApp/Telegram permanecem sem este cap.
     """
+    max_chars = _resolved_voice_max_chars()
     cleaned = trim_voice_response_to_complete_sentence(text)
     if not cleaned:
         return cleaned
 
     sentences = _split_voice_sentences(cleaned)
     if not sentences:
-        return _truncate_at_word_boundary(cleaned, VOICE_MAX_RESPONSE_CHARS)
+        return _truncate_at_word_boundary(cleaned, max_chars)
 
     result = sentences[:VOICE_MAX_RESPONSE_SENTENCES]
     merged = " ".join(result).strip()
-    if len(merged) > VOICE_MAX_RESPONSE_CHARS:
-        merged = _truncate_at_word_boundary(merged, VOICE_MAX_RESPONSE_CHARS)
+    if len(merged) > max_chars:
+        merged = _truncate_at_word_boundary(merged, max_chars)
     return merged.strip()
 
 

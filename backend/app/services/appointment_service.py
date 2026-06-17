@@ -30,6 +30,111 @@ ACTIVE_BLOCKING_STATUSES = (
 
 _WEEKDAY_LABELS_PT = ("Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom")
 
+_WEEKDAY_SPOKEN_PT = (
+    "segunda",
+    "terça",
+    "quarta",
+    "quinta",
+    "sexta",
+    "sábado",
+    "domingo",
+)
+
+_CARDINAL_UNDER_20_PT = (
+    "zero",
+    "um",
+    "dois",
+    "três",
+    "quatro",
+    "cinco",
+    "seis",
+    "sete",
+    "oito",
+    "nove",
+    "dez",
+    "onze",
+    "doze",
+    "treze",
+    "quatorze",
+    "quinze",
+    "dezesseis",
+    "dezessete",
+    "dezoito",
+    "dezenove",
+)
+
+_HOUR_WORDS_PT = {
+    0: "zero",
+    1: "uma",
+    2: "duas",
+    3: "três",
+    4: "quatro",
+    5: "cinco",
+    6: "seis",
+    7: "sete",
+    8: "oito",
+    9: "nove",
+    10: "dez",
+    11: "onze",
+    12: "doze",
+    13: "treze",
+    14: "quatorze",
+    15: "quinze",
+    16: "dezesseis",
+    17: "dezessete",
+    18: "dezoito",
+    19: "dezenove",
+    20: "vinte",
+    21: "vinte e uma",
+    22: "vinte e duas",
+    23: "vinte e três",
+}
+
+
+def _number_under_100_pt(value: int) -> str:
+    if value < 20:
+        return _CARDINAL_UNDER_20_PT[value]
+    tens, ones = divmod(value, 10)
+    tens_word = {
+        2: "vinte",
+        3: "trinta",
+        4: "quarenta",
+        5: "cinquenta",
+    }[tens]
+    if ones == 0:
+        return tens_word
+    return f"{tens_word} e {_CARDINAL_UNDER_20_PT[ones]}"
+
+
+def _time_spoken_pt(hour: int, minute: int) -> str:
+    if hour == 0 and minute == 0:
+        return "meia-noite"
+    if hour == 12 and minute == 0:
+        return "meio-dia"
+    hour_word = _HOUR_WORDS_PT[hour]
+    if minute == 0:
+        if hour == 1:
+            return "uma hora"
+        return f"{hour_word} horas"
+    if minute == 30:
+        return f"{hour_word} e trinta"
+    return f"{hour_word} e {_number_under_100_pt(minute)}"
+
+
+def format_slot_label(starts_at: datetime, tz: str = APPOINTMENT_TIMEZONE) -> str:
+    """Human-readable label in tenant timezone (America/Sao_Paulo by default)."""
+    local = ensure_utc(starts_at).astimezone(ZoneInfo(tz))
+    weekday = _WEEKDAY_LABELS_PT[local.weekday()]
+    return f"{weekday} {local.strftime('%d/%m/%Y %H:%M')}"
+
+
+def format_slot_label_spoken(starts_at: datetime, tz: str = APPOINTMENT_TIMEZONE) -> str:
+    """Label enxuto para TTS de voz: dia da semana + hora por extenso (sem data numérica)."""
+    local = ensure_utc(starts_at).astimezone(ZoneInfo(tz))
+    weekday = _WEEKDAY_SPOKEN_PT[local.weekday()]
+    time_part = _time_spoken_pt(local.hour, local.minute)
+    return f"{weekday} às {time_part}"
+
 
 class AppointmentError(Exception):
     """Base error for appointment operations."""
@@ -84,13 +189,6 @@ def intervals_overlap(
     a0, a1 = ensure_utc(start_a), ensure_utc(end_a)
     b0, b1 = ensure_utc(start_b), ensure_utc(end_b)
     return a0 < b1 and b0 < a1
-
-
-def format_slot_label(starts_at: datetime, tz: str = APPOINTMENT_TIMEZONE) -> str:
-    """Human-readable label in tenant timezone (America/Sao_Paulo by default)."""
-    local = ensure_utc(starts_at).astimezone(ZoneInfo(tz))
-    weekday = _WEEKDAY_LABELS_PT[local.weekday()]
-    return f"{weekday} {local.strftime('%d/%m/%Y %H:%M')}"
 
 
 def generate_candidate_slots(

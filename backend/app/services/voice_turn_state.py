@@ -108,17 +108,20 @@ def mark_turn_ready(
     turn_id: str,
     *,
     audio_filename: str,
+    should_hangup: bool = False,
 ) -> None:
     data = get_voice_turn(call_sid, turn_id) or {}
     data["status"] = "ready"
     data["audio_filename"] = (audio_filename or "").strip()
+    data["should_hangup"] = bool(should_hangup)
     data["ready_at"] = _utc_now_iso()
     _save_turn(call_sid, turn_id, data)
     logger.info(
-        "Voice turn ready call_sid=%s turn_id=%s audio=%s",
+        "Voice turn ready call_sid=%s turn_id=%s audio=%s hangup=%s",
         call_sid,
         turn_id,
         audio_filename,
+        should_hangup,
     )
 
 

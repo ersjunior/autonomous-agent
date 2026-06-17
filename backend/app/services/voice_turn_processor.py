@@ -43,6 +43,7 @@ async def run_voice_agent_turn(
     transcript: str,
     call_sid: str | None = None,
     agent_timings: dict[str, float] | None = None,
+    voice_turn_out: dict[str, object] | None = None,
 ) -> str:
     """Roteamento receptivo + grafo (sem Celery). Retorna texto da resposta."""
     await ensure_settings_fresh_async()
@@ -72,6 +73,7 @@ async def run_voice_agent_turn(
         bind_capacity=False,
         twilio_call_sid=call_sid,
         agent_timings_out=agent_timings,
+        voice_turn_out=voice_turn_out,
     )
     await session.commit()
     return (response_text or "").strip()
@@ -129,6 +131,7 @@ async def process_voice_inbound_turn(
 
         t0 = time.perf_counter()
         agent_timings: dict[str, float] = {}
+        voice_turn_out: dict[str, object] = {}
         async with AsyncSessionLocal() as session:
             response_text = await run_voice_agent_turn(
                 session,
@@ -136,6 +139,7 @@ async def process_voice_inbound_turn(
                 transcript=transcript,
                 call_sid=sid or None,
                 agent_timings=agent_timings,
+                voice_turn_out=voice_turn_out,
             )
         timings["agent_ms"] = (time.perf_counter() - t0) * 1000
         timings.update(agent_timings)
@@ -148,7 +152,8 @@ async def process_voice_inbound_turn(
         filename = await gerar_audio_chamada(cleaned)
         timings["tts_ms"] = (time.perf_counter() - t0) * 1000
 
-        mark_turn_ready(sid, tid, audio_filename=filename)
+        should_hangup = bool(voice_turn_out.get("should_hangup"))
+        mark_turn_ready(sid, tid, audio_filename=filename, should_hangup=should_hangup)
         timings["total_ms"] = (time.perf_counter() - started) * 1000
         response_chars = len(cleaned)
         logger.info(

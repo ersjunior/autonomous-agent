@@ -147,3 +147,48 @@ def get_call_customer_number(call_sid: str) -> str | None:
         return None
     raw = (data.get("from_number") or "").strip()
     return raw or None
+
+
+def get_wrap_up_pending(call_sid: str) -> bool:
+    data = get_voice_call_state(call_sid)
+    if not data:
+        return False
+    return bool(data.get("wrap_up_pending"))
+
+
+def set_wrap_up_pending(call_sid: str, *, from_number: str | None = None) -> None:
+    sid = (call_sid or "").strip()
+    if not sid:
+        return
+    existing = get_voice_call_state(sid) or {}
+    stage = int(existing.get("silence_stage", 0))
+    accumulated = float(existing.get("accumulated_silence_sec", 0))
+    payload: dict[str, Any] = {
+        "silence_stage": stage,
+        "accumulated_silence_sec": accumulated,
+        "wrap_up_pending": True,
+    }
+    from_n = (from_number or existing.get("from_number") or "").strip() or None
+    if from_n:
+        payload["from_number"] = from_n
+    _get_redis().setex(
+        _state_key(sid),
+        VOICE_CALL_STATE_TTL_SECONDS,
+        json.dumps(payload, ensure_ascii=False),
+    )
+
+
+def clear_wrap_up_pending(call_sid: str) -> None:
+    sid = (call_sid or "").strip()
+    if not sid:
+        return
+    existing = get_voice_call_state(sid)
+    if not existing or not existing.get("wrap_up_pending"):
+        return
+    existing = dict(existing)
+    existing.pop("wrap_up_pending", None)
+    _get_redis().setex(
+        _state_key(sid),
+        VOICE_CALL_STATE_TTL_SECONDS,
+        json.dumps(existing, ensure_ascii=False),
+    )

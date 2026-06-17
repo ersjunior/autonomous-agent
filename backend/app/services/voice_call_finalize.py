@@ -20,6 +20,14 @@ from worker.tasks.lead_tracking import find_lead_by_channel_user, upsert_lead_in
 logger = logging.getLogger(__name__)
 
 VOICE_TERMINAL_TABULACAO = "NEG:AUSENTE"
+VOICE_FAREWELL_TABULACAO = "NEG:SUCESSO"
+VOICE_FAREWELL_ORIGEM = "VOICE_FAREWELL"
+
+
+def _terminal_outcome_for_origem(origem: str) -> tuple[str, str]:
+    if origem == VOICE_FAREWELL_ORIGEM:
+        return "convertido", VOICE_FAREWELL_TABULACAO
+    return "nao_atendido", VOICE_TERMINAL_TABULACAO
 
 
 async def find_lead_interaction_for_voice_call(
@@ -64,7 +72,7 @@ async def finalize_voice_call_terminal(
     origem: str = "VOICE_TERMINAL",
 ) -> bool:
     """
-    Aplica nao_atendido + NEG:AUSENTE se a LI ainda não estiver terminal.
+    Finaliza LI terminal conforme origem (silêncio → ausente; despedida → sucesso).
 
     Retorna True se transicionou para terminal nesta chamada.
     """
@@ -108,13 +116,14 @@ async def finalize_voice_call_terminal(
         )
         return False
 
-    record.status = "nao_atendido"
+    status_interno, tabulacao = _terminal_outcome_for_origem(origem)
+    record.status = status_interno
     await apply_tabulacao(
         session,
         record,
-        status_interno="nao_atendido",
+        status_interno=status_interno,
         channel="voice",
-        tabulacao_codigo=VOICE_TERMINAL_TABULACAO,
+        tabulacao_codigo=tabulacao,
         origem=origem,
     )
     release_slot_for_lead(str(record.lead_id), "voice")

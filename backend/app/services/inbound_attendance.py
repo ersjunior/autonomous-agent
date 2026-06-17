@@ -96,6 +96,7 @@ async def attend_inbound_message(
     message_sid: str | None = None,
     twilio_call_sid: str | None = None,
     agent_timings_out: dict[str, float] | None = None,
+    voice_turn_out: dict[str, object] | None = None,
 ) -> str:
     """
     Roteia pelo grafo, envia resposta e faz tracking.
@@ -117,6 +118,8 @@ async def attend_inbound_message(
         agent,
         lead=lead,
     )
+    if twilio_call_sid:
+        agent_context["twilio_call_sid"] = twilio_call_sid
     async with channel_typing_indicator(ch, user_id, message_sid=message_sid):
         result = await route_message(
             message,
@@ -126,6 +129,8 @@ async def attend_inbound_message(
             agent_context=agent_context,
         )
     response_text = result.get("response", "") or ""
+    if voice_turn_out is not None:
+        voice_turn_out["should_hangup"] = bool(result.get("should_hangup"))
     if agent_timings_out is not None:
         if "intent_ms" in result:
             agent_timings_out["intent_ms"] = float(result["intent_ms"])

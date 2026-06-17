@@ -27,6 +27,7 @@ from app.core.config import (
     settings,
 )
 from app.models.appointment import AppointmentSource
+from app.services.appointment_service import format_slot_label_spoken
 
 logger = logging.getLogger(__name__)
 
@@ -127,18 +128,65 @@ def format_booking_context_block(instructions: str) -> str:
     )
 
 
+def _slot_starts_at(slot: dict) -> datetime:
+    starts = slot.get("starts_at")
+    if isinstance(starts, str):
+        starts = datetime.fromisoformat(starts)
+    if starts.tzinfo is None:
+        starts = starts.replace(tzinfo=timezone.utc)
+    return starts.astimezone(timezone.utc)
+
+
+def _slot_spoken_label(slot: dict) -> str:
+    return format_slot_label_spoken(_slot_starts_at(slot))
+
+
+def _voice_booking_result(phrase: str, *, phase: str) -> dict:
+    """Resposta determinística para voz — pula redação LLM no generate_response."""
+    return {"response": phrase.strip(), "booking_phase": phase}
+
+
+def voice_offer_phrase(slot: dict) -> str:
+    spoken = _slot_spoken_label(slot)
+    return f"Tenho {spoken}, serve para você?"
+
+
+def voice_repeat_phrase(slot: dict) -> str:
+    spoken = _slot_spoken_label(slot)
+    return f"E {spoken}, serve?"
+
+
+def voice_next_offer_phrase(slot: dict) -> str:
+    spoken = _slot_spoken_label(slot)
+    return f"E {spoken}, serve?"
+
+
+def voice_success_phrase(slot: dict) -> str:
+    spoken = _slot_spoken_label(slot)
+    return f"Pronto! Agendado para {spoken}. Mais alguma coisa?"
+
+
+def voice_no_slots_phrase() -> str:
+    return "Não há horários livres agora. Tente outro período?"
+
+
+def voice_no_more_slots_phrase() -> str:
+    return "Não tenho mais horários. Podemos tentar outro dia?"
+
+
+def voice_degraded_phrase() -> str:
+    return "Não consegui agendar agora. Tente de novo em instantes."
+
+
 def _degraded_context(reason: str, *, voice: bool = False) -> str:
+    if voice:
+        raise ValueError("_degraded_context(voice=True) substituído por voice_degraded_phrase")
     body = (
         f"Não foi possível concluir o agendamento automaticamente ({reason}). "
         "Peça desculpas, explique que não conseguiu agendar agora e convide o cliente a "
         "tentar novamente em instantes ou informar outro período de preferência. "
         "Não invente horários."
     )
-    if voice:
-        body = (
-            "Modo VOZ — UMA frase curta (máx. ~80 caracteres). "
-            + body
-        )
     return format_booking_context_block(body)
 
 
@@ -157,11 +205,7 @@ def _offering_context(slots: list[dict], lead_name: str | None) -> str:
 
 def _no_slots_context(*, voice: bool = False) -> str:
     if voice:
-        return format_booking_context_block(
-            "Modo VOZ — UMA frase curta (máx. ~80 caracteres). "
-            "Não há horários livres nos próximos dias úteis. "
-            "Informe com empatia e convide a tentar outro período. NÃO invente horários."
-        )
+        raise ValueError("_no_slots_context(voice=True) substituído por voice_no_slots_phrase")
     return format_booking_context_block(
         "Não há horários livres nos próximos dias úteis no horário comercial. "
         "Informe isso com empatia e pergunte se o cliente prefere outro período "
@@ -191,11 +235,7 @@ def _confirm_context(selected: dict) -> str:
 
 def _success_context(selected: dict, *, voice: bool = False) -> str:
     if voice:
-        return format_booking_context_block(
-            f"Modo VOZ — UMA frase curta (máx. ~80 caracteres). "
-            f"Agendamento confirmado: {selected['label']}. "
-            "Agradeça e repita data/hora brevemente."
-        )
+        raise ValueError("_success_context(voice=True) substituído por voice_success_phrase")
     return format_booking_context_block(
         f"Fase: concluído. O agendamento para {selected['label']} foi registrado com sucesso. "
         "Confirme ao cliente de forma clara e cordial, repetindo data e horário."
@@ -210,43 +250,6 @@ def _conflict_context(slots: list[dict]) -> str:
     for slot in slots:
         lines.append(f"  {slot['index']}. {slot['label']}")
     return format_booking_context_block("\n".join(lines))
-
-
-def _voice_offer_context(slot: dict, lead_name: str | None) -> str:
-    label = slot.get("label", "")
-    name = lead_name or "você"
-    return format_booking_context_block(
-        "Modo VOZ — responda em UMA frase curta (máx. ~80 caracteres). "
-        f"Ofereça o horário {label} para {name} e pergunte se serve "
-        f'(ex.: "Tenho {label}, serve?"). '
-        "NÃO liste outros horários. NÃO use numeração."
-    )
-
-
-def _voice_repeat_context(slot: dict) -> str:
-    label = slot.get("label", "")
-    return format_booking_context_block(
-        "Modo VOZ — UMA frase curta (máx. ~80 caracteres). "
-        "A resposta do cliente não ficou clara. "
-        f'Repita: "{label}, serve para você?"'
-    )
-
-
-def _voice_next_offer_context(slot: dict) -> str:
-    label = slot.get("label", "")
-    return format_booking_context_block(
-        "Modo VOZ — UMA frase curta (máx. ~80 caracteres). "
-        "O horário anterior não serviu. "
-        f'Ofereça: "{label}, serve?"'
-    )
-
-
-def _voice_no_more_slots_context() -> str:
-    return format_booking_context_block(
-        "Modo VOZ — UMA frase curta (máx. ~80 caracteres). "
-        "Não há mais horários livres no período. "
-        "Informe com empatia e convide a tentar outro dia."
-    )
 
 
 def _voice_state_payload(all_slots: list[dict], cursor: int = 0) -> dict:
@@ -285,8 +288,10 @@ async def _commit_booking(
     lead_id = state.get("lead_id")
     if not lead_id:
         clear_booking_state(channel, user_id)
+        if voice_mode:
+            return _voice_booking_result(voice_degraded_phrase(), phase="done")
         return {
-            "booking_context": _degraded_context("lead não identificado", voice=voice_mode),
+            "booking_context": _degraded_context("lead não identificado"),
             "booking_phase": "done",
         }
 
@@ -327,17 +332,25 @@ async def _commit_booking(
             clear_booking_state(channel, user_id)
             return {"booking_context": _no_slots_context(), "booking_phase": "done"}
         clear_booking_state(channel, user_id)
+        if voice_mode:
+            return _voice_booking_result(voice_degraded_phrase(), phase="done")
         return {
             "booking_context": _degraded_context(
                 result.get("message", "erro interno"),
-                voice=voice_mode,
             ),
             "booking_phase": "done",
         }
 
     clear_booking_state(channel, user_id)
+    if voice_mode:
+        call_sid = (state.get("twilio_call_sid") or "").strip()
+        if call_sid:
+            from app.services.voice_call_state import set_wrap_up_pending
+
+            set_wrap_up_pending(call_sid, from_number=user_id)
+        return _voice_booking_result(voice_success_phrase(selected), phase="done")
     return {
-        "booking_context": _success_context(selected, voice=voice_mode),
+        "booking_context": _success_context(selected),
         "booking_phase": "done",
     }
 
@@ -371,18 +384,21 @@ async def _start_booking_voice(
     user_id: str,
     owner_user_id: str,
 ) -> dict:
+    call_sid = (state.get("twilio_call_sid") or "").strip()
+    if call_sid:
+        from app.services.voice_call_state import clear_wrap_up_pending
+
+        clear_wrap_up_pending(call_sid)
+
     all_slots = await _fetch_voice_slot_pool(owner_user_id)
     if not all_slots:
         clear_booking_state(channel, user_id)
-        return {"booking_context": _no_slots_context(voice=True), "booking_phase": "done"}
+        return _voice_booking_result(voice_no_slots_phrase(), phase="done")
 
     payload = _voice_state_payload(all_slots, cursor=0)
     set_booking_state(channel, user_id, payload)
     current = parse_slot(all_slots[0])
-    return {
-        "booking_context": _voice_offer_context(current, state.get("lead_name")),
-        "booking_phase": "awaiting_choice",
-    }
+    return _voice_booking_result(voice_offer_phrase(current), phase="awaiting_choice")
 
 
 async def _start_booking(
@@ -413,12 +429,12 @@ async def _voice_offer_at_cursor(
         _voice_state_payload(all_slots, cursor=cursor),
     )
     if repeat:
-        ctx = _voice_repeat_context(current)
+        phrase = voice_repeat_phrase(current)
     elif after_reject:
-        ctx = _voice_next_offer_context(current)
+        phrase = voice_next_offer_phrase(current)
     else:
-        ctx = _voice_offer_context(current, state.get("lead_name"))
-    return {"booking_context": ctx, "booking_phase": "awaiting_choice"}
+        phrase = voice_offer_phrase(current)
+    return _voice_booking_result(phrase, phase="awaiting_choice")
 
 
 async def _voice_advance_slot(
@@ -432,10 +448,7 @@ async def _voice_advance_slot(
     next_cursor = int(booking.get("slot_cursor", 0)) + 1
     if next_cursor >= len(all_slots):
         clear_booking_state(channel, user_id)
-        return {
-            "booking_context": _voice_no_more_slots_context(),
-            "booking_phase": "done",
-        }
+        return _voice_booking_result(voice_no_more_slots_phrase(), phase="done")
     return await _voice_offer_at_cursor(
         state, channel, user_id, all_slots, next_cursor, after_reject=True
     )
@@ -451,17 +464,11 @@ async def _voice_advance_after_conflict(
     fresh = await _fetch_voice_slot_pool(owner_user_id)
     if not fresh:
         clear_booking_state(channel, user_id)
-        return {
-            "booking_context": _no_slots_context(voice=True),
-            "booking_phase": "done",
-        }
+        return _voice_booking_result(voice_no_slots_phrase(), phase="done")
     cursor = int(booking.get("slot_cursor", 0)) + 1
     if cursor >= len(fresh):
         clear_booking_state(channel, user_id)
-        return {
-            "booking_context": _voice_no_more_slots_context(),
-            "booking_phase": "done",
-        }
+        return _voice_booking_result(voice_no_more_slots_phrase(), phase="done")
     return await _voice_offer_at_cursor(
         state, channel, user_id, fresh, cursor, after_reject=True
     )
@@ -515,10 +522,7 @@ async def _handle_voice_awaiting_choice(
             state, channel, user_id, owner_user_id, booking
         )
 
-    return {
-        "booking_context": _voice_repeat_context(selected),
-        "booking_phase": "awaiting_choice",
-    }
+    return _voice_booking_result(voice_repeat_phrase(selected), phase="awaiting_choice")
 
 
 async def _handle_awaiting_choice(
@@ -669,16 +673,22 @@ async def process_booking_turn(state: AgentState) -> dict:
 
     if not owner_user_id:
         if (state.get("intent") or "").lower() == "schedule":
-            return {"booking_context": _degraded_context("tenant não identificado", voice=voice)}
+            if voice:
+                return _voice_booking_result(voice_degraded_phrase(), phase="done")
+            return {"booking_context": _degraded_context("tenant não identificado")}
         return {}
 
     if not lead_id and (state.get("intent") or "").lower() == "schedule":
-        return {"booking_context": _degraded_context("lead não identificado", voice=voice)}
+        if voice:
+            return _voice_booking_result(voice_degraded_phrase(), phase="done")
+        return {"booking_context": _degraded_context("lead não identificado")}
 
     try:
         uuid.UUID(str(owner_user_id))
     except (ValueError, TypeError):
-        return {"booking_context": _degraded_context("tenant inválido", voice=voice)}
+        if voice:
+            return _voice_booking_result(voice_degraded_phrase(), phase="done")
+        return {"booking_context": _degraded_context("tenant inválido")}
 
     booking = get_booking_state(channel, user_id)
     phase = (booking or {}).get("phase")
@@ -688,6 +698,12 @@ async def process_booking_turn(state: AgentState) -> dict:
         return await _start_booking(state, channel, user_id, str(owner_user_id))
 
     if booking is None:
+        return {}
+
+    if not is_active_booking_phase(phase):
+        if intent == "schedule":
+            clear_booking_state(channel, user_id)
+            return await _start_booking(state, channel, user_id, str(owner_user_id))
         return {}
 
     if phase == "awaiting_choice":

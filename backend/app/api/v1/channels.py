@@ -25,6 +25,7 @@ from app.models.channel import Channel
 from app.models.user import User
 from app.schemas.channel import ChannelCreate, ChannelResponse, ChannelUpdate
 from app.services.voice_cached_audio import (
+    VOICE_WAIT_FILENAME,
     ensure_greeting_audio_filename,
     get_phrase_audio_filename,
     is_allowed_cached_audio_filename,
@@ -119,15 +120,26 @@ def _build_voice_turn_redirect_twiml(*, call_sid: str, turn_id: str) -> str:
     )
 
 
-def _build_voice_poll_twiml(*, call_sid: str, turn_id: str) -> str:
-    """Polling pending: Pause curto + Redirect (sem áudio que bloqueie o fluxo)."""
-    pause_sec = max(1, int(settings.voice_turn_poll_pause_seconds))
+def _build_voice_poll_twiml(
+    *,
+    call_sid: str,
+    turn_id: str,
+    play_wait: bool = False,
+) -> str:
+    """Polling pending: 1º ciclo opcional <Play> curto; depois Pause + Redirect."""
     redirect_url = xml.sax.saxutils.escape(_turn_ready_redirect_url(call_sid, turn_id))
+    blocks: list[str] = []
+    if play_wait:
+        play_url = xml.sax.saxutils.escape(_voice_play_url(VOICE_WAIT_FILENAME))
+        blocks.append(f"  <Play>{play_url}</Play>\n")
+    else:
+        pause_sec = max(1, int(settings.voice_turn_poll_pause_seconds))
+        blocks.append(f'  <Pause length="{pause_sec}"/>\n')
+    blocks.append(f'  <Redirect method="POST">{redirect_url}</Redirect>\n')
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<Response>\n"
-        f'  <Pause length="{pause_sec}"/>\n'
-        f'  <Redirect method="POST">{redirect_url}</Redirect>\n'
+        f"{''.join(blocks)}"
         "</Response>"
     )
 
@@ -791,7 +803,13 @@ async def voice_inbound_turn_ready(
                 poll_count,
             )
             return _twiml_response(_build_voice_turn_timeout_twiml())
-        return _twiml_response(_build_voice_poll_twiml(call_sid=sid, turn_id=tid))
+        return _twiml_response(
+            _build_voice_poll_twiml(
+                call_sid=sid,
+                turn_id=tid,
+                play_wait=(poll_count == 1),
+            )
+        )
 
     if status == "silence_stt":
         await asyncio.to_thread(mark_turn_consumed, sid, tid)
@@ -822,13 +840,35 @@ async def voice_inbound_turn_ready(
             )
         logger.info(
             "Voice turn delivered call_sid=%s turn_id=%s wait_total_ms=%s "
-            "poll_attempts=%s audio=%s",
+            "poll_attempts=%s audio=%s hangup=%s",
             sid,
             tid,
             f"{wait_total_ms:.0f}" if wait_total_ms is not None else "?",
             poll_attempts,
             audio_filename,
+            bool(turn.get("should_hangup")),
         )
+        if turn.get("should_hangup"):
+            from_number = (turn.get("from_number") or "").strip()
+            from app.core.database import AsyncSessionLocal
+            from app.services.voice_call_finalize import (
+                VOICE_FAREWELL_ORIGEM,
+                finalize_voice_call_terminal,
+            )
+            from app.services.voice_call_state import clear_voice_call_state
+
+            async with AsyncSessionLocal() as session:
+                await finalize_voice_call_terminal(
+                    session,
+                    call_sid=sid,
+                    from_number=from_number or None,
+                    origem=VOICE_FAREWELL_ORIGEM,
+                )
+                await session.commit()
+            clear_voice_call_state(sid)
+            twiml = _build_voice_hangup_twiml(audio_filename, is_fallback=False)
+            return _twiml_response(twiml)
+
         twiml = _build_voice_turn_twiml(
             audio_filename,
             is_fallback=False,

@@ -234,6 +234,8 @@ class Settings(BaseSettings):
     response_max_tokens: int = 0
     # Limite rígido só para respostas no canal voice (Ollama num_predict). 0 = sem limite.
     voice_response_max_tokens: int = 35
+    # Cap pós-LLM de caracteres na telefonia (TTS XTTS ~linear com tamanho). 0 = default 70.
+    voice_max_response_chars: int = 70
 
     def resolved_kb_top_k(self) -> int:
         return self.rag_top_k if self.kb_top_k <= 0 else self.kb_top_k

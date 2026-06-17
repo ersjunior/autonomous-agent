@@ -13,6 +13,7 @@ from app.services.appointment_service import (
     AvailabilityConfig,
     filter_available_slots,
     format_slot_label,
+    format_slot_label_spoken,
     generate_candidate_slots,
     intervals_overlap,
 )
@@ -102,6 +103,33 @@ class TestFormatSlotLabel:
         starts_at = datetime(2026, 6, 17, 17, 0, tzinfo=timezone.utc)
         label = format_slot_label(starts_at)
         assert label == "Qua 17/06/2026 14:00"
+
+
+class TestFormatSlotLabelSpoken:
+    def test_nine_am_wednesday(self) -> None:
+        starts_at = _utc(2026, 6, 17, 9, 0)
+        assert format_slot_label_spoken(starts_at) == "quarta às nove horas"
+
+    def test_two_thirty_pm_wednesday(self) -> None:
+        starts_at = _utc(2026, 6, 17, 14, 30)
+        assert format_slot_label_spoken(starts_at) == "quarta às quatorze e trinta"
+
+    def test_monday_one_pm(self) -> None:
+        starts_at = _utc(2026, 6, 15, 13, 0)
+        spoken = format_slot_label_spoken(starts_at)
+        assert spoken == "segunda às treze horas"
+        assert len(spoken) <= 40
+
+    def test_noon_uses_meio_dia(self) -> None:
+        starts_at = _utc(2026, 6, 17, 12, 0)
+        assert format_slot_label_spoken(starts_at) == "quarta às meio-dia"
+
+    def test_no_numeric_date_or_time(self) -> None:
+        starts_at = _utc(2026, 6, 17, 14, 0)
+        spoken = format_slot_label_spoken(starts_at)
+        assert "/" not in spoken
+        assert ":" not in spoken
+        assert "2026" not in spoken
 
 
 class TestIntervalsOverlap:

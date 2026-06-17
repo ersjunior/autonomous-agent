@@ -122,13 +122,34 @@ async def test_record_callback_redirect_only_no_blocking_wait(client) -> None:
     assert "<Play" not in response.text
 
 
-async def test_turn_ready_pending_returns_pause_and_redirect(client) -> None:
+async def test_turn_ready_pending_first_poll_plays_wait(client) -> None:
     with (
         patch(
             "app.api.v1.channels.get_voice_turn",
             return_value={"status": "pending", "poll_count": 0},
         ),
         patch("app.api.v1.channels.increment_turn_poll_count", return_value=1),
+    ):
+        response = await client.post(
+            f"{TURN_READY}?call_sid=CAtest&turn_id=turn-1",
+        )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "voice_wait_v3.mp3" in body
+    assert "<Play>" in body
+    assert "<Pause" not in body
+    assert "<Redirect" in body
+    assert "turn-ready" in body
+
+
+async def test_turn_ready_pending_subsequent_poll_pause_only(client) -> None:
+    with (
+        patch(
+            "app.api.v1.channels.get_voice_turn",
+            return_value={"status": "pending", "poll_count": 1},
+        ),
+        patch("app.api.v1.channels.increment_turn_poll_count", return_value=2),
     ):
         response = await client.post(
             f"{TURN_READY}?call_sid=CAtest&turn_id=turn-1",
@@ -162,13 +183,18 @@ async def test_turn_ready_ready_logs_delivery(client) -> None:
 
     assert response.status_code == 200
     assert FAKE_MP3 in response.text
+    delivered_fmt = (
+        "Voice turn delivered call_sid=%s turn_id=%s wait_total_ms=%s "
+        "poll_attempts=%s audio=%s hangup=%s"
+    )
     delivered_logs = [
         c for c in log_mock.info.call_args_list
-        if c.args and c.args[0] == "Voice turn delivered call_sid=%s turn_id=%s wait_total_ms=%s poll_attempts=%s audio=%s"
+        if c.args and c.args[0] == delivered_fmt
     ]
     assert len(delivered_logs) == 1
     assert delivered_logs[0].args[4] == 3
     assert delivered_logs[0].args[3] != "?"
+    assert delivered_logs[0].args[6] is False
 
 
 async def test_turn_ready_ready_returns_play_and_record(client) -> None:
