@@ -26,8 +26,6 @@ TERMINAL_STATUSES = frozenset({"convertido", "recusou", "nao_atendido", "erro"})
 SEED_AGENT_ACTIVE_NAME = "Agente_Ativo"
 SEED_AGENT_RECEPTIVE_NAME = "Agente_Receptivo"
 
-_default_agents_cache: dict[str, Agent | None] = {"ACTIVE": None, "RECEPTIVE": None}
-
 
 def is_active_conversation_open(
     lead_interaction: LeadInteraction | None,
@@ -61,12 +59,7 @@ def is_active_conversation_open(
 
 
 async def _get_system_agent_by_mode(session: AsyncSession, mode: AgentMode) -> Agent:
-    """Fallback seed agents (is_system + mode); cached per worker process."""
-    cache_key = mode.value
-    cached = _default_agents_cache.get(cache_key)
-    if cached is not None:
-        return cached
-
+    """Fallback seed agents (is_system + mode); always loaded from DB (config stays fresh)."""
     name = SEED_AGENT_ACTIVE_NAME if mode == AgentMode.ACTIVE else SEED_AGENT_RECEPTIVE_NAME
     result = await session.execute(
         select(Agent).where(
@@ -80,7 +73,6 @@ async def _get_system_agent_by_mode(session: AsyncSession, mode: AgentMode) -> A
         raise RuntimeError(
             f"Agente padrão do sistema não encontrado: name={name!r} mode={mode.value}"
         )
-    _default_agents_cache[cache_key] = agent
     return agent
 
 
