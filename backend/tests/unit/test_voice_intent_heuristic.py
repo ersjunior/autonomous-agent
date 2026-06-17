@@ -39,3 +39,21 @@ class TestVoiceIntentHeuristic:
     def test_greeting_short(self) -> None:
         result = identify_intent_voice_heuristic("Olá, bom dia")
         assert result.intent == "greeting"
+
+    def test_schedule_agendar(self) -> None:
+        result = identify_intent_voice_heuristic("Quero agendar uma reunião")
+        assert result.intent == "schedule"
+        assert result.confidence >= 0.85
+
+    def test_schedule_marcar_horario(self) -> None:
+        result = identify_intent_voice_heuristic("Posso marcar um horário para visita?")
+        assert result.intent == "schedule"
+
+    def test_schedule_remarcar(self) -> None:
+        result = identify_intent_voice_heuristic("Preciso remarcar minha visita")
+        assert result.intent == "schedule"
+
+    def test_question_horario_funcionamento_not_schedule(self) -> None:
+        result = identify_intent_voice_heuristic("Qual o horário de funcionamento?")
+        assert result.intent == "question"
+        assert result.intent != "schedule"

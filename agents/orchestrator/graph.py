@@ -187,9 +187,7 @@ async def _fetch_rag_context(state: AgentState) -> tuple[list[dict], list[dict],
 
 
 async def handle_booking(state: AgentState) -> AgentState:
-    """Avança fluxo de agendamento (texto) e prepara contexto para o LLM de resposta."""
-    if (state.get("channel") or "").lower() == "voice":
-        return {}
+    """Avança fluxo de agendamento e prepara contexto para o LLM de resposta."""
     result = await process_booking_turn(state)
     return result
 

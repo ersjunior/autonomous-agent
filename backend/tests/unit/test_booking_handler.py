@@ -65,10 +65,186 @@ def mock_redis():
 
 
 @pytest.mark.asyncio
-async def test_voice_channel_skips_booking(mock_redis) -> None:
-    state = _base_state(channel="voice")
-    result = await process_booking_turn(state)
-    assert result == {}
+async def test_voice_start_booking_offers_single_slot(mock_redis) -> None:
+    slots = [_slot(1, 9), _slot(2, 10), _slot(3, 11)]
+    with patch(
+        "agents.orchestrator.booking_handler.list_available_slots",
+        new=AsyncMock(return_value=slots),
+    ):
+        result = await process_booking_turn(_base_state(channel="voice"))
+
+    assert result.get("booking_phase") == "awaiting_choice"
+    ctx = result.get("booking_context") or ""
+    assert "Modo VOZ" in ctx
+    assert "Horários disponíveis:" not in ctx
+    assert "09:00" in ctx or "Qua" in ctx
+    saved = bs.get_booking_state("voice", "+5511999999999")
+    assert saved is not None
+    assert saved.get("voice_mode") is True
+    assert len(saved.get("offered_slots") or []) == 1
+    assert len(saved.get("all_slots") or []) == 3
+    assert saved.get("slot_cursor") == 0
+
+
+@pytest.mark.asyncio
+async def test_voice_no_on_offer_advances_to_next_slot(mock_redis) -> None:
+    all_slots = [_slot(1, 9), _slot(2, 10)]
+    bs.set_booking_state(
+        "voice",
+        "+5511999999999",
+        {
+            "phase": "awaiting_choice",
+            "voice_mode": True,
+            "all_slots": all_slots,
+            "slot_cursor": 0,
+            "offered_slots": [all_slots[0]],
+            "selected_slot": None,
+        },
+    )
+
+    with patch(
+        "agents.orchestrator.booking_handler.extract_booking_confirmation",
+        new=AsyncMock(
+            return_value=BookingConfirmationResult(decision="no", confidence=0.95)
+        ),
+    ), patch(
+        "agents.orchestrator.booking_handler.create_appointment",
+        new=AsyncMock(),
+    ) as mock_create:
+        result = await process_booking_turn(
+            _base_state(channel="voice", message="não, outro horário", intent="other")
+        )
+
+    assert result.get("booking_phase") == "awaiting_choice"
+    assert "10:00" in (result.get("booking_context") or "") or "Qua" in (
+        result.get("booking_context") or ""
+    )
+    saved = bs.get_booking_state("voice", "+5511999999999")
+    assert saved["slot_cursor"] == 1
+    mock_create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_voice_yes_on_offer_creates_appointment(mock_redis) -> None:
+    offered = [_slot(1, 14)]
+    bs.set_booking_state(
+        "voice",
+        "+5511999999999",
+        {
+            "phase": "awaiting_choice",
+            "voice_mode": True,
+            "all_slots": offered,
+            "slot_cursor": 0,
+            "offered_slots": offered,
+            "selected_slot": None,
+        },
+    )
+
+    with patch(
+        "agents.orchestrator.booking_handler.extract_booking_confirmation",
+        new=AsyncMock(
+            return_value=BookingConfirmationResult(decision="yes", confidence=0.95)
+        ),
+    ), patch(
+        "agents.orchestrator.booking_handler.list_available_slots",
+        new=AsyncMock(return_value=offered),
+    ), patch(
+        "agents.orchestrator.booking_handler.create_appointment",
+        new=AsyncMock(
+            return_value={"ok": True, "appointment": {"id": str(uuid4())}}
+        ),
+    ) as mock_create:
+        result = await process_booking_turn(
+            _base_state(channel="voice", message="sim, serve", intent="other")
+        )
+
+    assert result.get("booking_phase") == "done"
+    assert "Modo VOZ" in (result.get("booking_context") or "")
+    mock_create.assert_awaited_once()
+    call_kwargs = mock_create.await_args.kwargs
+    assert call_kwargs.get("channel") == "voice"
+    assert bs.get_booking_state("voice", "+5511999999999") is None
+
+
+@pytest.mark.asyncio
+async def test_voice_no_more_slots_ends_booking(mock_redis) -> None:
+    only = [_slot(1, 9)]
+    bs.set_booking_state(
+        "voice",
+        "+5511999999999",
+        {
+            "phase": "awaiting_choice",
+            "voice_mode": True,
+            "all_slots": only,
+            "slot_cursor": 0,
+            "offered_slots": only,
+            "selected_slot": None,
+        },
+    )
+
+    with patch(
+        "agents.orchestrator.booking_handler.extract_booking_confirmation",
+        new=AsyncMock(
+            return_value=BookingConfirmationResult(decision="no", confidence=0.95)
+        ),
+    ):
+        result = await process_booking_turn(
+            _base_state(channel="voice", message="não", intent="other")
+        )
+
+    assert result.get("booking_phase") == "done"
+    assert "mais horários" in (result.get("booking_context") or "").lower()
+    assert bs.get_booking_state("voice", "+5511999999999") is None
+
+
+@pytest.mark.asyncio
+async def test_voice_without_lead_id_degrades(mock_redis) -> None:
+    with patch(
+        "agents.orchestrator.booking_handler.list_available_slots",
+        new=AsyncMock(return_value=[_slot(1, 9)]),
+    ):
+        result = await process_booking_turn(
+            _base_state(channel="voice", lead_id=None)
+        )
+
+    assert "lead não identificado" in (result.get("booking_context") or "").lower()
+    assert bs.get_booking_state("voice", "+5511999999999") is None
+
+
+@pytest.mark.asyncio
+async def test_voice_unclear_repeats_current_slot(mock_redis) -> None:
+    offered = [_slot(1, 9)]
+    bs.set_booking_state(
+        "voice",
+        "+5511999999999",
+        {
+            "phase": "awaiting_choice",
+            "voice_mode": True,
+            "all_slots": offered,
+            "slot_cursor": 0,
+            "offered_slots": offered,
+            "selected_slot": None,
+        },
+    )
+
+    with patch(
+        "agents.orchestrator.booking_handler.extract_booking_confirmation",
+        new=AsyncMock(
+            return_value=BookingConfirmationResult(decision="unclear", confidence=0.2)
+        ),
+    ), patch(
+        "agents.orchestrator.booking_handler.create_appointment",
+        new=AsyncMock(),
+    ) as mock_create:
+        result = await process_booking_turn(
+            _base_state(channel="voice", message="hmm", intent="other")
+        )
+
+    assert result.get("booking_phase") == "awaiting_choice"
+    assert "não ficou clara" in (result.get("booking_context") or "").lower()
+    mock_create.assert_not_awaited()
+    saved = bs.get_booking_state("voice", "+5511999999999")
+    assert saved["slot_cursor"] == 0
 
 
 @pytest.mark.asyncio

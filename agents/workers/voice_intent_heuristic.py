@@ -53,6 +53,19 @@ _COMPLAINT_HIGH_PATTERNS = (
     r"\bfraude\b",
 )
 
+_SCHEDULE_PATTERNS = (
+    r"\bagend",
+    r"\bmarcar\b",
+    r"\bmarcar\s+hor",
+    r"\bremarc",
+    r"\breuni",
+    r"\bvisita\b",
+    r"\btem\s+hor[aá]rio\b",
+    r"\bquero\s+marcar\b",
+    r"\bposso\s+marcar\b",
+    r"\bhor[aá]rio\s+dispon",
+)
+
 _GREETING_PATTERNS = (
     r"^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite|al[oô]|e\s+a[ií])\b",
 )
@@ -94,6 +107,9 @@ def identify_intent_voice_heuristic(message: str) -> IntentResult:
             confidence=0.9,
             complaint_severity="high",
         )
+
+    if _matches_any(normalized, _SCHEDULE_PATTERNS):
+        return IntentResult(intent="schedule", confidence=0.9)
 
     if len(normalized) <= 40 and _matches_any(normalized, _GREETING_PATTERNS):
         return IntentResult(intent="greeting", confidence=0.9)
