@@ -44,6 +44,8 @@ import type { TunnelStatusLevel, TunnelStatusResponse } from "@/lib/types/tunnel
 const SECRET_MASK = "********";
 const DEFAULT_TEST_TEXT =
   "Olá! Esta é uma demonstração da minha voz personalizada, falando em português.";
+const TUNNEL_POLL_MS = 10_000;
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION;
 
 function formatBytes(size: number): string {
   if (size < 1024) {
@@ -109,6 +111,14 @@ function publicBaseUrlSourceLabel(source: TunnelStatusResponse["public_base_url_
     return "arquivo do túnel (tunnel_url.txt)";
   }
   return "—";
+}
+
+function formatTunnelLastVerified(date: Date): string {
+  return date.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 function formatValue(value: string | number | null | undefined): string {
@@ -274,7 +284,6 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("llm");
   const [categories, setCategories] = useState<SettingCategory[]>([]);
   const [runtime, setRuntime] = useState<Record<string, string | number | null>>({});
-  const [settingsVersion, setSettingsVersion] = useState(0);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [initialValues, setInitialValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -296,28 +305,55 @@ export default function SettingsPage() {
 
   const [tunnelStatus, setTunnelStatus] = useState<TunnelStatusResponse | null>(null);
   const [tunnelLoading, setTunnelLoading] = useState(false);
+  const [tunnelRefreshing, setTunnelRefreshing] = useState(false);
+  const [tunnelLastVerifiedAt, setTunnelLastVerifiedAt] = useState<Date | null>(null);
   const [tunnelError, setTunnelError] = useState("");
+  const tunnelFetchingRef = useRef(false);
+  const tunnelStatusRef = useRef<TunnelStatusResponse | null>(null);
 
   const [identityValues, setIdentityValues] = useState(identityToFormValues(null));
   const [identityLoading, setIdentityLoading] = useState(false);
   const [identitySaving, setIdentitySaving] = useState(false);
 
-  const loadTunnelStatus = useCallback(async () => {
+  const loadTunnelStatus = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
+    if (tunnelFetchingRef.current) {
+      return;
+    }
+
     const token = localStorage.getItem("access_token");
     if (!token) {
       window.location.href = "/";
       return;
     }
 
-    setTunnelLoading(true);
-    setTunnelError("");
+    const isInitial = mode === "initial";
+    tunnelFetchingRef.current = true;
+
+    if (isInitial) {
+      setTunnelLoading(true);
+      setTunnelError("");
+    } else {
+      setTunnelRefreshing(true);
+    }
+
     try {
-      setTunnelStatus(await fetchTunnelStatus());
+      const data = await fetchTunnelStatus();
+      setTunnelStatus(data);
+      tunnelStatusRef.current = data;
+      setTunnelLastVerifiedAt(new Date());
     } catch (err) {
-      setTunnelError(err instanceof Error ? err.message : "Erro ao carregar status do túnel.");
-      setTunnelStatus(null);
+      if (isInitial) {
+        setTunnelError(err instanceof Error ? err.message : "Erro ao carregar status do túnel.");
+        setTunnelStatus(null);
+        tunnelStatusRef.current = null;
+      }
     } finally {
-      setTunnelLoading(false);
+      tunnelFetchingRef.current = false;
+      if (isInitial) {
+        setTunnelLoading(false);
+      } else {
+        setTunnelRefreshing(false);
+      }
     }
   }, []);
 
@@ -370,7 +406,6 @@ export default function SettingsPage() {
       const data: SettingsResponse = await res.json();
       setCategories(data.categories);
       setRuntime(data.runtime ?? {});
-      setSettingsVersion(data.settings_version ?? 0);
 
       const values: Record<string, string> = {};
       for (const cat of data.categories) {
@@ -438,9 +473,17 @@ export default function SettingsPage() {
   }, [activeTab, loading, loadVoiceSampleInfo]);
 
   useEffect(() => {
-    if (activeTab === "tunnel") {
-      void loadTunnelStatus();
+    if (activeTab !== "tunnel") {
+      return;
     }
+
+    void loadTunnelStatus(tunnelStatusRef.current ? "refresh" : "initial");
+
+    const timer = setInterval(() => {
+      void loadTunnelStatus("refresh");
+    }, TUNNEL_POLL_MS);
+
+    return () => clearInterval(timer);
   }, [activeTab, loadTunnelStatus]);
 
   useEffect(() => {
@@ -545,7 +588,6 @@ export default function SettingsPage() {
       const data: SettingsResponse = await res.json();
       setCategories(data.categories);
       setRuntime(data.runtime ?? {});
-      setSettingsVersion(data.settings_version ?? 0);
 
       const values: Record<string, string> = {};
       for (const cat of data.categories) {
@@ -668,7 +710,7 @@ export default function SettingsPage() {
         description="Provedores, comportamento do agente e áudio. Alterações aplicam em tempo real."
         actions={
           <span className="text-xs text-muted-foreground">
-            versão {settingsVersion}
+            versão {APP_VERSION}
           </span>
         }
       />
@@ -740,14 +782,22 @@ export default function SettingsPage() {
             <p className="text-sm text-muted-foreground">
               URL pública, modos e webhooks para colar no Twilio/Telegram. Somente leitura —
               não configura provedores automaticamente.
+              {tunnelLastVerifiedAt && (
+                <span className="mt-1 block text-xs">
+                  Última atualização: {formatTunnelLastVerified(tunnelLastVerifiedAt)}
+                  {tunnelRefreshing ? " · atualizando…" : ""}
+                </span>
+              )}
             </p>
             <button
               type="button"
               className="btn-secondary"
-              disabled={tunnelLoading}
-              onClick={() => void loadTunnelStatus()}
+              disabled={tunnelLoading || tunnelRefreshing}
+              onClick={() =>
+                void loadTunnelStatus(tunnelStatus ? "refresh" : "initial")
+              }
             >
-              {tunnelLoading ? "Atualizando..." : "Atualizar"}
+              {tunnelLoading || tunnelRefreshing ? "Atualizando..." : "Atualizar"}
             </button>
           </div>
 
