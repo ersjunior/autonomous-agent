@@ -6,10 +6,15 @@ O comportamento do agente é orquestrado por um grafo (LangGraph) que identifica
 
 Definido em `agents/orchestrator/graph.py`, o fluxo é:
 
-```
-START → identify_intent → check_escalation ─┬─► generate_response ─┐
-                                            │                      ├─► send_response → END
-                                            └─► escalate ──────────┘
+```mermaid
+flowchart TD
+    START([START]) --> identify_intent
+    identify_intent --> check_escalation
+    check_escalation -->|nao escala| generate_response
+    check_escalation -->|escala| escalate
+    generate_response --> send_response
+    escalate --> send_response
+    send_response --> END_NODE([END])
 ```
 
 | Nó | Função |
@@ -52,6 +57,22 @@ Resolução em **duas camadas**, com merge campo a campo (agente preenchido > wo
 
 A função `resolve_identity_config` combina workspace + `agent.config.identity` antes do grafo (`enrich_agent_context_with_identity`), e `format_institutional_identity_block` monta o bloco de sistema. Sem identidade configurada, o agente se apresenta de forma neutra (sem adotar marca/empresa de terceiros).
 
+```mermaid
+flowchart TD
+    P1[Prompt global] --> P2[Identidade institucional]
+    P2 --> P3[Personalidade do agente]
+    P3 --> P4{Modo RECEPTIVE?}
+    P4 -->|sim| P5[Comportamento receptivo]
+    P4 -->|nao| P6{Canal voice?}
+    P5 --> P6
+    P6 -->|sim| P7[Comportamento voz]
+    P6 -->|nao| P8[KB institucional]
+    P7 --> P8
+    P8 --> P9[Memoria do contato]
+    P9 --> P10[Historico Redis]
+    P10 --> LLM[LLM gera resposta]
+```
+
 ## Tabulação
 
 Cada atendimento pode ser classificado com um código de tabulação (padrão de call center, ex.: códigos SIP/NEG). O seed cria 16 códigos iniciais. A atribuição pode ser por regra ou assistida por IA. A tabulação automática a partir de eventos de chamada (Twilio) está prevista, mas ainda não conectada — veja [roadmap.md](roadmap.md).
@@ -76,6 +97,15 @@ O acionamento de campanhas (outbound) e a fila receptiva (inbound) são governad
 ## RAG (Retrieval-Augmented Generation)
 
 Na geração da resposta, o agente combina duas fontes:
+
+```mermaid
+flowchart LR
+    MSG[Mensagem] --> EMB[Embedding]
+    EMB --> MEM[Memoria do contato\ninteractions]
+    EMB --> KB[Base de conhecimento\nkb_chunks]
+    MEM --> GEN[generate_response]
+    KB --> GEN
+```
 
 1. **Memória do contato:** interações passadas semanticamente semelhantes, isoladas por `user_id` (não há vazamento entre contatos).
 2. **Base de conhecimento (KB):** trechos de documentos institucionais previamente ingeridos (upload → chunking → embeddings → pgvector), filtrados por documentos prontos e escopo do dono.

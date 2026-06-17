@@ -89,24 +89,25 @@ Para receber webhooks (Twilio e Telegram em modo webhook), o backend precisa ser
 
 ## Diagrama (alto nível)
 
-```
-                      webhook / polling             enfileira
-  ┌───────────┐  ──────────────────────►  ┌──────────┐  ─────────►  ┌──────────┐
-  │  Canais   │                            │ Backend  │             │  Redis   │
-  │ WA/TG/Voz │  ◄──────────────────────   │ FastAPI  │             │  broker  │
-  └───────────┘         resposta           └──────────┘             └────┬─────┘
-                                                                         │ consome
-                                                                         ▼
-  ┌────────────┐        ┌──────────────┐         grafo          ┌──────────────┐
-  │ PostgreSQL │ ◄────── │  LangGraph   │ ◄────────────────────  │    Worker    │
-  │ + pgvector │         │   + RAG      │                        │    Celery    │
-  └────────────┘         └──────┬───────┘                        └──────────────┘
-                                │
-                                ▼
-                         ┌──────────────┐
-                         │    Ollama    │
-                         │  LLM + embed │
-                         └──────────────┘
+```mermaid
+flowchart LR
+    subgraph canais [Canais WA TG Voz]
+      CH[Canais]
+    end
+    BE[Backend FastAPI]
+    RD[(Redis broker)]
+    WK[Worker Celery]
+    LG[LangGraph + RAG]
+    PG[(PostgreSQL pgvector)]
+    OLL[Ollama]
+
+    CH -->|webhook ou polling| BE
+    BE -->|enfileira| RD
+    RD -->|consome| WK
+    WK --> LG
+    LG --> PG
+    LG --> OLL
+    BE -->|resposta via API| CH
 ```
 
 - **Canais → Backend:** mensagens chegam por webhook (WhatsApp/Twilio, Telegram em modo webhook, Voz/TwiML) ou polling (Telegram).

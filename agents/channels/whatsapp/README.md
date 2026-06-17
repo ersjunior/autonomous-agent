@@ -11,6 +11,25 @@ Integração de WhatsApp via **Twilio**. Atende tanto o modo RECEPTIVO (responde
 
 ## Inbound (mensagem recebida)
 
+```mermaid
+sequenceDiagram
+    participant C as Cliente
+    participant T as Twilio
+    participant B as Backend
+    participant R as Redis
+    participant W as Worker
+
+    C->>T: Mensagem WhatsApp
+    T->>B: Webhook POST
+    B->>R: Dedup MessageSid 24h
+    B-->>T: TwiML vazio
+    R->>W: Tarefa inbound
+    W->>T: Digitando e resposta API
+    T-->>C: Resposta do agente
+```
+
+Passos:
+
 1. A Twilio chama `POST /api/v1/channels/webhooks/whatsapp` (form-data) quando o cliente envia uma mensagem.
 2. O backend **deduplica** por `MessageSid` (chave Redis, janela de 24h) — evita processar a mesma mensagem duas vezes em caso de retry da Twilio.
 3. Responde imediatamente com **TwiML vazio** (200 OK) e enfileira a tarefa Celery.

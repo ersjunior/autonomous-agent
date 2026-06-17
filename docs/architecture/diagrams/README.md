@@ -1,15 +1,22 @@
 # Diagrams
 
-Diagramas de arquitetura.
-
-> **Status:** ainda não há arquivos de diagrama (draw.io / PNG / Mermaid) versionados aqui. Os diagramas vigentes do projeto são mantidos como **ASCII em blocos de código** dentro da documentação:
+Diagramas de arquitetura do projeto em **Mermaid** (renderizam no GitHub, no Cursor e em visualizadores Markdown compatíveis).
 
 | Diagrama | Onde está |
 |---|---|
-| Fluxo de alto nível (canais → backend → worker → LangGraph/RAG) | [`docs/arquitetura.md`](../../arquitetura.md#diagrama-alto-nível) |
-| Grafo de agentes (LangGraph) | [`docs/agentes.md`](../../agentes.md) e [`docs/documentacao.md`](../../documentacao.md) |
-| Fluxo resumido | [`README.md`](../../../README.md#fluxo-resumido) |
+| Arquitetura de alto nível | [`docs/arquitetura.md`](../arquitetura.md#diagrama-alto-nível) |
+| Componentes e fluxos inbound/outbound | [`docs/documentacao.md`](../documentacao.md) §2 |
+| Grafo LangGraph, RAG e camadas de prompt | [`docs/agentes.md`](../agentes.md) |
+| Fluxos por canal (WhatsApp, Telegram, Voz) | [`docs/canais.md`](../canais.md) |
+| READMEs de `agents/channels/` | `whatsapp/`, `telegram/`, `voice/`, `README.md` |
+| Grafo do orchestrator | [`agents/orchestrator/README.md`](../../../agents/orchestrator/README.md) |
 
-## Para gerar imagens
+## Regras para Mermaid neste projeto
 
-Capturas dos diagramas (ex.: `diagrama-grafo.png`, `diagrama-rag.png`) usadas na apresentação ficam em [`docs/demo-assets/`](../../demo-assets/README.md) e **não** são versionadas (estão no `.gitignore`). Para exportar versões editáveis, prefira draw.io (`.drawio`) ou Mermaid e salve os fontes nesta pasta.
+- Em **sequenceDiagram**, não use `;` no texto das mensagens (o ponto-e-vírgula encerra a instrução no parser).
+- Evite caracteres especiais (`→`, aspas aninhadas) nos rótulos — prefira texto simples.
+- Use `subgraph id [Titulo]` para compatibilidade entre renderizadores.
+
+## Capturas para apresentação
+
+Capturas estáticas (ex.: `diagrama-grafo.png`) usadas na defesa ficam em [`docs/demo-assets/`](../demo-assets/README.md) e **não** são versionadas (`.gitignore`).

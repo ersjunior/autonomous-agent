@@ -25,6 +25,16 @@ agents/
 
 ## Como a IA é invocada
 
+```mermaid
+flowchart LR
+    CANAL[Canal] --> BE[Backend enfileira]
+    BE --> WK[Worker Celery]
+    WK --> GRAFO[agent_graph.ainvoke]
+    GRAFO --> CANAL2[Resposta pelo canal]
+```
+
+Passos equivalentes:
+
 1. Um canal recebe a mensagem e o backend enfileira uma tarefa Celery.
 2. O worker monta o `AgentState` e chama `agent_graph.ainvoke(state)` (`orchestrator/graph.py`).
 3. O grafo identifica a intenção, checa escalonamento e gera a resposta com RAG.

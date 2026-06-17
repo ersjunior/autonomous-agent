@@ -15,6 +15,25 @@ channels/
 
 ## Caminho comum (inbound)
 
+```mermaid
+sequenceDiagram
+    participant C as Canal
+    participant B as Backend
+    participant R as Redis
+    participant W as Worker
+    participant G as LangGraph
+
+    C->>B: Mensagem webhook ou polling
+    B->>R: Dedup e enfileira
+    B-->>C: Resposta imediata OK
+    R->>W: Tarefa inbound
+    W->>C: Indicador digitando
+    W->>G: agent_graph.ainvoke
+    W->>C: Resposta via API do canal
+```
+
+Passos equivalentes:
+
 1. O canal recebe a mensagem (webhook ou polling).
 2. O backend deduplica e enfileira a tarefa Celery, respondendo imediatamente.
 3. O worker aciona o indicador "digitando...", invoca o grafo e envia a resposta pela API do canal.

@@ -93,24 +93,27 @@ Os três serviços de IA (`ollama`, `faster-whisper`, `coqui-tts`) usam o bloco 
 
 ```mermaid
 flowchart LR
-    subgraph Canais
-      WA[WhatsApp / Twilio]
+    subgraph canais [Canais]
+      WA[WhatsApp]
       TG[Telegram]
-      VOZ[Voz / Twilio PSTN]
+      VOZ[Voz PSTN]
     end
-    CF[cloudflared\nCloudflare Tunnel]
-    BE[Backend\nFastAPI]
-    RD[(Redis\nbroker/cache/pubsub)]
-    WK[Worker\nCelery]
+    CF[cloudflared]
+    BE[Backend FastAPI]
+    RD[(Redis)]
+    WK[Worker Celery]
     BEAT[Celery Beat]
-    LG[LangGraph\n+ RAG]
-    PG[(PostgreSQL\n+ pgvector)]
-    OLL[Ollama\nLLM + embeddings]
-    WSP[faster-whisper\nSTT]
-    TTS[Coqui\nTTS]
-    FE[Frontend\nNext.js]
+    LG[LangGraph + RAG]
+    PG[(PostgreSQL pgvector)]
+    OLL[Ollama]
+    WSP[faster-whisper]
+    TTS[Coqui TTS]
+    FE[Frontend Next.js]
 
-    WA & TG & VOZ <--> CF --> BE
+    WA --> CF
+    TG --> CF
+    VOZ --> CF
+    CF --> BE
     BE -->|enfileira| RD
     RD -->|consome| WK
     BEAT -->|agenda| RD
@@ -120,7 +123,7 @@ flowchart LR
     WK --> WSP
     WK --> TTS
     BE <--> PG
-    FE <-->|REST + WebSocket| BE
+    FE <-->|REST e WebSocket| BE
     BE -.eventos.-> RD
 ```
 
@@ -131,30 +134,31 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant C as Cliente
-    participant P as Provedor (Twilio/Telegram)
-    participant B as Backend (FastAPI)
+    participant P as Provedor
+    participant B as Backend
     participant R as Redis
-    participant W as Worker (Celery)
-    participant G as Grafo (LangGraph)
-    participant DB as PostgreSQL/pgvector
+    participant W as Worker
+    participant G as LangGraph
+    participant DB as PostgreSQL
 
     C->>P: Mensagem
-    P->>B: Webhook (POST)
-    B->>R: Dedup (MessageSid) + enfileira tarefa
-    B-->>P: 200 OK / TwiML vazio (imediato)
-    R->>W: Entrega a tarefa
-    W->>W: Resolve lead/agente; checa modo humano
-    alt em modo humano
-        W-->>C: (silencia IA; operador assume)
-    else fluxo normal
-        W->>P: Aciona "digitando..."
-        W->>G: agent_graph.ainvoke(state)
-        G->>DB: RAG (memória + KB) via pgvector
-        G->>G: intenção → escalonamento → resposta
-        G->>DB: persiste interação (longo prazo)
-        G->>R: salva histórico (curto prazo) + publica evento
-        W->>P: Envia resposta pela API do canal
-        P-->>C: Resposta
+    P->>B: Webhook POST
+    B->>R: Dedup e enfileira tarefa
+    B-->>P: 200 OK ou TwiML vazio
+    R->>W: Entrega tarefa
+    W->>W: Resolve lead e checa modo humano
+
+    alt Modo humano ativo
+        W-->>C: Silencia IA, operador assume
+    else Fluxo normal
+        W->>P: Indicador digitando
+        W->>G: agent_graph.ainvoke
+        G->>DB: RAG memoria e KB
+        G->>G: Intencao, escalonamento, resposta
+        G->>DB: Persiste interacao
+        G->>R: Historico e evento
+        W->>P: Resposta via API do canal
+        P-->>C: Resposta ao cliente
     end
 ```
 
@@ -165,6 +169,29 @@ Detalhes verificados:
 
 ### 2.4 Fluxo de uma campanha outbound (ativo) ponta a ponta
 
+```mermaid
+sequenceDiagram
+    participant U as Usuario Dashboard
+    participant B as Backend
+    participant BEAT as Celery Beat
+    participant W as Worker
+    participant G as LangGraph
+    participant P as Provedor Canal
+    participant L as Lead
+
+    U->>B: POST campaigns start
+    B->>BEAT: Ativa acionamento is_running
+    loop A cada 5 min na janela SP
+        BEAT->>W: process_active_activations
+        W->>W: Verifica cadencia e capacidade
+        W->>G: Gera mensagem modo ACTIVE
+        G-->>W: Texto ou audio
+        W->>P: Envia WhatsApp Telegram ou Voz
+        P-->>L: Mensagem ou ligacao
+    end
+```
+
+Passos detalhados:
 1. `POST /api/v1/campaigns/{id}/start` marca a campanha e enfileira/ativa o acionamento.
 2. O **scheduler** roda no Celery Beat a cada 5 min (`process-active-activations`): para cada ativação `is_running`, verifica a **janela de horário** (fuso `America/Sao_Paulo`), a **cadência** (tentativas por período) e a **capacidade global** (slots no Redis).
 3. A tarefa de campanha monta o `AgentState` com a personalidade **ACTIVE** e gera a mensagem pelo grafo.
@@ -490,10 +517,15 @@ Para forçar o formato, quando há `structured_output_schema`, o provider injeta
 
 Definido em `agents/orchestrator/graph.py` e compilado em `agent_graph`:
 
-```
-START → identify_intent → check_escalation ─┬─► generate_response ─┐
-                                            │                      ├─► send_response → END
-                                            └─► escalate ──────────┘
+```mermaid
+flowchart TD
+    START([START]) --> identify_intent
+    identify_intent --> check_escalation
+    check_escalation -->|nao escala| generate_response
+    check_escalation -->|escala| escalate
+    generate_response --> send_response
+    escalate --> send_response
+    send_response --> END_NODE([END])
 ```
 
 | Nó | Função (verificada) |
@@ -555,6 +587,18 @@ No canal voz, a resposta ainda passa por `cap_voice_response_for_telephony` (1 f
 A **identidade é separada da KB**: a identidade autoriza o agente a se apresentar com aquele nome/posicionamento; a KB guarda os fatos (preços, prazos, políticas). O bloco de identidade injeta uma regra explícita: *"NÃO invente preços, prazos, políticas ou detalhes de produto que não estejam na base de conhecimento."* Sem identidade configurada, o agente se apresenta de forma **neutra** (sem assumir marca de terceiros).
 
 ### 9.7 Memória de dois níveis e RAG
+
+```mermaid
+flowchart LR
+    MSG[Mensagem do cliente] --> EMB[Embedding unico]
+    EMB --> MEM[Memoria longo prazo\ninteractions pgvector]
+    EMB --> KB[Base de conhecimento\nkb_chunks pgvector]
+    MEM --> GEN[generate_response]
+    KB --> GEN
+    GEN --> OUT[Resposta do agente]
+    OUT --> REDIS[Historico curto prazo Redis]
+    OUT --> PG[Persiste interacao pgvector]
+```
 
 - **Curto prazo (Redis):** histórico imediato (`chat:{user_id}`, TTL 1h).
 - **Longo prazo (pgvector):** `interactions`, busca por similaridade **isolada por `user_id`** (`rag_top_k=5`; voz usa `voice_rag_top_k=3` e `voice_rag_similarity_threshold=0.5`).

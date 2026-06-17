@@ -45,12 +45,15 @@ Conjunto de microsserviços orquestrados via Docker Compose:
 
 ### Fluxo resumido
 
-```
-Canal (webhook/polling) ou Campanha (Beat)
-  → Backend (FastAPI) → Fila (Redis/Celery) → Worker
-  → Grafo (LangGraph): intenção → escalonamento → resposta com RAG
-  → Resposta pelo canal de origem
-  → Eventos (Redis pub/sub) → Dashboard (WebSocket)
+```mermaid
+flowchart LR
+    CH[Canal webhook ou campanha] --> BE[Backend FastAPI]
+    BE --> RD[(Redis Celery)]
+    RD --> WK[Worker]
+    WK --> LG[LangGraph RAG]
+    LG --> CH2[Resposta pelo canal]
+    LG -.-> EV[Eventos pub/sub]
+    EV --> FE[Dashboard WebSocket]
 ```
 
 O grafo (`agents/orchestrator/graph.py`) identifica a intenção, decide se escala para humano e gera a resposta com RAG em dois níveis (memória do contato + base de conhecimento). Cada etapa publica eventos no Redis, consumidos em tempo real pelo dashboard via WebSocket.

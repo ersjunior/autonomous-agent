@@ -4,6 +4,32 @@ O sistema atende por três canais: **WhatsApp**, **Telegram** e **Voz**. Cada ca
 
 > Os canais são representados pelo enum `ChannelType` (`WHATSAPP`, `TELEGRAM`, `VOICE`). O seed cria um agente/canal padrão para cada um: `WhatsApp_Agent`, `Telegram_Agent`, `Voice_Agent`.
 
+## Visão geral dos três canais
+
+```mermaid
+flowchart TB
+    subgraph entrada [Entrada]
+      WA[WhatsApp Twilio]
+      TG[Telegram]
+      VOZ[Voz Twilio PSTN]
+    end
+    CF[cloudflared]
+    BE[Backend FastAPI]
+    WK[Worker Celery]
+    GRAFO[LangGraph]
+
+    WA --> CF
+    TG --> CF
+    VOZ --> CF
+    CF --> BE
+    BE --> WK
+    WK --> GRAFO
+    GRAFO --> BE
+    BE --> WA
+    BE --> TG
+    BE --> VOZ
+```
+
 ## Telegram
 
 | Aspecto | Detalhe |
@@ -15,6 +41,19 @@ O sistema atende por três canais: **WhatsApp**, **Telegram** e **Voz**. Cada ca
 | Digitando | Envia `sendChatAction(typing)` em loop (~4s) enquanto o agente processa |
 
 No modo polling, o serviço `telegram-polling` consulta a API do Telegram continuamente e enfileira as mensagens recebidas. No modo webhook, o Telegram entrega as atualizações diretamente ao backend (requer URL pública — veja o túnel em [infra.md](infra.md)).
+
+```mermaid
+flowchart LR
+    subgraph polling [TELEGRAM_MODE=polling]
+      TP[telegram-polling] -->|getUpdates| API1[API Telegram]
+      TP -->|enfileira| BE1[Backend]
+    end
+    subgraph webhook [TELEGRAM_MODE=webhook]
+      API2[API Telegram] -->|POST webhook| BE2[Backend]
+    end
+```
+
+> Não rode polling e webhook ao mesmo tempo — a API retorna 409.
 
 ## WhatsApp
 
@@ -30,6 +69,24 @@ O webhook responde imediatamente com TwiML vazio e o processamento ocorre de for
 
 Para desenvolvimento/demonstração, costuma-se usar o **Twilio WhatsApp Sandbox**, que exige opt-in do número (`join <palavra-chave>`) e tem janela de sessão de 24h.
 
+```mermaid
+sequenceDiagram
+    participant C as Cliente
+    participant T as Twilio
+    participant B as Backend
+    participant R as Redis
+    participant W as Worker
+
+    C->>T: Mensagem WhatsApp
+    T->>B: Webhook POST form-data
+    B->>R: Dedup MessageSid
+    B-->>T: TwiML vazio imediato
+    R->>W: Tarefa inbound
+    W->>T: Digitando e resposta via API
+    T-->>C: Resposta do agente
+    T->>B: Status entrega webhook status
+```
+
 ## Voz
 
 | Aspecto | Detalhe |
@@ -40,6 +97,25 @@ Para desenvolvimento/demonstração, costuma-se usar o **Twilio WhatsApp Sandbox
 | Arquivos | `agents/channels/voice/handler.py`, `twilio_voice_client.py`, `tts_stt.py` |
 
 No fluxo outbound, o texto gerado pelo agente é sintetizado em áudio (Coqui) e reproduzido na ligação. O STT por faster-whisper está implementado no manipulador de chamada, mas o **inbound de voz ao vivo** (transcrição bidirecional em tempo real via Twilio Media Streams) ainda não está conectado — veja [roadmap.md](roadmap.md).
+
+```mermaid
+sequenceDiagram
+    participant W as Worker
+    participant B as Backend
+    participant Q as Coqui TTS
+    participant T as Twilio
+    participant C as Cliente
+
+    W->>B: Gera texto pelo grafo
+    W->>Q: Sintetiza MP3
+    W->>T: Inicia chamada PSTN
+    T->>B: Solicita TwiML
+    B-->>T: Play MP3 ou Say fallback
+    T->>C: Audio na ligacao
+    C->>T: Fala do cliente
+    T->>B: Gravacao ou turno
+    B->>W: STT faster-whisper
+```
 
 ## Indicador "digitando..."
 

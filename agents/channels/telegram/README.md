@@ -35,6 +35,17 @@ Inclua `TELEGRAM_BOT_TOKEN` e `TELEGRAM_MODE` no `.env`.
 
 **Não rode polling e webhook ao mesmo tempo** — a API do Telegram retorna 409 se `setWebhook` estiver ativo e você iniciar `run_polling`.
 
+```mermaid
+flowchart LR
+    subgraph polling [TELEGRAM_MODE=polling]
+      TP[telegram-polling] -->|getUpdates| API1[API Telegram]
+      TP -->|enfileira| BE1[Backend]
+    end
+    subgraph webhook [TELEGRAM_MODE=webhook]
+      API2[API Telegram] -->|POST| BE2[Backend webhook]
+    end
+```
+
 ### Polling (profile opcional)
 
 ```bash
@@ -84,6 +95,23 @@ Envie uma mensagem de texto ao bot no Telegram; a resposta passa pelo grafo em `
 | `telegram` | `send_telegram_message` | `lead.aux_values.telegram_id` |
 
 ## Inbound
+
+```mermaid
+sequenceDiagram
+    participant U as Usuario Telegram
+    participant TG as API Telegram
+    participant B as Backend ou polling
+    participant W as Worker
+    participant G as LangGraph
+
+    U->>TG: Mensagem texto
+    TG->>B: Webhook ou getUpdates
+    B->>W: Enfileira inbound
+    W->>G: route_message
+    G-->>W: Resposta texto
+    W->>TG: reply_text
+    TG-->>U: Resposta do agente
+```
 
 O handler responde com texto (`reply_text`): a mensagem recebida passa pelo grafo
 (`agents.orchestrator.graph` via `route_message`) e a resposta gerada é enviada de volta ao chat.

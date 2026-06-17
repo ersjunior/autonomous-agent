@@ -12,10 +12,15 @@ Orquestração da conversa com **LangGraph**. Define o grafo de agentes, o rotea
 
 ## Grafo
 
-```
-START → identify_intent → check_escalation ─┬─► generate_response ─┐
-                                            │                      ├─► send_response → END
-                                            └─► escalate ──────────┘
+```mermaid
+flowchart TD
+    START([START]) --> identify_intent
+    identify_intent --> check_escalation
+    check_escalation -->|nao escala| generate_response
+    check_escalation -->|escala| escalate
+    generate_response --> send_response
+    escalate --> send_response
+    send_response --> END_NODE([END])
 ```
 
 | Nó | Função |
