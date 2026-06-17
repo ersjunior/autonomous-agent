@@ -1,4 +1,4 @@
-"""Unit tests — turn-ready com should_hangup (Play + Hangup)."""
+"""API tests — turn-ready com should_hangup (Play + Hangup)."""
 
 from __future__ import annotations
 
@@ -6,12 +6,23 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.core.config import settings
 from app.services.voice_call_finalize import VOICE_FAREWELL_ORIGEM
 from app.services.voice_turn_state import create_pending_turn, mark_turn_ready
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.api
 
 FAKE_MP3 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.mp3"
+
+
+@pytest.fixture(autouse=True)
+def _public_base_url(monkeypatch):
+    monkeypatch.setattr(settings, "public_base_url", "https://example.com")
+    monkeypatch.setattr(settings, "voice_record_silence_timeout_sec", 2)
+    monkeypatch.setattr(settings, "voice_silence_warning_seconds", 30)
+    monkeypatch.setattr(settings, "voice_silence_close_seconds", 15)
+    monkeypatch.setattr(settings, "voice_turn_max_poll_attempts", 60)
+    monkeypatch.setattr(settings, "voice_turn_poll_pause_seconds", 1)
 
 
 @pytest.mark.asyncio
