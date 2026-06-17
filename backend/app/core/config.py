@@ -55,8 +55,8 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4o"
 
-    # Embeddings (1536 OpenAI text-embedding-3-small, 768 Ollama nomic-embed-text)
-    embedding_dimensions: int = 1536
+    # Embeddings (768 Ollama nomic-embed-text padrão; 1536 com LLM_PROVIDER=openai)
+    embedding_dimensions: int = 768
 
     # Twilio (WhatsApp + Voz)
     twilio_account_sid: Optional[str] = None
@@ -90,10 +90,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: Optional[str] = None
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"  # Rachel (padrão)
 
-    # Provider selection (commercial vs open source)
-    llm_provider: str = "openai"  # openai | ollama
-    stt_provider: str = "openai"  # openai | faster_whisper
-    tts_provider: str = "elevenlabs"  # elevenlabs | coqui
+    # Provider selection (open source por padrão; comercial via env/settings)
+    llm_provider: str = "ollama"  # ollama | openai
+    stt_provider: str = "faster_whisper"  # faster_whisper | openai
+    tts_provider: str = "coqui"  # coqui | elevenlabs
 
     # Ollama (LLM_PROVIDER=ollama)
     ollama_base_url: str = "http://ollama:11434"
