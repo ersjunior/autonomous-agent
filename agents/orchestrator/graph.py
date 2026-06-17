@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from agents.events import publish_event_async
 from agents.memory.long_term import LongTermMemory
 from agents.memory.short_term import ShortTermMemory
+from agents.orchestrator.booking_handler import process_booking_turn
 from agents.orchestrator.router import route_after_escalation_check
 from agents.orchestrator.state import AgentState
 from agents.services.embedding_service import embed_text
@@ -185,6 +186,14 @@ async def _fetch_rag_context(state: AgentState) -> tuple[list[dict], list[dict],
     return rag_memories, kb_chunks, rag_ms
 
 
+async def handle_booking(state: AgentState) -> AgentState:
+    """Avança fluxo de agendamento (texto) e prepara contexto para o LLM de resposta."""
+    if (state.get("channel") or "").lower() == "voice":
+        return {}
+    result = await process_booking_turn(state)
+    return result
+
+
 async def generate_response(state: AgentState) -> AgentState:
     rag_memories, kb_chunks, rag_ms = await _fetch_rag_context(state)
     t0 = time.perf_counter()
@@ -199,6 +208,7 @@ async def generate_response(state: AgentState) -> AgentState:
         agent_personality=state.get("agent_personality"),
         agent_mode=state.get("agent_mode"),
         agent_config=state.get("agent_config"),
+        booking_context=state.get("booking_context"),
     )
     response_ms = (time.perf_counter() - t0) * 1000
     if rag_ms > 0:
@@ -265,6 +275,7 @@ def create_graph():
     builder.add_node("identify_intent", identify_intent)
     builder.add_node("check_escalation", check_escalation)
     builder.add_node("escalate", escalate)
+    builder.add_node("handle_booking", handle_booking)
     builder.add_node("generate_response", generate_response)
     builder.add_node("send_response", send_response)
 
@@ -275,10 +286,11 @@ def create_graph():
         route_after_escalation_check,
         {
             "escalate": "escalate",
-            "generate_response": "generate_response",
+            "handle_booking": "handle_booking",
         },
     )
     builder.add_edge("escalate", "send_response")
+    builder.add_edge("handle_booking", "generate_response")
     builder.add_edge("generate_response", "send_response")
     builder.add_edge("send_response", END)
 

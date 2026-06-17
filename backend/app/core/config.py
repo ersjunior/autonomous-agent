@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     appointment_slot_minutes: int = 30
     appointment_window_start: str = "09:00"
     appointment_window_end: str = "18:00"
+    booking_state_ttl_seconds: int = 1800
+    booking_offer_business_days: int = 5
+    booking_max_offered_slots: int = 5
 
     # URL pública do backend (ngrok, domínio, IP, Cloudflare Tunnel) — sem barra final
     public_base_url: Optional[str] = None

@@ -38,4 +38,7 @@ async def enrich_agent_context_with_identity(
     base_config = dict(enriched.get("agent_config") or {})
     enriched["agent_config"] = resolve_identity_config(workspace_identity, base_config)
     enriched["owner_user_id"] = str(tenant_id)
+    if lead is not None:
+        enriched["lead_id"] = str(lead.id)
+        enriched["lead_name"] = (lead.nome_cliente or "").strip() or None
     return enriched

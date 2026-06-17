@@ -37,10 +37,10 @@ def build_initial_state(
 
 
 def route_after_escalation_check(state: AgentState) -> str:
-    """Conditional edge: escalate to human or generate an automated response."""
+    """Conditional edge: escalate to human or continue to booking/response pipeline."""
     if state.get("should_escalate"):
         return "escalate"
-    return "generate_response"
+    return "handle_booking"
 
 
 async def route_message(

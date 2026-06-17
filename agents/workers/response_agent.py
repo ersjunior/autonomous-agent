@@ -210,6 +210,7 @@ def build_response_messages(
     *,
     rag_memories: list[dict] | None = None,
     kb_chunks: list[dict] | None = None,
+    booking_context: str | None = None,
     agent_personality: str | None = None,
     agent_mode: str | None = None,
     agent_config: dict | None = None,
@@ -220,8 +221,8 @@ def build_response_messages(
     Ordem dos blocos de sistema:
       1. prompt global → 2. identidade institucional (se config.identity)
       3. personality → 4. RECEPTIVE (se aplicável) → 5. VOZ (se canal voice)
-      6. KB institucional → 7. memória de contato → 8. canal/intent/entidades
-      9. histórico → 10. mensagem atual
+      6. KB institucional → 7. agendamento (se houver) → 8. memória de contato
+      9. canal/intent/entidades → 10. histórico → 11. mensagem atual
     """
     context = (
         f"Canal: {channel}\n"
@@ -261,6 +262,9 @@ def build_response_messages(
     if kb_block:
         messages.append({"role": "system", "content": kb_block})
 
+    if booking_context:
+        messages.append({"role": "system", "content": booking_context})
+
     rag_block = format_rag_context_block(rag_memories or [])
     if rag_block:
         messages.append({"role": "system", "content": rag_block})
@@ -279,6 +283,7 @@ async def generate_response(
     channel: str,
     rag_memories: list[dict] | None = None,
     kb_chunks: list[dict] | None = None,
+    booking_context: str | None = None,
     agent_personality: str | None = None,
     agent_mode: str | None = None,
     agent_config: dict | None = None,
@@ -293,6 +298,7 @@ async def generate_response(
         channel,
         rag_memories=rag_memories,
         kb_chunks=kb_chunks,
+        booking_context=booking_context,
         agent_personality=agent_personality,
         agent_mode=agent_mode,
         agent_config=agent_config,
@@ -318,6 +324,9 @@ async def generate_response(
     kb_block = format_kb_context_block(kb_chunks or [])
     if kb_block:
         logger.debug("KB context injected (%s chunks)", len(kb_chunks or []))
+
+    if booking_context:
+        logger.debug("Booking context injected for channel=%s", channel)
 
     rag_block = format_rag_context_block(rag_memories or [])
     if rag_block:

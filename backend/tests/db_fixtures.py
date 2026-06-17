@@ -41,6 +41,7 @@ DEFAULT_TEST_DATABASE_URL = (
 REDIS_CLEANUP_PATTERNS = (
     "human_mode:*",
     "human_mode_notified:*",
+    "booking:*",
     "global_capacity_holder:*",
     "outbound_capacity:*",
     "contact_capacity:*",

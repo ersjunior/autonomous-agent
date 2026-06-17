@@ -14,6 +14,7 @@ IntentType = Literal[
     "purchase",
     "cancel",
     "escalate",
+    "schedule",
     "other",
 ]
 
@@ -21,9 +22,18 @@ ComplaintSeverity = Literal["low", "high"]
 
 SYSTEM_PROMPT = """Você é um classificador de intenções para atendimento ao cliente.
 Analise a mensagem atual do cliente e o histórico da conversa.
-Identifique a intenção principal entre: greeting, question, complaint, purchase, cancel, escalate, other.
+Identifique a intenção principal entre: greeting, question, complaint, purchase, cancel, escalate, schedule, other.
 Extraia entidades relevantes (produto, pedido, problema, datas, valores, etc.) em um dicionário.
+Quando aplicável, inclua em entities: preferred_date, preferred_time, appointment_type (reunião, visita, demonstração…).
 Atribua confidence entre 0 e 1 conforme sua certeza na classificação.
+
+Regras para schedule (agendamento):
+- Marque intent=schedule quando o cliente quer marcar, agendar ou remarcar reunião, visita,
+  demonstração ou horário (ex.: "queria agendar uma reunião", "posso marcar uma visita?",
+  "tem horário amanhã?", "quero marcar para terça").
+- Se o cliente só pergunta horário de funcionamento sem intenção de marcar, use question, não schedule.
+- Extraia preferred_date/preferred_time/appointment_type em entities quando o cliente mencionar
+  (ex.: "amanhã de tarde" → preferred_date=amanhã; preferred_time=tarde).
 
 Regras para escalate (prioridade alta):
 - Marque intent=escalate quando o cliente pedir EXPLICITAMENTE humano, atendente, pessoa real,
