@@ -1,230 +1,330 @@
 # Checklist Pré-Demo — Autonomous Agent
 
-Guia de subida e validação ponta a ponta antes de uma apresentação ao vivo.
-Ambiente: Windows + PowerShell. Banco/serviços via Docker Compose.
+Checklist **operacional** para preparar a defesa do TCC. A **sequência da apresentação** (o que falar, tempos, planos B) está em [`ROTEIRO_APRESENTACAO.md`](ROTEIRO_APRESENTACAO.md) — **não duplique o roteiro aqui**.
 
-> **Regra de ouro:** rode este checklist **inteiro** com folga (idealmente 30+ min antes
-> da demo). Os canais externos (WhatsApp/Voz via Twilio) têm latência e sessões que não
-> dá para apressar.
+Ambiente de referência: **Windows + PowerShell**, stack via Docker Compose (`Makefile` na raiz).
+
+**Compose (atalho mental — todos os comandos `docker compose` usam):**
+
+```powershell
+docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml
+```
 
 ---
 
-## 0. Variáveis de túnel no `.env` (conferir uma vez)
+# PARTE A — PREPARAÇÃO NA VÉSPERA
 
-A URL pública é **fixa** (named tunnel + domínio próprio). Confirme que o `.env` está em
-modo named:
+> Com tempo e margem para errar, corrigir e reensaiar. Faça **1–2 dias antes** da banca.
+
+## A1. Gerar demo-assets (planos B do roteiro)
+
+Pasta: `docs/demo-assets/` (binários gitignored — ver [`demo-assets/README.md`](demo-assets/README.md)).
+
+### A1a. Vídeo backup da ligação ★ crítico
+
+- [ ] Gravar `docs/demo-assets/ligacao-voz-backup.mp4` (MP4 no laptop; não commitar)
+
+**Sequência exata a gravar (tela + áudio):**
+
+1. [ ] Abrir `/dashboard/appointments` — lista **vazia** ou sem o horário que será agendado (zoom legível).
+2. [ ] Iniciar gravação de tela **com áudio** da ligação.
+3. [ ] Disparar/receber ligação de voz (Twilio).
+4. [ ] Cliente: *"Quero marcar um horário."*
+5. [ ] Agente oferece **um slot por voz** (por extenso, ex.: *"terça-feira às quatorze horas, serve?"*).
+6. [ ] Cliente: *"Sim."* → agente confirma agendamento.
+7. [ ] Agente pergunta se há mais alguma coisa; cliente encerra → **desligamento autônomo** (`Hangup`).
+8. [ ] Voltar ao navegador → **Atualizar** `/dashboard/appointments` → registro novo visível (`created_by=AGENT`, canal `voice`).
+9. [ ] Parar gravação; conferir que áudio e dashboard aparecem no vídeo.
+
+> Plano B do Bloco 3: se a ligação ao vivo falhar em ~45 s, tocar este vídeo.
+
+### A1b. Saída do RAG
+
+- [ ] Limpar Redis de teste (opcional antes de gerar artefato):
+
+```powershell
+docker exec autonomous-agent-redis redis-cli DEL chat:RAGTEST
+```
+
+- [ ] Copiar e rodar script real `backend/scripts/validate_rag.py`:
+
+```powershell
+docker cp backend/scripts/validate_rag.py autonomous-agent-worker:/tmp/validate_rag.py
+docker exec autonomous-agent-worker python /tmp/validate_rag.py *> docs/demo-assets/validate-rag-output.txt
+```
+
+- [ ] Conferir no `.txt`: `Bloco RAG injetado? SIM`, `Vazamento: NAO (OK)`, resposta com horário 9h–18h.
+
+### A1c. Saída do Erlang (opcional)
+
+```powershell
+docker exec -e MAX_WEIGHTED_CAPACITY_OVERRIDE=2 autonomous-agent-worker `
+  python /workspace/backend/scripts/validate_layer_rc_capacity.py *> docs/demo-assets/validate-layer-rc-output.txt
+```
+
+- [ ] Conferir linhas `[OK]` / SL de referência (~87% para A=10, N=14).
+
+### A1d. Áudio Settings (opcional)
+
+- [ ] Front → **Configurações → Áudio** → Gerar e ouvir → salvar como `docs/demo-assets/voz-demo.mp3`.
+
+---
+
+## A2. Ensaiar apresentação cronometrada
+
+- [ ] Ler [`ROTEIRO_APRESENTACAO.md`](ROTEIRO_APRESENTACAO.md) de ponta a ponta.
+- [ ] Ensaio **com cronômetro** (~25 min): Blocos 1→2→**3 (clímax voz)**→4 (RAG+Erlang)→5→6.
+- [ ] Validar que a **ligação + agendamento + hangup** funciona de ponta a ponta.
+- [ ] Ensaiar **corte do Bloco 5** se passar de min 18 no Bloco 4 (roteiro: pular reforço se `< 8 min` restantes).
+- [ ] Ensaiar **Plano B**: trocar ligação pelo vídeo `ligacao-voz-backup.mp4` em ≤30 s.
+
+---
+
+## A3. Sanity final do repositório
+
+- [ ] `make test` (unitários) — verde localmente.
+- [ ] (Opcional) `make test-integration` + `make test-api` se houve mudanças recentes.
+- [ ] CI GitHub Actions verde na branch que será apresentada.
+- [ ] Rodar [`SMOKE_TEST.md`](SMOKE_TEST.md) completo **uma vez** na véspera (não substitui Parte B no dia).
+
+---
+
+## A0. Conferir `.env` (véspera ou antes da Parte B)
+
+- [ ] Túnel em modo **named** (URL fixa para webhooks):
 
 ```
 TUNNEL_MODE=named
-CLOUDFLARE_TUNNEL_TOKEN=eyJ...        (token do túnel; segredo, nunca commitar)
-PUBLIC_BASE_URL=https://autonomous-agent.org
+PUBLIC_BASE_URL=https://<seu-dominio>
+CLOUDFLARE_TUNNEL_TOKEN=...   # segredo — nunca commitar
 ```
-
-Conferir sem expor o token:
 
 ```powershell
 Select-String -Path .env -Pattern "TUNNEL_MODE","PUBLIC_BASE_URL"
 ```
 
-> Se `TUNNEL_MODE=temporary`, a URL volta a ser aleatória (`trycloudflare.com`) e o webhook
-> do WhatsApp quebra. Para a demo, **sempre** `named`.
+> `TUNNEL_MODE=temporary` → URL aleatória → webhooks quebram na demo.
 
 ---
 
-## 1. Subir a stack
+# PARTE B — PREPARAÇÃO NO DIA
+
+> **30–45 min antes** da banca. Rápido, sequencial, à prova de erro. Marque cada `[ ]`.
+
+## B1. Subir ambiente
+
+- [ ] Na raiz do repo:
 
 ```powershell
-make setup
+make up
 ```
 
-O `setup` faz, em ordem: sobe os containers (`up -d --build`), espera o Ollama responder,
-baixa os modelos (`llama3.1` + `nomic-embed-text`), aquece o modelo e roda as migrations.
+> 1ª subida do zero ou após `make down`: use `make setup` (modelos + migrate + warm).
 
-> Se já estava no ar e você só quer garantir que está atualizado, `make up` basta (sobe +
-> rebuild). Use `make setup` quando subir do zero ou após `make down`.
-
-### 1a. Subir o Telegram polling (passo manual — NÃO está no `make setup`)
-
-O `telegram-polling` é um profile separado. Sem ele, o Telegram **não recebe** mensagens.
+- [ ] Telegram (profile separado — **não** entra no `make setup`):
 
 ```powershell
 docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml --profile telegram-polling up -d telegram-polling
 ```
 
----
-
-## 2. Confirmar que tudo está de pé
+- [ ] Conferir serviços:
 
 ```powershell
 docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml ps
 ```
 
-Devem estar **Up / Healthy** (os essenciais para a demo):
+Essenciais **Up / Healthy**: `backend`, `worker`, `celery-beat`, `postgres`, `redis`, `ollama`, `cloudflared`, `frontend`, `coqui-tts`, `faster-whisper`, `telegram-polling` (se usar Telegram).
 
-- `backend`
-- `worker`
-- `celery-beat`
-- `postgres`
-- `redis`
-- `ollama`
-- `cloudflared`
-- `frontend`
-- `telegram-polling` (subido no passo 1a)
-- `coqui-tts`, `faster-whisper` (para voz)
-
-### 2a. Modelos do Ollama corretos
+- [ ] Modelos Ollama:
 
 ```powershell
 docker exec autonomous-agent-ollama ollama list
 ```
 
-Devem aparecer **`llama3.1`** e **`nomic-embed-text`**. Se faltar algum:
+Esperado: `llama3.1` + `nomic-embed-text`. Se faltar: `make pull-models`.
+
+- [ ] Aquecer LLM (reduz latência na demo):
 
 ```powershell
-make pull-models
+make warm-ollama
 ```
 
-### 2b. Túnel named conectado (URL fixa)
+- [ ] Logs cloudflared (túnel named):
 
 ```powershell
 docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml logs --tail=40 cloudflared | Select-String -Pattern "Modo named","Registered tunnel","ERR" -CaseSensitive:$false
 ```
 
-Esperado: `Modo named` + `Registered tunnel connection`. **Não** deve aparecer a tela de
-`--help` em loop.
+---
 
-### 2c. Health pela URL pública (prova o roteamento do túnel)
+## B2. Conferir acessibilidade
+
+- [ ] **Health público** (substitua pela sua `PUBLIC_BASE_URL`):
 
 ```powershell
-Invoke-RestMethod -Uri "https://autonomous-agent.org/health"
+Invoke-RestMethod -Uri "https://<PUBLIC_BASE_URL>/health"
 ```
 
-Deve retornar o health do backend. Se der erro de DNS/conexão, o túnel não está roteando —
-volte ao 2b.
+- [ ] **Health local:** http://localhost:8000/health
 
-### 2d. Backend resolveu a URL fixa
+- [ ] Front → **Configurações → aba Túnel & Webhooks**:
+  - [ ] Badge **verificado** (health probe OK)
+  - [ ] Auto-refresh ~10 s ativo (aba aberta)
+  - [ ] URL pública resolvida = `PUBLIC_BASE_URL` do `.env`
+  - [ ] URLs de webhook WhatsApp/Telegram copiáveis
+
+- [ ] **Versão 1.0.0** visível no header de Configurações (`NEXT_PUBLIC_APP_VERSION`).
+
+- [ ] Twilio WhatsApp Sandbox (se usar WhatsApp):
+  - [ ] Webhook POST → `https://<PUBLIC_BASE_URL>/api/v1/channels/webhooks/whatsapp`
+  - [ ] Sessão 24h ativa: enviar `join <palavra-chave>` ao sandbox se necessário
+
+---
+
+## B3. Preparar estado para a demo
+
+### B3a. Modo humano (saneamento)
+
+Leads em modo humano ficam **mudos**. Liberar contatos de teste:
 
 ```powershell
-docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml logs backend | Select-String -Pattern "TUN-1"
+docker exec autonomous-agent-backend python -c "from app.services.human_handoff import exit_human_mode; [exit_human_mode(ch,uid) for ch,uid in [('whatsapp','whatsapp:+5511999999999'),('telegram','SEU_TELEGRAM_ID'),('voice','+5511999999999')]]; print('liberados')"
 ```
 
-Esperado: `TUN-1 URL pública resolvida (...): https://autonomous-agent.org`.
+> Ajuste `(canal, user_id)` para **seus** contatos. Conferir também: Monitoramento → Modo humano.
 
----
+### B3b. Base de conhecimento (KB)
 
-## 3. Saneamento de estado (evita os silêncios da IA)
+- [ ] **Conhecimento** (`/dashboard/knowledge`): conteúdo da **empresa fictícia da demo** — **NÃO** texto do TCC.
+- [ ] Documentos relevantes com status **READY** (RAG ativo).
 
-### 3a. Liberar leads presos em "modo humano"
+### B3c. Limpar histórico curto (Redis)
 
-Se um lead escalou para humano num teste anterior, ele fica **mudo** (a IA não responde).
-Libere os contatos de teste antes da demo:
+Antes do script RAG ao vivo (roteiro Bloco 4a):
 
 ```powershell
-docker exec autonomous-agent-backend python -c "from app.services.human_handoff import exit_human_mode; [exit_human_mode(ch,uid) for ch,uid in [('whatsapp','whatsapp:+5511948660628'),('telegram','5043259127')]]; print('liberados')"
+docker exec autonomous-agent-redis redis-cli DEL chat:RAGTEST
 ```
 
-> Ajuste os pares `(canal, user_id)` para os contatos que você vai usar na demo.
-> Listar quem está preso: `GET /api/v1/handoff/active` (ou a aba Monitoramento no front).
+> Limpar outros `chat:*` de teste se necessário: `redis-cli KEYS chat:*` (cuidado em prod).
 
-### 3b. Conferir a base de conhecimento (KB)
+### B3d. ★ Disponibilidade (Fase D) — CRÍTICO para agendamento
 
-A KB define a identidade do agente. Para a demo, ela deve ter **só** o conteúdo do caso de
-uso que você vai mostrar — **nunca** o texto do próprio TCC (senão o agente "vira" o
-exemplo fictício do documento).
+- [ ] Abrir http://localhost:3000/dashboard/availability
+- [ ] Grade **tenant** (e agente de voz, se override): dias/horários cobrem o slot que você vai demonstrar.
+- [ ] Exemplo: se a demo é **terça às 14h**, terça deve estar **ativo** com faixa que inclui 14:00–14:30.
+- [ ] **Grade vazia / só manhã** enquanto você demonstra à tarde → **zero slots** → demo quebra.
 
-- Front → **Conhecimento**: confirme que não há documentos de teste/TCC poluindo.
-- Sem KB relevante, o agente atua **neutro** (não inventa identidade) — comportamento
-  esperado.
+> Hierarquia: **agente > tenant > default**. Se o agente de voz tem regras próprias, configure **nesse** escopo.
 
----
+### B3e. ★ Lead válido — CRÍTICO para agendamento
 
-## 4. Webhook do Twilio (WhatsApp)
-
-Com a URL fixa, isto é configurado **uma vez** e não muda mais. Só confira que está certo:
-
-- Twilio Console → Messaging → Try it out → **Sandbox settings**
-- Campo **"When a message comes in"**:
-  `https://autonomous-agent.org/api/v1/channels/webhooks/whatsapp`
-- Método: **POST**
-
-### 4a. Sessão do WhatsApp Sandbox ativa
-
-O sandbox tem janela de 24h. Se faz mais de um dia que você não interage, **reabra a
-sessão**: do seu celular, mande `join <palavra-chave>` para o número do sandbox
-(`+1 415 523 8886`). A palavra-chave está no painel do sandbox.
-
-> O número do sandbox é dos EUA; a entrega para BR funciona mas pode ter latência.
-> Para a demo, mande uma mensagem de teste alguns minutos antes para "aquecer" a sessão.
+- [ ] Lead existe em `/dashboard/leads` com telefone/`telegram_id` **igual** ao contato que vai ligar/mensagear.
+- [ ] Sem `lead_id` resolvido no canal, o bot **não grava** appointment (degrada com mensagem honesta).
+- [ ] Lead **não** preso em status terminal que impeça contexto (conferir última interação se inbound).
 
 ---
 
-## 5. Teste de fumaça — um por canal
+## B4. Fumaça rápida por canal
 
-Faça cada um e confirme a resposta **antes** da apresentação.
+### B4a. Telegram
 
-### 5a. Telegram
+- [ ] Enviar **"oi"** → digitando + resposta.
+- [ ] 2ª mensagem seguida → responde (pool OK).
 
-1. Mande **"oi"** para o bot (`@finance_agent_ai_bot`).
-2. Esperado: indicador **"digitando..."** aparece, e a IA responde de forma neutra
-   (ou conforme a KB), sem inventar empresa.
-3. Mande uma 2ª e 3ª mensagem seguidas — todas devem responder (valida o pool/event loop).
+### B4b. WhatsApp
 
-### 5b. WhatsApp
+- [ ] Enviar **"oi"** → digitando + resposta.
+- [ ] Se mudo: B3a (modo humano) + sessão sandbox (B2).
 
-1. Mande **"oi"** para o número do sandbox pelo seu celular.
-2. Esperado: **"digitando..."** + resposta da IA.
-3. Se ficar mudo: rode o saneamento do **3a** (modo humano) e confira a sessão do **4a**.
+### B4c. Voz
 
-### 5c. Voz
+**Opção 1 — pipeline sem Twilio (rápido):**
 
-1. Dispare/receba a ligação conforme seu fluxo de voz.
-2. Esperado: a chamada é atendida e o agente fala.
-3. **Outbound voz:** tenta **Coqui XTTS** (português) via `<Play>` MP3; se Coqui/ffmpeg falhar, fallback **Polly pt-BR** (`<Say>`). Mencione o fallback se a demo usar voz.
+```powershell
+docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_voice_inbound.py
+```
 
-### 5d. Teste de acionamento (atalho pelo front)
+Esperado: STT → grafo → TTS, tempos impressos, `[OK]` no final.
 
-Front → **Acionamento → Teste de acionamento**: escolha agente, lead e canal e dispare.
-O resultado (sucesso/erro + resposta gerada) aparece na tela — útil para validar rápido
-sem depender do celular.
+**Opção 2 — ligação curta real (recomendado no dia se possível):**
+
+- [ ] Uma ligação de teste; agente fala (Coqui `<Play>` ou fallback Polly `<Say>`).
+
+### B4d. ★ Fumaça de agendamento (texto)
+
+- [ ] WhatsApp **ou** Telegram: *"Quero agendar"* → escolher slot → confirmar.
+- [ ] Conferir registro em `/dashboard/appointments`.
+- [ ] **Cancelar** o agendamento de teste na UI (ou PATCH status `CANCELLED`) para **não poluir** a demo ao vivo.
 
 ---
 
-## 6. Acompanhar logs durante a demo (opcional)
+## B5. Telas abertas (ordem sugerida do roteiro)
 
-Em uma janela separada, deixe os logs do worker rolando para ver o processamento ao vivo:
+Abas prontas no navegador (login: `admin@admin.com` / `admin`):
+
+| # | URL | Uso |
+|---|-----|-----|
+| 1 | http://localhost:3000/dashboard/appointments | Clímax — ciclo fechado voz |
+| 2 | http://localhost:3000/dashboard/availability | Conferir grade (B3d) |
+| 3 | http://localhost:3000/dashboard/capacity | Erlang C (Bloco 4b) |
+| 4 | http://localhost:3000/dashboard/knowledge | RAG / KB (Bloco 4a) |
+| 5 | http://localhost:3000/dashboard/monitoring | Eventos / handoff (opcional) |
+| 6 | http://localhost:3000/dashboard/settings | Túnel (aba) + versão 1.0.0 |
+| 7 | http://localhost:8000/docs | Swagger (referência) |
+
+- [ ] Vídeo backup acessível no player (`docs/demo-assets/ligacao-voz-backup.mp4`).
+- [ ] Terminal com comando RAG copiado (Bloco 4a) ou `.txt` do plano B aberto.
+
+---
+
+## B6. Logs durante a demo (opcional)
 
 ```powershell
 docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml logs -f worker | Select-String -Pattern "sqlalchemy" -NotMatch
 ```
 
-O `-NotMatch sqlalchemy` corta o ruído de SQL e deixa só tasks/erros.
+---
+
+# Pontos de falha conhecidos
+
+| Sintoma | Causa provável | Ação rápida |
+|---------|----------------|-------------|
+| Túnel / DNS caiu | `temporary` no `.env`; cloudflared down | B1: named + logs cloudflared; `up -d cloudflared` |
+| `/health` público falha | Token/domínio; backend down | B1 ps; B2 health local → público |
+| Settings → Túnel ≠ verificado | Health probe falhou | Conferir backend + URL; aguardar auto-refresh 10s |
+| Webhook não responde | URL errada no Twilio/Telegram | B2: copiar URL da aba Túnel |
+| WhatsApp mudo | Modo humano / sessão 24h | B3a; `join` sandbox |
+| Telegram mudo | Polling não subiu | B1 profile `telegram-polling` |
+| **Ligação não cai em ~45 s** | Twilio/rede/túnel | **Tocar `ligacao-voz-backup.mp4`** (roteiro Plano B) |
+| Agente não oferece horário | **Grade availability vazia/errada** | **B3d** — ajustar `/availability` |
+| Agendamento não grava | **Sem lead_id** para o contato | **B3e** — cadastrar lead com mesmo número/id |
+| Slot sempre ocupado | Appointment de teste não limpo | Cancelar em `/appointments` (B4d) |
+| RAG vazio na demo | KB sem READY / threshold alto | B3b; Settings → RAG thresholds |
+| IA lenta na 1ª msg | Ollama frio | `make warm-ollama` (B1) |
+| Voz sem áudio Coqui | GPU/serviço coqui-tts | ps coqui-tts; mencionar fallback Polly |
+| Agente "vira" empresa fictícia da KB errada | TCC na KB | B3b — remover docs errados |
 
 ---
 
-## Pontos de falha conhecidos (referência rápida)
+# Cola de 1 minuto (dia da banca)
 
-| Sintoma | Causa provável | Correção |
-|---|---|---|
-| Telegram não recebe | `telegram-polling` não subiu | Passo **1a** |
-| WhatsApp envia mas não recebe | Webhook errado / sessão 24h | Passos **4** e **4a** |
-| IA fica muda num canal | Lead preso em modo humano | Passo **3a** |
-| Agente "vira" empresa fictícia | TCC/teste na KB | Passo **3b** |
-| URL do túnel mudou / DNS não resolve | `.env` em `temporary` | Passo **0** (`named`) |
-| `.env` novo não aplicou | Container não releu o `.env` | Recriar: `up -d --force-recreate <serviço>` (não só restart) |
-| 2ª mensagem trava no canal | (já corrigido — pool por event loop) | — |
-| Modelo errado no Ollama | Faltam `llama3.1`/`nomic-embed-text` | Passo **2a** |
+```
+1.  .env named?              Select-String .env TUNNEL_MODE, PUBLIC_BASE_URL
+2.  make up                 (+ telegram-polling profile se Telegram)
+3.  make warm-ollama        latência
+4.  ps                      tudo Up/Healthy
+5.  /health público         Invoke-RestMethod https://<PUBLIC_BASE_URL>/health
+6.  Settings → Túnel        status verificado + v1.0.0
+7.  B3d availability        slots no horário da demo ★
+8.  B3e lead                número/id bate com contato ★
+9.  B3a liberar humano      exit_human_mode
+10. B4 fumaça               TG/WA "oi" + agendamento teste → cancelar
+11. Abas prontas            appointments, capacity, knowledge
+12. Vídeo backup            ligacao-voz-backup.mp4 à mão
+13. ROTEIRO                 docs/ROTEIRO_APRESENTACAO.md → apresentar
+```
 
 ---
 
-## Resumo de 1 minuto (cola rápida)
-
-```
-1. .env em named?            -> Select-String -Path .env -Pattern "TUNNEL_MODE"
-2. make setup                -> sobe tudo + modelos + migrate
-3. telegram-polling          -> docker compose ... --profile telegram-polling up -d telegram-polling
-4. ps                        -> tudo Up/Healthy
-5. /health pela URL fixa     -> Invoke-RestMethod https://autonomous-agent.org/health
-6. liberar modo humano       -> exit_human_mode dos leads de teste
-7. webhook Twilio + join     -> sessao WhatsApp ativa
-8. fumaça: Telegram/WhatsApp/Voz "oi" -> responde + digitando
-```
+*Alinhado a [`ROTEIRO_APRESENTACAO.md`](ROTEIRO_APRESENTACAO.md) e [`documentacao.md`](documentacao.md): clímax voz, RAG+Erlang, 797 testes, v1.0.0, availability Fase D, agenda Postgres.*
