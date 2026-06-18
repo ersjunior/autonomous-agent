@@ -30,7 +30,6 @@ Há stubs previstos no código para componentes que hoje são tratados de forma 
 | Ferramenta | Estado |
 |---|---|
 | Integração com CRM | TODO (`agents/tools/crm_tool.py`) |
-| Integração com calendário | TODO (`agents/tools/calendar_tool.py`) |
 
 ## Infraestrutura
 
@@ -53,5 +52,9 @@ Para referência, alguns marcos já entregues:
 - **Indicador "digitando...":** implementado para Telegram e WhatsApp.
 - **Calibração do escalonamento:** ajuste do limiar de confiança para reduzir escaladas indevidas em mensagens curtas.
 - **Agente neutro:** reforço no prompt padrão para o agente não inventar identidade quando não há base de conhecimento cadastrada.
+- **Agendamento conversacional:** intent `schedule` nos três canais (WhatsApp, Telegram, voz), estado Redis e gravação em `appointments` via `calendar_tool` / `appointment_service`.
+- **Disponibilidade configurável (Fase D):** regras por tenant e agente (`availability_rules`) com resolução hierárquica.
+- **Encerramento autônomo de voz:** despedida + wrap-up + hangup após confirmação de agendamento ou fim do atendimento.
+- **Otimização de latência TTS:** cache de speaker no fluxo de voz.
 
 Para o checklist operacional de demonstração, veja [CHECKLIST_DEMO.md](CHECKLIST_DEMO.md).

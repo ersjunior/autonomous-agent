@@ -19,7 +19,7 @@ frontend/src/
 
 │           activation, knowledge, monitoring, metrics,
 
-│           capacity, settings      # Telas de gestão
+│           capacity, settings, appointments, availability  # Telas de gestão
 
 ├── components/
 
@@ -33,7 +33,7 @@ frontend/src/
 
 └── lib/
 
-├── api*.ts                     # Clientes da API (entities, activation, monitoring, tunnel)
+├── api*.ts                     # Clientes da API (entities, activation, monitoring, tunnel, availability)
 
 ├── credentials.ts, protection.ts, csv.ts
 
@@ -51,10 +51,14 @@ frontend/src/
 | Tabulações | Catálogo de tabulações (códigos SIP/NEG + customizados) |
 | Acionamento | Motor de acionamento, teste ad-hoc e histórico de disparos |
 | Conhecimento | Upload/cadastro de documentos da KB, status de ingestão, chunks |
+| Agendamentos | Agenda interna — listagem, filtros, criação/cancelamento manual (`/dashboard/appointments`) |
+| Disponibilidade | Grade semanal de horários (tenant ou agente) para geração de slots (`/dashboard/availability`) |
 | Monitoramento | Eventos em tempo real (WebSocket) + histórico de conversas + modo humano |
 | Métricas | Funil de campanha/base e fila de call center (gráficos) |
 | Capacidade | Estimativa de hardware + dimensionamento por Erlang C |
-| Configurações | Seleção de providers de IA, prompts/RAG, identidade da empresa, áudio (voz) e túnel |
+| Configurações | Seleção de providers de IA, prompts/RAG, identidade da empresa, áudio (voz), aba **Túnel & Webhooks** (auto-refresh a cada 10s) e versão **1.0.0** no header |
+
+A versão do produto (`1.0.0`) vem de `frontend/package.json`, exposta via `NEXT_PUBLIC_APP_VERSION` (`next.config.js`). A aba **Túnel & Webhooks** consulta `GET /api/v1/tunnel/status` ao abrir e repete a cada 10s enquanto ativa.
 
 ## Autenticação
 

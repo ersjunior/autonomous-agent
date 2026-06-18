@@ -72,7 +72,7 @@ O grafo (`agents/orchestrator/graph.py`) identifica a intenção, decide se esca
 - **Dimensionamento de capacidade:** Erlang C + capacidade global ponderada por canal, e tabulação de atendimentos (padrão call center).
 - **Monitoramento em tempo real:** WebSocket com feed de eventos e métricas no dashboard.
 - **Configuração dinâmica (hot-reload):** providers de IA, prompts e parâmetros ajustáveis pela tela de Configurações, sem reiniciar.
-- **Qualidade:** suíte de **683 testes** automatizados (pytest) + CI no GitHub Actions.
+- **Qualidade:** suíte de **797 testes** automatizados (pytest) + CI no GitHub Actions.
 
 ## Pré-requisitos
 

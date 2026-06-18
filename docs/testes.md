@@ -6,12 +6,12 @@ O projeto adota uma pirâmide de testes automatizados (pytest), complementada pe
 
 | Camada | Marcador | Quantidade | Foco |
 |---|---|---|---|
-| Unitários | `@pytest.mark.unit` | 288 | Funções e regras isoladas, sem dependências externas |
-| Integração | `@pytest.mark.integration` | 128 | Componentes com banco real (Postgres + pgvector) e Redis |
-| API | `@pytest.mark.api` | 267 | Endpoints HTTP de ponta a ponta |
-| **Total** | | **683** | |
+| Unitários | `@pytest.mark.unit` | 303 | Funções e regras isoladas, sem dependências externas |
+| Integração | `@pytest.mark.integration` | 146 | Componentes com banco real (Postgres + pgvector) e Redis |
+| API | `@pytest.mark.api` | 288 | Endpoints HTTP de ponta a ponta |
+| **Total** | | **797** | |
 
-> Quantidades apuradas via `pytest --collect-only` (a suíte completa coleta e passa 683 testes).
+> Quantidades apuradas via `pytest tests/ --collect-only -q` (a suíte completa coleta 797 testes).
 
 A configuração dos marcadores está em `backend/pyproject.toml` (com `asyncio_mode = auto`).
 

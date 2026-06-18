@@ -14,9 +14,11 @@
 | `/dashboard/activation` | Janelas, cadência e agendamento de acionamento |
 | `/dashboard/capacity` | Dimensionamento de capacidade (Erlang C) |
 | `/dashboard/knowledge` | Base de conhecimento (upload de documentos para RAG) |
+| `/dashboard/appointments` | Agenda interna — listagem, filtros, criação/cancelamento manual |
+| `/dashboard/availability` | Grade semanal de disponibilidade (tenant ou agente) |
 | `/dashboard/tabulacoes` | Tabulações (desfecho do atendimento) |
 | `/dashboard/metrics` | Métricas detalhadas |
 | `/dashboard/monitoring` | Monitoramento em tempo real (WebSocket) |
-| `/dashboard/settings` | Configurações dinâmicas: providers, áudio, identidade, túnel |
+| `/dashboard/settings` | Configurações dinâmicas: providers, áudio, identidade, aba **Túnel & Webhooks** (polling 10s), versão **1.0.0** no header |
 
 Detalhes de cada tela: [`docs/frontend.md`](../../../../docs/frontend.md).

@@ -54,6 +54,10 @@ Todas as rotas têm prefixo `/api/v1` (exceto `/health`). As rotas autenticadas 
 | `settings` | Leitura/escrita de settings com hot-reload + identidade do workspace (`/settings/identity`) + amostra/teste de voz |
 | `tabulacoes` | Catálogo de tabulações (call center) |
 | `tunnel` | Status do túnel Cloudflare |
+| `appointments` | CRUD de compromissos (`GET/POST /`, `GET/PATCH /{id}`; filtros `lead_id`, `status`, `from`, `to`; conflito → 409) |
+| `availability` | Regras semanais tenant (`GET/PUT /availability-rules`) e por agente (`GET/PUT /agents/{id}/availability-rules`) |
+
+Serviços relacionados: `appointment_service.py` (slots, conflitos, `resolve_availability`) e `availability_service.py` (grade semanal persistida).
 
 ## Autenticação e multi-tenant
 

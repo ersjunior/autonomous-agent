@@ -25,9 +25,9 @@ make test-api             # apenas API
 
 | Categoria | Testes |
 |---|---|
-| Unitários | 288 |
-| Integração | 128 |
-| API | 267 |
-| **Total** | **683** |
+| Unitários | 303 |
+| Integração | 146 |
+| API | 288 |
+| **Total** | **797** |
 
 Detalhes da estratégia de testes: [`docs/testes.md`](../docs/testes.md).

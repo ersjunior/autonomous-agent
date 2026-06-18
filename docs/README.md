@@ -24,7 +24,7 @@ O sistema é **agnóstico de provedor** e roda a **stack OSS local por padrão**
 | [infra.md](infra.md) | Docker, Makefile, CI, Celery Beat |
 | [configuracao.md](configuracao.md) | Variáveis de ambiente |
 | [scripts.md](scripts.md) | Scripts `validate_*` |
-| [testes.md](testes.md) | Pirâmide de testes (683 testes) |
+| [testes.md](testes.md) | Pirâmide de testes (797 testes) |
 | [roadmap.md](roadmap.md) | Pendências e trabalho futuro |
 
 ## Apresentação e demo

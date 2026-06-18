@@ -19,6 +19,8 @@ Modelos **SQLAlchemy 2.0** (mapeamento ORM). O schema do banco é gerido por **m
 | `knowledge.py` | Documentos e chunks da base de conhecimento (RAG) |
 | `tabulacao.py` | Tabulações (desfecho do atendimento) |
 | `app_setting.py` | Configurações dinâmicas (hot-reload) |
+| `appointment.py` | Compromissos da agenda interna (`appointments`) |
+| `availability_rule.py` | Regras semanais de disponibilidade — tenant ou agente (`availability_rules`) |
 | `base.py` | Base declarativa comum (mixin de timestamps/PK) |
 
 > A coluna de embedding em `interaction` usa `Vector` (pgvector) com dimensão definida por `EMBEDDING_DIMENSIONS` (768 Ollama / 1536 OpenAI), aplicada via migration.

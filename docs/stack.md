@@ -53,7 +53,7 @@ O sistema é **agnóstico de provedor** e roda a **stack OSS local por padrão**
 | LLM (chat + saída estruturada) | Ollama | `llama3.1` | GPU recomendada (NVIDIA) |
 | Embeddings | Ollama | `nomic-embed-text` | 768 dimensões |
 | STT (voz → texto) | faster-whisper | `large-v3` (default) | GPU `cuda`+`float16` por padrão; CPU com `int8` |
-| TTS (texto → voz) | Coqui | XTTS-v2 (`multilingual/multi-dataset`) | Síntese em português (`pt`); GPU `cuda` por padrão |
+| TTS (texto → voz) | Coqui | XTTS-v2 (`multilingual/multi-dataset`) | Síntese em português (`pt`); GPU `cuda` por padrão; **cache de latents do speaker** por path+mtime (`coqui-tts/app.py`) reduz latência entre turnos |
 
 > **`WHISPER_MODEL`:** o default em `config.py` e no `docker-compose.yml` é `large-v3`. O `.env.example` recomenda `large-v3-turbo` (~2x mais rápido, qualidade PT próxima) — basta defini-lo no `.env`. Em CPU limitado, `medium` é uma alternativa.
 

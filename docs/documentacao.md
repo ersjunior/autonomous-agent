@@ -16,8 +16,8 @@
 6. [Backend (FastAPI)](#6-backend-fastapi)
 7. [Worker (Celery)](#7-worker-celery)
 8. [Inteligência artificial (camada agnóstica)](#8-inteligência-artificial-camada-agnóstica)
-9. [Agentes e orquestração (LangGraph)](#9-agentes-e-orquestração-langgraph)
-10. [Canais de atendimento](#10-canais-de-atendimento)
+9. [Agentes e orquestração (LangGraph)](#9-agentes-e-orquestração-langgraph) — intents, booking, farewell
+10. [Canais de atendimento](#10-canais-de-atendimento) — WhatsApp, Telegram, Voz; agendamento e disponibilidade (Fase D)
 11. [Motor de acionamento (modo ativo)](#11-motor-de-acionamento-modo-ativo)
 12. [Atendimento receptivo e teoria de filas](#12-atendimento-receptivo-e-teoria-de-filas)
 13. [Frontend (Next.js 15)](#13-frontend-nextjs-15)
@@ -317,6 +317,22 @@ Catálogo de códigos de desfecho (estilo call center).
 - `scope` (default `global`), `user_id` (nullable), `key`, `value` (Text), `is_secret`, `updated_at`.
 - Constraint única `(scope, user_id, key)` com `nulls_not_distinct` — permite um valor global (`user_id=NULL`) por chave.
 
+#### Appointment (`appointments`) — agenda interna
+Compromissos por tenant, vinculados a um lead (e opcionalmente a um agente).
+- `id`, `user_id` (FK → `users`, index), `lead_id` (FK → `leads`, index), `agent_id` (FK → `agents`, nullable, `SET NULL`).
+- `starts_at`, `ends_at` (timestamptz), `title`, `notes` (nullable).
+- `status` (`SCHEDULED` | `CONFIRMED` | `CANCELLED` | `COMPLETED` | `NO_SHOW`; bloqueio de slot usa `SCHEDULED` e `CONFIRMED`).
+- `created_by` (`AGENT` | `MANUAL`), `channel` (nullable — canal de origem conversacional).
+- `created_at`, `updated_at`.
+- Relacionamentos: `user`, `lead`, `agent`.
+
+#### AvailabilityRule (`availability_rules`) — disponibilidade configurável (Fase D)
+Grade semanal por tenant e, opcionalmente, por agente (`agent_id` NULL = tenant; preenchido = override do agente).
+- `id`, `user_id` (FK, index), `agent_id` (FK, nullable, index).
+- `weekday` (0=segunda … 6=domingo), `start_time` / `end_time` (`HH:MM`), `slot_minutes` (nullable), `timezone` (nullable), `is_active`.
+- Unique `(user_id, agent_id, weekday)` com `nulls_not_distinct`; índice parcial `is_active`.
+- Por ora, no máximo **uma faixa por dia** por escopo (múltiplas faixas no mesmo weekday é trabalho futuro).
+
 ### 4.2 Multi-tenancy no schema
 
 O isolamento é por **`user_id`** (o tenant). A maioria das entidades tem `user_id` (FK → `users`). Registros com **`is_system=True`** são "registros padrão do sistema": visíveis a todos e somente leitura (exceto campanhas, que o dono pode operar). Em `kb_chunks`, o escopo do RAG é dado por `owner_user_id` + a flag `is_system` do documento (institucional global vs. do dono). Ver §17 para as regras de autorização.
@@ -364,6 +380,7 @@ O Redis acumula vários papéis, separados por **banco lógico** (DB):
 | Modo humano (handoff) | DB0, chave por canal/contato | String com TTL | Silenciar a IA enquanto o operador atende |
 | Slots de capacidade | DB0 | chaves com TTL | Controlar conversas simultâneas (rede de segurança via TTL) |
 | Versão de settings | DB0 | contador + evento | Hot-reload (invalida cache de settings em backend/workers) |
+| Estado de agendamento (multi-turno) | DB0, `booking:{canal}:{user_id}` | JSON, TTL `booking_state_ttl_seconds` | Fluxo conversacional de marcação de horário (WhatsApp/Telegram/Voz) |
 
 Detalhes conferidos:
 - `agents/memory/short_term.py`: prefixo `chat:`, `TTL_SECONDS = 3600`; ao salvar, faz `_sanitize_history` (descarta turnos de assistente vazios — limpa histórico legado poluído).
@@ -521,35 +538,67 @@ Definido em `agents/orchestrator/graph.py` e compilado em `agent_graph`:
 flowchart TD
     START([START]) --> identify_intent
     identify_intent --> check_escalation
-    check_escalation -->|nao escala| generate_response
     check_escalation -->|escala| escalate
-    generate_response --> send_response
+    check_escalation -->|nao escala| handle_booking
+    handle_booking --> handle_farewell
+    handle_farewell --> generate_response
     escalate --> send_response
+    generate_response --> send_response
     send_response --> END_NODE([END])
 ```
 
 | Nó | Função (verificada) |
 |---|---|
-| `identify_intent` | Classifica a intenção. Em **voz**, usa uma heurística leve (`voice_intent_heuristic`) para evitar uma chamada extra ao LLM; nos demais canais, chama `intent_agent` (saída estruturada). Publica `intent_detected`. |
+| `identify_intent` | Classifica a intenção. Em **voz**, usa heurística leve (`voice_intent_heuristic`, incl. `schedule` e `farewell`); nos demais canais, chama `intent_agent` (saída estruturada). Publica `intent_detected`. |
 | `check_escalation` | Aplica `resolve_should_escalate` (regra pura) sobre intenção/confiança/severidade. |
+| `handle_booking` | Avança o fluxo de agendamento (`process_booking_turn` em `booking_handler.py`); prepara `booking_context` / `booking_phase` ou resposta pré-montada na voz. |
+| `handle_farewell` | Encerramento autônomo de ligação de voz (`process_farewell_turn`); pode definir `should_hangup` + frase fixa. |
 | `escalate` | Monta a mensagem de encaminhamento para humano. |
-| `generate_response` | Busca RAG (memória + KB em paralelo) e gera a resposta com `response_agent`. |
+| `generate_response` | Busca RAG (memória + KB em paralelo) e gera a resposta com `response_agent`, **exceto** na voz quando já há resposta pré-montada (booking/farewell). Injeta `booking_context` quando presente. |
 | `send_response` | Salva histórico (Redis), persiste a interação (pgvector) e publica `response_sent` ou `escalated`. Se a resposta vier vazia, usa um fallback (`EMPTY_RESPONSE_FALLBACK`). |
 
-A aresta condicional após `check_escalation` é `route_after_escalation_check` (`router.py`): `escalate` se `should_escalate`, senão `generate_response`.
+A aresta condicional após `check_escalation` é `route_after_escalation_check` (`router.py`): `escalate` se `should_escalate`, senão `handle_booking` (mesmo quando o booking será no-op).
 
 ### 9.2 Estado (`AgentState`)
 
-`agents/orchestrator/state.py` define um `TypedDict` com: `message`, `channel`, `user_id`, `intent`, `confidence`, `entities`, `response`, `should_escalate`, `conversation_history`, e campos opcionais `rag_memories`, `kb_chunks`, `owner_user_id`, `complaint_severity`, `agent_id`, `agent_name`, `agent_mode`, `agent_personality`, `agent_config`, além de métricas (`intent_ms`, `rag_ms`, `response_ms`).
+`agents/orchestrator/state.py` define um `TypedDict` com: `message`, `channel`, `user_id`, `intent`, `confidence`, `entities`, `response`, `should_escalate`, `conversation_history`, e campos opcionais `rag_memories`, `kb_chunks`, `owner_user_id`, `complaint_severity`, `agent_id`, `agent_name`, `agent_mode`, `agent_personality`, `agent_config`, `lead_id`, `lead_name`, `twilio_call_sid`, **`booking_context`**, **`booking_phase`**, **`should_hangup`**, além de métricas (`intent_ms`, `rag_ms`, `response_ms`).
 
 ### 9.3 Classificação de intenção
 
 `agents/workers/intent_agent.py` usa saída estruturada (`IntentResult`):
-- `intent`: `greeting | question | complaint | purchase | cancel | escalate | other`.
-- `confidence` (0..1), `entities` (dict), `complaint_severity` (`low | high`, forçado a `low` quando `intent != complaint`).
+- `intent`: `greeting | question | complaint | purchase | cancel | escalate | schedule | other` (texto); na **voz**, a heurística também reconhece `farewell` (`voice_intent_heuristic.py`).
+- `confidence` (0..1), `entities` (dict — em `schedule`, pode trazer `preferred_date`, `preferred_time`, `appointment_type`), `complaint_severity` (`low | high`, forçado a `low` quando `intent != complaint`).
 - Temperatura `intent_temperature=0.0` (determinismo), limite `intent_max_tokens=128`.
 
-### 9.4 Escalonamento para humano
+Regras de `schedule` no prompt: marcar quando o cliente quer marcar/remarcar reunião/visita/horário; **não** confundir com pergunta genérica de horário de funcionamento (`question`).
+
+### 9.4 Agendamento conversacional (grafo + Redis)
+
+Fluxo multi-turno orquestrado por `agents/orchestrator/booking_handler.py`, com estado quente em Redis (`agents/memory/booking_state.py`, chave `booking:{canal}:{user_id}`, TTL configurável).
+
+**Fases (`BookingPhase`):** `offering`, `awaiting_choice`, `confirming`, `done`. Fases ativas (`offering`/`awaiting_choice`/`confirming`) bloqueiam encerramento por farewell na mesma ligação.
+
+**Entrada:** intent `schedule` **ou** retomada de estado Redis ativo. Exige `owner_user_id` (tenant) e `lead_id`; sem lead, degrada com mensagem honesta.
+
+**Slots:** `list_available_slots` (`appointment_service.py`) gera candidatos via `resolve_availability` (agente → tenant → default), subtrai conflitos com appointments ativos do tenant (`SCHEDULED`/`CONFIRMED`). Facade assíncrona: `agents/tools/calendar_tool.py` → `create_appointment` / `list_available_slots`.
+
+**Gravação no Postgres:** só após confirmação explícita (`extract_booking_confirmation` em texto; sim/não na voz com limiar de confiança). `create_appointment` valida ownership do lead e lança `AppointmentSlotConflictError` se o intervalo sobrepõe outro compromisso.
+
+**Texto (WhatsApp/Telegram):** oferece até `booking_max_offered_slots` horários numerados; escolha → fase `confirming` → sim/não → `_commit_booking`.
+
+**Voz:** modo `voice_mode` — **um slot por vez** (`all_slots` + `slot_cursor`); frases TTS usam `format_slot_label_spoken` (dia da semana + hora por extenso, sem data numérica). Recusa avança o cursor; esgotados os slots, encerra sem gravar. Após sucesso, `set_wrap_up_pending` no `call_sid` (pergunta “mais alguma coisa?” antes de desligar).
+
+O `response_agent` recebe o bloco `booking_context` (instruções + slots) para redigir a mensagem final; na voz, respostas determinísticas podem pular o LLM (`generate_response` reutiliza `response` pré-montada).
+
+### 9.5 Encerramento autônomo de voz (farewell)
+
+`agents/orchestrator/farewell_handler.py` roda **depois** de `handle_booking`. Desliga a chamada (`should_hangup=True`) somente no canal `voice`, sem escalonamento, e quando **não** há turno consumido por booking, se:
+- `intent == farewell` com `confidence >= 0.9` (heurística ou LLM), **ou**
+- `wrap_up_pending` ativo no Redis (`voice_call_state`) e a fala casa com recusa curta (`matches_wrap_up_decline`).
+
+Resposta fixa: `VOICE_FAREWELL_PHRASE` (“Até logo, obrigado pelo contato!”). O webhook de voz (`channels.py`) monta TwiML `_build_voice_hangup_twiml` (`<Play>` ou `<Say>` + `<Hangup/>`) quando `should_hangup` chega no turno pronto.
+
+### 9.6 Escalonamento para humano
 
 `agents/escalation.py` (módulo puro, `ESCALATION_CONFIDENCE_THRESHOLD = 0.25`):
 - `intent == escalate` (pedido explícito / frustração extrema), **ou**
@@ -559,7 +608,7 @@ A aresta condicional após `check_escalation` é `route_after_escalation_check` 
 
 O modo humano usa Redis com TTL; sweeps do Beat devolvem ao bot após inatividade (`human_handoff_queue_ttl_seconds=1800`) ou finalizam após 4h (`human_handoff_finalize_ttl_seconds=14400`). Há rotas para listar/assumir/finalizar/reativar (router `handoff`).
 
-### 9.5 Montagem do prompt em camadas
+### 9.7 Montagem do prompt em camadas
 
 `agents/workers/response_agent.py` (`build_response_messages`) monta as mensagens de sistema **nesta ordem** (verificada):
 1. **Prompt global** (`DEFAULT_AGENT_SYSTEM_PROMPT` ou override em settings) — define conduta e **guardrails anti-alucinação**.
@@ -577,7 +626,7 @@ No canal voz, a resposta ainda passa por `cap_voice_response_for_telephony` (1 f
 
 **Por que em camadas:** separar "quem é o agente" (identidade), "como ele se comporta" (modo/canal) e "o que ele sabe" (KB/memória) torna o comportamento previsível, auditável e configurável sem reescrever prompt.
 
-### 9.6 Identidade institucional híbrida
+### 9.8 Identidade institucional híbrida
 
 `agents/identity.py` resolve a identidade em **duas camadas, campo a campo** (`merge_institutional_identity`): valor do **agente** vence o do **workspace**; campo vazio cai para o workspace; ausente é omitido. Campos: `company_name`, `display_name`, `tone`, `business_context`, `greeting_hint`.
 
@@ -586,7 +635,7 @@ No canal voz, a resposta ainda passa por `cap_voice_response_for_telephony` (1 f
 
 A **identidade é separada da KB**: a identidade autoriza o agente a se apresentar com aquele nome/posicionamento; a KB guarda os fatos (preços, prazos, políticas). O bloco de identidade injeta uma regra explícita: *"NÃO invente preços, prazos, políticas ou detalhes de produto que não estejam na base de conhecimento."* Sem identidade configurada, o agente se apresenta de forma **neutra** (sem assumir marca de terceiros).
 
-### 9.7 Memória de dois níveis e RAG
+### 9.9 Memória de dois níveis e RAG
 
 ```mermaid
 flowchart LR
@@ -630,6 +679,9 @@ Três canais (`ChannelType`: `WHATSAPP`, `TELEGRAM`, `VOICE`). O seed cria um ag
 - **STT:** faster-whisper (`agents/channels/voice/tts_stt.py`).
 - **Inbound conversacional por turnos:** modo `voice_inbound_mode` (`record` por padrão). A `<Record>` encerra após `voice_record_silence_timeout_sec=2` de silêncio (responsivo), limite de fala `voice_record_max_length_sec=30`. O turno é processado de forma assíncrona com polling via `Redirect` (`voice_turn_max_poll_attempts=60`, `voice_turn_poll_pause_seconds=1`). Tratamento de silêncio: aviso em `voice_silence_warning_seconds=30`, encerra em `voice_silence_close_seconds=15`.
 - **Latência:** por isso a voz usa heurística de intenção (sem LLM extra), respostas curtas (1 frase / ~90 chars / 35 tokens) e thresholds de RAG próprios.
+- **Agendamento por voz:** mesmo fluxo Redis/`booking_handler` dos canais de texto, mas com `voice_mode=True` — oferece **um slot por vez** (`slot_cursor` sobre `all_slots`); confirmação por sim/não (`extract_booking_confirmation` com limiar de confiança). Labels TTS vêm de `format_slot_label_spoken` (ex.: *"terça-feira às quinze horas"*, sem data numérica). Após commit, `set_wrap_up_pending` pergunta se há mais alguma coisa antes de permitir desligar.
+- **Encerramento autônomo:** quando `should_hangup` chega no turno pronto, `channels.py` monta `_build_voice_hangup_twiml` (reproduz a despedida + `<Hangup/>`). Ver §9.5.
+- **TTS — cache de speaker (Coqui):** o serviço `infra/docker/coqui-tts/app.py` mantém `_speaker_latent_cache` indexado por path+mtime do sample de voz; latents (`gpt_cond_latent`, `speaker_embedding`) são reutilizados entre sínteses, reduzindo `speaker_ms` a ~0 em hits (warmup também pré-carrega).
 - **Inbound de voz "ao vivo"** via Twilio Media Streams (transcrição bidirecional em tempo real) **ainda não está totalmente conectado** — ver [`roadmap.md`](roadmap.md).
 
 ### 10.4 Túnel Cloudflare
@@ -642,6 +694,39 @@ Webhooks externos exigem o backend acessível publicamente. O serviço `cloudfla
 | `named` | Túnel nomeado (token), URL fixa via `PUBLIC_BASE_URL` | Uso estável (recomendado) — webhook não precisa ser reajustado após reinícios |
 
 `settings.resolve_public_base_url()` prioriza `PUBLIC_BASE_URL` (.env); senão, no modo `temporary`, lê a URL do arquivo do quick tunnel.
+
+### 10.5 Agendamento conversacional (ponta a ponta)
+
+Fluxo multi-turno nos **três canais**, orquestrado pelo grafo LangGraph (§9.4) e persistido quente em Redis (`booking:{canal}:{user_id}`).
+
+| Etapa | WhatsApp / Telegram | Voz |
+|---|---|---|
+| Gatilho | Intent `schedule` ou retomada de estado ativo | Idem (+ heurística `schedule` em `voice_intent_heuristic`) |
+| Oferta de horários | Lista numerada (até `booking_max_offered_slots`) | Um slot por turno, label falado por extenso |
+| Escolha | Número ou texto livre → fase `confirming` | Sim/não; recusa avança `slot_cursor` |
+| Confirmação | Sim explícito → `_commit_booking` | Idem; após sucesso, wrap-up pendente |
+| Gravação Postgres | Só após confirmação (`create_appointment`, `created_by=AGENT`) | Idem |
+| Conflito | `AppointmentSlotConflictError` → mensagem honesta, sem gravar | Idem |
+
+**Pré-requisitos:** `owner_user_id` (tenant) e `lead_id` resolvidos no contexto do canal; sem lead, o bot informa a limitação.
+
+**Facade de calendário:** `agents/tools/calendar_tool.py` delega para `appointment_service.list_available_slots` / `create_appointment` — agenda **interna** em Postgres, não Google Calendar.
+
+**Dashboard:** `/dashboard/appointments` — listagem com filtros (lead, status, intervalo), criação manual (`created_by=MANUAL`) e cancelamento/edição via API REST.
+
+### 10.6 Disponibilidade configurável (Fase D)
+
+Horários de atendimento para geração de slots, persistidos em `availability_rules` e resolvidos por `resolve_availability` (`appointment_service.py`):
+
+1. **Agente** — regras ativas com `agent_id` preenchido (substituem totalmente o tenant para aquele agente).
+2. **Tenant** — regras com `agent_id IS NULL`.
+3. **Default** — `default_availability()` (env: `appointment_window_start/end`, `appointment_slot_minutes`, timezone `America/Sao_Paulo`).
+
+Cada regra define `weekday` (0=seg … 6=dom), `start_time`/`end_time`, `slot_minutes` e `timezone` opcionais (NULL herda do escopo superior). `AvailabilitySchedule` agrega regras por weekday; `list_available_slots` gera candidatos e remove intervalos que colidem com appointments `SCHEDULED`/`CONFIRMED`.
+
+**API:** `GET/PUT /api/v1/availability-rules` (tenant) e `GET/PUT /api/v1/agents/{id}/availability-rules` (override por agente). Substituição atômica via `replace_availability_rules`.
+
+**Dashboard:** `/dashboard/availability` — grade semanal editável (tenant ou agente selecionado), espelhando a API.
 
 Mais detalhe: [`docs/canais.md`](canais.md) e [`docs/infra.md`](infra.md).
 
@@ -725,14 +810,20 @@ frontend/src/
 | `/dashboard/activation` | Motor de acionamento, teste ad-hoc, histórico |
 | `/dashboard/capacity` | Estimativa de hardware + Erlang C |
 | `/dashboard/knowledge` | Base de conhecimento (upload/cadastro, ingestão, chunks) |
+| `/dashboard/appointments` | Agenda interna — listagem, filtros, criação/cancelamento manual |
+| `/dashboard/availability` | Grade semanal de disponibilidade (tenant ou agente) |
 | `/dashboard/tabulacoes` | Catálogo de tabulações |
 | `/dashboard/metrics` | Funil e fila (gráficos Recharts) |
 | `/dashboard/monitoring` | Tempo real (WebSocket) + histórico + modo humano |
-| `/dashboard/settings` | Providers de IA, prompts, RAG, voz, identidade do workspace, túnel |
+| `/dashboard/settings` | Providers de IA, prompts, RAG, voz, identidade do workspace, **Túnel & Webhooks** |
+
+**Settings — Túnel & Webhooks:** aba dedicada (`activeTab === "tunnel"`) em `settings/page.tsx`. Consulta `GET /api/v1/tunnel/status` ao abrir e a cada **10s** (`TUNNEL_POLL_MS`) enquanto a aba está ativa; botão manual "Atualizar"; indicador "atualizando…" sem flash no auto-refresh (`tunnelLastVerifiedAt`). Exibe URL pública resolvida, modo do túnel, health probe e URLs de webhook (WhatsApp/Telegram).
+
+**Versão do produto:** semver **`1.0.0`** exposta no header de Settings via `NEXT_PUBLIC_APP_VERSION` (injetada de `frontend/package.json` em `next.config.js`).
 
 ### 13.3 Como consome a API
 
-- A base da API vem de `NEXT_PUBLIC_API_URL`. Os clientes ficam em `src/lib/` (`api.ts`, `api-entities.ts`, `api-monitoring.ts`, `api-activation.ts`, `api-tunnel.ts`).
+- A base da API vem de `NEXT_PUBLIC_API_URL`. Os clientes ficam em `src/lib/` (`api.ts`, `api-entities.ts`, `api-monitoring.ts`, `api-activation.ts`, `api-tunnel.ts`, `api-availability.ts`).
 - Autenticação por JWT (proteção de rotas em `src/lib/protection.ts`).
 - Monitoramento via WebSocket (`/api/v1/monitoring/ws`), alimentado pelo pub/sub do Redis.
 
@@ -765,6 +856,8 @@ Todos os routers ficam em `backend/app/api/v1/` e são montados em `api_router` 
 | `metrics` | Métricas detalhadas (fila, por agente, atendimento) |
 | `monitoring` | WebSocket de eventos em tempo real + histórico |
 | `tunnel` | Status e controle do túnel Cloudflare |
+| `appointments` | CRUD de compromissos (`GET/POST /`, `GET/PATCH /{id}`; filtros `lead_id`, `status`, `from`, `to`; conflito → 409) |
+| `availability` | Regras semanais tenant (`GET/PUT /availability-rules`) e por agente (`GET/PUT /agents/{id}/availability-rules`) |
 
 Mais detalhe: [`docs/backend.md`](backend.md) e [`docs/api/README.md`](api/README.md).
 
@@ -823,13 +916,13 @@ Mais detalhe: [`docs/configuracao.md`](configuracao.md) e [`docs/infra.md`](infr
 
 ### 16.1 Pirâmide de testes
 
-A suíte automatizada fica em `backend/tests/` (pytest), com **683 testes** (via `pytest --collect-only`):
+A suíte automatizada fica em `backend/tests/` (pytest), com **797 testes** (via `pytest tests/ --collect-only -q`):
 
 | Camada | Marcador | Quantidade | Foco |
 |---|---|---|---|
-| Unitários | `@pytest.mark.unit` | 288 | Lógica pura (Erlang, escalonamento, parsing JSON, identidade, chunking, TwiML de voz…) |
-| Integração | `@pytest.mark.integration` | 128 | Dependências reais (Postgres/pgvector, Redis, sweeps, RAG/KB) |
-| API | `@pytest.mark.api` | 267 | FastAPI TestClient + autenticação/ownership |
+| Unitários | `@pytest.mark.unit` | 303 | Lógica pura (Erlang, escalonamento, parsing JSON, identidade, chunking, TwiML de voz…) |
+| Integração | `@pytest.mark.integration` | 146 | Dependências reais (Postgres/pgvector, Redis, sweeps, RAG/KB) |
+| API | `@pytest.mark.api` | 288 | FastAPI TestClient + autenticação/ownership |
 
 Execução: `make test` (unit), `make test-integration` (integração), `make test-api` (API). O diretório `tests/` na raiz contém apenas READMEs que apontam para `backend/tests/`.
 
@@ -868,13 +961,18 @@ Mais detalhe: [`docs/testes.md`](testes.md). Scripts de validação ponta a pont
 | **LangGraph** | Encadeamento manual / framework de agentes | Fluxo explícito como grafo, testável | Dependência de um framework em evolução rápida |
 | **Identidade configurável separada da KB** | Identidade só via prompt fixo / só via KB | Permite multi-tenant com personas distintas sem reescrever prompt; reduz alucinação | Mais um conceito a configurar |
 | **Heurística de intenção na voz** | LLM também na voz | Latência de telefonia | Heurística é menos precisa que o LLM |
+| **Agenda interna (Postgres)** | Google Calendar / CalDAV externo | Coerência transacional com leads/tenant; sem OAuth extra; slots e conflitos no mesmo banco | Sem sincronização bidirecional com calendários pessoais do operador |
+| **1 slot por vez na voz** | Lista numerada como no texto | STT de sim/não é mais robusto que reconhecer "opção 3" ou datas faladas | Mais turnos de fala para esgotar alternativas |
+| **Data/hora por extenso (código)** | LLM formata para TTS | Determinístico, testável (`format_slot_label_spoken`); evita alucinação de datas | Menos flexível que linguagem natural livre |
+| **Hangup conservador na voz** | Desligar em qualquer despedida vaga | `confidence >= 0.9` + bloqueio durante booking ativo; wrap-up explícito pós-agendamento | Client-side desligamentos tardios se o cliente não usar frases reconhecidas |
+| **Hierarquia de disponibilidade agente > tenant > default** | Só env global | Retrocompatível (sem regras → comportamento anterior); override fino por agente | Agente com regras parciais **substitui** o tenant (não faz merge dia a dia) |
 
 ### Limitações conhecidas e trabalhos futuros
 
 - **Voz ao vivo:** inbound conversacional por turnos (record) está implementado; **streaming bidirecional** (Twilio Media Streams) ainda não. Abandono real de fila depende de inbound de voz com volume.
 - **Telefonia/SIP:** discador SIP próprio e tabulação automática a partir do `StatusCallback` da chamada Twilio são ganchos previstos.
 - **Agentes dedicados:** `escalation_agent` e `memory_agent` são stubs (`# TODO`); hoje escalonamento é regra pura e memória é gerida diretamente.
-- **Tools:** `crm_tool` e `calendar_tool` são stubs; `knowledge_base` está implementado.
+- **Tools:** `knowledge_base` e `calendar_tool` estão implementados; `crm_tool` permanece stub (`# TODO`).
 - **Deploy em nuvem:** Terraform/CloudFormation são esqueletos planejados.
 
 Ver [`docs/roadmap.md`](roadmap.md).

@@ -26,6 +26,8 @@ No Docker, `DATABASE_URL` e `REDIS_URL` usam os hostnames internos `postgres` e 
 | SLA / abandono | `SERVICE_LEVEL_TARGET_SECONDS`, `QUEUE_ABANDON_TIMEOUT_SECONDS` | Nível de serviço e abandono (voz) |
 | Modo humano / handoff | `HUMAN_MODE_*`, `HUMAN_HANDOFF_*` | Modo humano, notificação ao operador e sweeps |
 | Base de conhecimento | `KB_*` | Upload, chunking e parâmetros de recuperação |
+| Agendamento / disponibilidade | `appointment_window_start`, `appointment_window_end`, `appointment_slot_minutes`, `booking_state_ttl_seconds`, `booking_max_offered_slots` | Defaults de slots (Fase D sobrescreve via `availability_rules`); TTL do estado conversacional |
+| Voz (telefonia) | `voice_max_response_chars`, `voice_response_max_tokens`, `voice_inbound_mode`, … | Respostas curtas para TTS; turnos inbound por `<Record>` |
 | Capacidade / Erlang | `CHANNEL_COST_*`, `CAPACITY_*`, `DEFAULT_AHT_SECONDS`, `ERLANG_TARGET_SERVICE_LEVEL` | Estimativa de capacidade e dimensionamento |
 | Alternativas de nuvem (opcionais) | `OPENAI_*`, `ELEVENLABS_*` | Alternativas de nuvem de LLM/STT/TTS (chave exigida só se ativadas) |
 | Twilio | `TWILIO_*` | Credenciais de WhatsApp e Voz |

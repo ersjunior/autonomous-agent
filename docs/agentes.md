@@ -10,23 +10,29 @@ Definido em `agents/orchestrator/graph.py`, o fluxo é:
 flowchart TD
     START([START]) --> identify_intent
     identify_intent --> check_escalation
-    check_escalation -->|nao escala| generate_response
     check_escalation -->|escala| escalate
-    generate_response --> send_response
+    check_escalation -->|nao escala| handle_booking
+    handle_booking --> handle_farewell
+    handle_farewell --> generate_response
     escalate --> send_response
+    generate_response --> send_response
     send_response --> END_NODE([END])
 ```
 
 | Nó | Função |
 |---|---|
-| `identify_intent` | Classifica a intenção da mensagem (saída estruturada do LLM), usando o histórico do Redis |
+| `identify_intent` | Classifica a intenção (saída estruturada do LLM; heurística leve em voz, incl. `schedule` e `farewell`), usando o histórico do Redis |
 | `check_escalation` | Decide se o atendimento deve ir para um humano (ver gatilhos abaixo) |
-| `generate_response` | Gera a resposta com RAG (memória do contato + base de conhecimento) |
+| `handle_booking` | Avança o fluxo de agendamento conversacional (`booking_handler.process_booking_turn`); prepara `booking_context` ou resposta pré-montada na voz |
+| `handle_farewell` | Encerramento autônomo de ligação de voz (`farewell_handler.process_farewell_turn`); pode definir `should_hangup` |
+| `generate_response` | Gera a resposta com RAG (memória do contato + base de conhecimento); injeta `booking_context` quando presente |
 | `send_response` | Envia a resposta, persiste no histórico (Redis) e na memória de longo prazo (pgvector) e publica eventos |
+
+Intenções reconhecidas (`intent_agent`): `greeting`, `question`, `complaint`, `purchase`, `cancel`, `escalate`, **`schedule`**, `other`. Na **voz**, a heurística também reconhece **`farewell`** (desligamento). Detalhes do fluxo de agendamento e encerramento: [`documentacao.md`](documentacao.md) §9.4–9.5 e §10.5–10.6.
 
 O roteamento de entrada é feito por `agents/orchestrator/router.py` (`route_message`), válido para os canais `telegram`, `whatsapp` e `voice`.
 
-Workers de apoio ativos: identificação de intenção, geração de resposta e tabulação. Há stubs previstos para escalonamento e memória dedicados (veja [roadmap.md](roadmap.md)).
+Workers de apoio ativos: identificação de intenção, geração de resposta e tabulação. **`calendar_tool`** está implementado (facade assíncrona sobre a agenda interna Postgres — `list_available_slots` / `create_appointment`). Há stubs previstos para escalonamento e memória dedicados (veja [roadmap.md](roadmap.md)).
 
 ## Escalonamento para humano (handoff)
 
@@ -91,6 +97,7 @@ O acionamento de campanhas (outbound) e a fila receptiva (inbound) são governad
 | Tipo | Implementação | Uso |
 |---|---|---|
 | Curto prazo | Redis (`chat:{user_id}`, TTL 1h) | Contexto imediato da conversa |
+| Agendamento (multi-turno) | Redis (`booking:{canal}:{user_id}`, TTL configurável) | Estado do fluxo conversacional de marcação de horário |
 | Longo prazo | PostgreSQL + pgvector (tabela `interactions`) | Memória semântica por contato, recuperada via busca vetorial |
 | Eventos | Redis pub/sub (`agent_events`) | Feed em tempo real do dashboard |
 

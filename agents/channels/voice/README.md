@@ -15,6 +15,9 @@ Canal de **voz por telefonia (PSTN)** via **Twilio Voice**. A fala é sintetizad
 1. O texto gerado pelo agente é sintetizado em áudio pelo **Coqui XTTS-v2** (português) → MP3 de telefonia.
 2. O áudio é reproduzido na ligação via TwiML `<Play>`.
 3. **Fallback:** se a síntese falhar, usa-se a voz padrão da Twilio em português — `<Say>` Polly pt-BR.
+4. **Cache de speaker:** o serviço Coqui (`infra/docker/coqui-tts/app.py`) mantém latents do sample de voz em cache (path+mtime), reduzindo `speaker_ms` entre sínteses na mesma ligação.
+
+Respostas são limitadas para telefonia (`voice_max_response_chars`, `cap_voice_response_for_telephony`).
 
 ## STT (entrada de voz)
 
@@ -39,9 +42,9 @@ sequenceDiagram
     T->>C: Audio na ligacao
 ```
 
-A campanha de voz inicia a chamada PSTN pela Twilio; o backend serve o TwiML que toca o áudio sintetizado. Para a intenção em voz, usa-se uma **heurística leve** (`agents/workers/voice_intent_heuristic.py`) em vez de uma chamada extra ao LLM, reduzindo latência.
+A campanha de voz inicia a chamada PSTN pela Twilio; o backend serve o TwiML que toca o áudio sintetizado. Para a intenção em voz, usa-se uma **heurística leve** (`agents/workers/voice_intent_heuristic.py`) em vez de uma chamada extra ao LLM, reduzindo latência (incl. `schedule` e `farewell`).
 
-## Inbound ao vivo (parcial)
+## Inbound conversacional (turnos)
 
 ```mermaid
 sequenceDiagram
@@ -52,15 +55,17 @@ sequenceDiagram
     participant STT as faster-whisper
 
     T->>C: Saudacao TwiML
-    C->>T: Fala gravada
+    C->>T: Fala gravada Record
     T->>B: Callback gravacao
-    B->>W: Processa turno
+    B->>W: Processa turno grafo
     W->>STT: Transcreve audio
     W->>B: Resposta TwiML Play ou Say
     T->>C: Resposta sintetizada
 ```
 
-O STT por faster-whisper está implementado no manipulador de chamada, mas a **transcrição bidirecional em tempo real** (Twilio Media Streams) ainda não está totalmente conectada — ver [`roadmap.md`](../../../docs/roadmap.md).
+O modo **`record`** (padrão) implementa inbound por turnos: `<Record>` → STT → grafo → TTS → `Redirect` para o próximo turno. **Agendamento por voz:** um slot por vez (sim/não), data/hora por extenso (`format_slot_label_spoken`). **Encerramento autônomo:** `farewell_handler` define `should_hangup`; o backend monta TwiML com `<Hangup/>` (`_build_voice_hangup_twiml` em `channels.py`).
+
+A **transcrição bidirecional em tempo real** (Twilio Media Streams) ainda **não** está conectada — ver [`roadmap.md`](../../../docs/roadmap.md).
 
 ## Configuração
 

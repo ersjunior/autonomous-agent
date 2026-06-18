@@ -39,6 +39,7 @@ flowchart TB
 | Webhook | `POST /api/v1/channels/webhooks/telegram` |
 | Arquivos | `agents/channels/telegram/handler.py`, `client.py` |
 | Digitando | Envia `sendChatAction(typing)` em loop (~4s) enquanto o agente processa |
+| Agendamento | Intent `schedule` — lista numerada de slots; confirmação explícita grava em `appointments` (Postgres) |
 
 No modo polling, o serviço `telegram-polling` consulta a API do Telegram continuamente e enfileira as mensagens recebidas. No modo webhook, o Telegram entrega as atualizações diretamente ao backend (requer URL pública — veja o túnel em [infra.md](infra.md)).
 
@@ -64,6 +65,7 @@ flowchart LR
 | Deduplicação | Chave Redis por `MessageSid` (janela de 24h) evita processar a mesma mensagem duas vezes |
 | Arquivos | `agents/channels/whatsapp/handler.py`, `twilio_client.py` |
 | Digitando | Indicador via API beta da Twilio (requer `message_sid`) |
+| Agendamento | Intent `schedule` — lista numerada de slots; confirmação explícita grava em `appointments` (Postgres) |
 
 O webhook responde imediatamente com TwiML vazio e o processamento ocorre de forma assíncrona no worker; a resposta do agente é enviada depois pela API da Twilio (não no corpo do TwiML).
 
@@ -95,8 +97,12 @@ sequenceDiagram
 | TTS (saída) | Tenta Coqui (XTTS-v2, português) → MP3 de telefonia; fallback para voz padrão Twilio (`<Say>` Polly pt-BR) |
 | STT (entrada) | faster-whisper (`agents/channels/voice/tts_stt.py`) |
 | Arquivos | `agents/channels/voice/handler.py`, `twilio_voice_client.py`, `tts_stt.py` |
+| Agendamento | Intent `schedule` — **1 slot por vez** (sim/não); data/hora por extenso (`format_slot_label_spoken`) |
+| Encerramento | Intent `farewell` ou wrap-up pós-agendamento → `should_hangup` + TwiML `<Hangup/>` |
 
-No fluxo outbound, o texto gerado pelo agente é sintetizado em áudio (Coqui) e reproduzido na ligação. O STT por faster-whisper está implementado no manipulador de chamada, mas o **inbound de voz ao vivo** (transcrição bidirecional em tempo real via Twilio Media Streams) ainda não está conectado — veja [roadmap.md](roadmap.md).
+No fluxo outbound, o texto gerado pelo agente é sintetizado em áudio (Coqui) e reproduzido na ligação. O **inbound conversacional por turnos** (`<Record>` + STT + polling) está implementado; a **transcrição bidirecional em tempo real** (Twilio Media Streams) ainda não está conectada — veja [roadmap.md](roadmap.md).
+
+O serviço Coqui (`infra/docker/coqui-tts/app.py`) cacheia os latents do speaker por path+mtime do sample de voz, reduzindo latência entre sínteses consecutivas na mesma ligação.
 
 ```mermaid
 sequenceDiagram
@@ -128,6 +134,17 @@ Implementado em `agents/channels/typing_indicator.py`, é acionado antes de o ag
 | Voz | Não se aplica |
 
 Falhas no indicador são registradas em log, mas nunca interrompem o atendimento.
+
+## Agendamento conversacional (três canais)
+
+Fluxo multi-turno orquestrado pelo grafo (`handle_booking` → `booking_handler.py`), com estado quente em Redis (`booking:{canal}:{user_id}`). Slots vêm da agenda interna Postgres via `list_available_slots` (disponibilidade: hierarquia **agente > tenant > default**). Gravação só após confirmação explícita.
+
+| Canal | Oferta de horários |
+|---|---|
+| WhatsApp / Telegram | Lista numerada (até `booking_max_offered_slots`) |
+| Voz | Um slot por turno; label falado por extenso; confirmação sim/não |
+
+Detalhes: [`documentacao.md`](documentacao.md) §10.5–10.6.
 
 ## Resumo de webhooks
 

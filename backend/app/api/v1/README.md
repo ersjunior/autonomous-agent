@@ -22,6 +22,8 @@ Rotas REST e WebSocket da API, versão 1. Todas montadas em `api_router` (`__ini
 | `metrics.py` | Métricas detalhadas (por agente, atendimento, etc.) |
 | `monitoring.py` | WebSocket de monitoramento em tempo real (alimentado por Redis pub/sub) |
 | `tunnel.py` | Status e controle do túnel Cloudflare (exposição pública para webhooks) |
+| `appointments.py` | CRUD de compromissos na agenda interna (`appointments`) |
+| `availability.py` | Regras semanais de disponibilidade — tenant e override por agente (`availability_rules`) |
 
 ## Padrões
 
