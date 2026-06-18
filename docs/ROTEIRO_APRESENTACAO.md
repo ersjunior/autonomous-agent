@@ -1,551 +1,357 @@
-# Roteiro de apresentação — Autonomous Agent (TCC)
+# Roteiro de apresentação — Defesa do TCC
+
+**Título:** *Do operador ao Agente: Transformando um atendente de telemarketing em um Agente de Inteligência Artificial Autônomo* (ICMC/USP)
 
 **Público:** banca de IA aplicada  
-**Duração alvo:** 15–20 minutos  
-**Pré-requisito:** rodar `docs/SMOKE_TEST.md` no dia anterior e 30 min antes da banca.
+**Duração alvo:** ~25 min (+ buffer 5 min)  
+**Pré-requisito operacional:** `docs/CHECKLIST_DEMO.md` e `docs/SMOKE_TEST.md` verdes no dia anterior e ~30 min antes.
 
-**URLs fixas (dev padrão):**
+---
+
+## Gestão de tempo (leia antes de subir ao palco)
+
+| Marco | Minuto acumulado | Ação se atrasar |
+|-------|------------------|-----------------|
+| **Clímax (ligação)** | ~6–13 | Prioridade máxima — não adie |
+| **Núcleo RAG + Erlang** | ~13–22 | Se passar de **min 18** no Bloco 4, encurte 4b para 2 min (só tela Capacity) |
+| **Bloco 5 (reforço)** | ~22–26 | **CORTÁVEL** — pular inteiro se restarem **< 8 min** para perguntas |
+| **Fechamento** | ~26–28 | Nunca cortar por completo; 1 min mínimo |
+
+**Regra de ouro:** se passar de **15 min** sem ter feito a ligação (Bloco 3), **pule para o Bloco 3 agora** e encurte o Bloco 4 depois.
+
+---
+
+## Tabela de URLs e telas (acesso rápido)
 
 | Recurso | URL |
 |---------|-----|
 | Dashboard | http://localhost:3000 |
-| Login | http://localhost:3000/ (admin@admin.com / admin) |
-| Agentes | http://localhost:3000/dashboard/agents |
-| Canais | http://localhost:3000/dashboard/channels |
-| Campanhas | http://localhost:3000/dashboard/campaigns |
-| Leads | http://localhost:3000/dashboard/leads |
-| Configurações | http://localhost:3000/dashboard/settings |
-| Métricas (incl. fila receptiva) | http://localhost:3000/dashboard/metrics |
-| Capacidade (Erlang + estimativa) | http://localhost:3000/dashboard/capacity |
-| Tabulações | http://localhost:3000/dashboard/tabulacoes |
-| Acionamento (motor + teste + histórico outbound) | http://localhost:3000/dashboard/activation |
-| Monitoramento (tempo real + histórico de atendimentos) | http://localhost:3000/dashboard/monitoring |
+| Login (seed) | `admin@admin.com` / `admin` |
+| **Agendamentos** ★ | http://localhost:3000/dashboard/appointments |
+| **Disponibilidade (Fase D)** | http://localhost:3000/dashboard/availability |
+| **Capacidade (Erlang C)** ★ | http://localhost:3000/dashboard/capacity |
+| Conhecimento (KB) | http://localhost:3000/dashboard/knowledge |
+| Monitoramento | http://localhost:3000/dashboard/monitoring |
+| Configurações (+ Túnel & Webhooks, versão 1.0.0) | http://localhost:3000/dashboard/settings |
+| Agentes / Canais | http://localhost:3000/dashboard/agents · `/channels` |
 | API Swagger | http://localhost:8000/docs |
 
-**Diagramas e regras:** seções *Destaques de IA*, *Arquitetura* e *Regras de negócio* do [README.md](../README.md).
-
-**Sumário:** 1 Abertura → 2 Arquitetura → 3 Cérebro local → 4 RAG → **5** Roteamento ATIVO/RECEPTIVO → **5b** Fila + Erlang → **5c** Comportamento receptivo / handoff → **5d** Tabulação / status → **5e** Teste de acionamento → **5f** Ciclo operacional → 6 Propriedade → 7 Voz → 8 Negócio → 9 Fechamento.
-
 ---
 
-## 1. Abertura (~1 min)
+## BLOCO 1 — Abertura e tese (~2 min)
 
 ### O que fazer
-- Slide ou tela inicial com o título do TCC.
-- Uma frase de posicionamento; não abrir o terminal ainda.
+- Slide com título do TCC + logo USP/ICMC.
+- **Não** abrir terminal ainda.
 
 ### O que falar
-> "Este trabalho transforma um fluxo clássico de telemarketing em um **agente de IA autônomo**, omnichannel. Para a banca de **IA aplicada**, o foco é a pilha **multi-agente LangGraph** com **RAG ativo no pgvector**, modelos **locais na GPU** (Ollama, Coqui) e **regras de domínio**: agentes **ATIVO/RECEPTIVO**, **roteamento por dono da conversa** e **proteção sistema vs usuário** (`is_system`, bases IMPORT)."
-
-### O que a banca vê
-- Problema + contribuição técnica (IA + governança leve).
-
----
-
-## 2. Arquitetura de IA (~3 min)
-
-### O que fazer
-1. README — **Destaques de IA** e **Arquitetura**.
-2. **Diagrama B** — grafo + `retrieve_similar_memories` + `agent_personality`.
-3. **Diagrama D** — Redis + pgvector + roteamento.
-4. **Flowchart** em *Regras de negócio* — decisão ACTIVE/RECEPTIVE.
-
-### O que falar — Grafo
-> "Entrada única: `route_message`. Nós: `identify_intent` → `check_escalation` → (`escalate` | `generate_response`) → `send_response`. Em `generate_response`, **`LongTermMemory.retrieve_similar_memories`** filtra pelo **mesmo `user_id`** antes do LLM de resposta. No inbound, `inbound_handler` injeta a personalidade do agente de negócio escolhido por `resolve_inbound_agent`."
-
-### O que falar — Roteamento (visão)
-> "`conversation_routing.py`: outbound só se `campaign.agent.mode == ACTIVE`; inbound usa a `LeadInteraction` mais recente por `(lead, canal)` — conversa **aberta** se houve `data_acionamento`, status não terminal (`convertido`, `recusou`, `nao_atendido`, `erro`) e último contato dentro de `active_conversation_timeout_hours` (24h)."
-
-### Plano B
-- Screenshots dos diagramas (README ou `docs/demo-assets/`).
+> "Um atendente de telemarketing **disca**, **qualifica**, **responde dúvidas**, **registra desfecho** e **marca horários**. Este trabalho mostra uma **IA fazendo isso sozinha** — nos três canais que importam: WhatsApp, Telegram e **voz telefônica**."
+>
+> "A tese: transformar o operador em um **agente autônomo** com engenharia de produção — não um chatbot de prompt. Vamos demonstrar **ligação real** com agendamento e desligamento autônomo, depois o **núcleo acadêmico**: **RAG** com pgvector e **teoria de filas (Erlang C)** para dimensionamento."
 
 ---
 
-## 3. Demo ao vivo — cérebro local + hot-reload (~3 min)
+## BLOCO 2 — Fundação arquitetural (~4 min)
 
 ### O que fazer
-1. `docker exec autonomous-agent-ollama ollama list`
-2. **Configurações** → Texto / Comportamento (`rag_top_k`, `rag_similarity_threshold`).
-3. Salvar alteração leve no prompt (hot-reload via Redis `settings_version`).
-4. (Opcional) **Monitoramento** após mensagem de teste.
+1. README — seção **Arquitetura** ou diagrama de microsserviços.
+2. Slide/diagrama do **grafo LangGraph** (`agents/orchestrator/graph.py`):
 
-```bash
-docker exec autonomous-agent-worker python -c "
-import asyncio
-from agents.orchestrator.router import route_message
-async def main():
-    r = await route_message('Olá, preciso de ajuda com meu pedido', 'telegram', 'DEMO_BANCA')
-    print(r.get('response','')[:400])
-asyncio.run(main())
-"
+```mermaid
+flowchart LR
+    intent[identify_intent] --> esc[check_escalation]
+    esc -->|nao| book[handle_booking]
+    book --> fare[handle_farewell]
+    fare --> gen[generate_response]
+    esc -->|sim| human[escalate]
+    gen --> send[send_response]
+    human --> send
 ```
 
+3. Tabela mental **100% local por padrão**:
+
+| Camada | Local (padrão) | Plugável |
+|--------|----------------|----------|
+| LLM | Ollama `llama3.1` | OpenAI `gpt-4o` |
+| Embeddings | `nomic-embed-text` (768d) | OpenAI (1536d) |
+| STT | faster-whisper `large-v3` | Whisper API |
+| TTS | Coqui XTTS-v2 (GPU) | ElevenLabs |
+
+### O que falar
+> "Stack **agnóstica de provedor** (`ProviderFactory`): troca por variável de ambiente, sem reescrever código. **Por padrão roda local** — reprodutibilidade, custo zero de inferência, dados no ambiente controlado."
+>
+> "O grafo não é um único prompt: **intenção** → **escalonamento** → **agendamento** (`handle_booking`) → **despedida na voz** (`handle_farewell`) → **RAG** → resposta. Há fila receptiva, capacidade ponderada e **797 testes** automatizados."
+
+### Antecipar a pergunta "usa ChatGPT?"
+> "Não na demonstração: **Ollama na GPU**. OpenAI existe como alternativa opcional — mesma interface, outro provider."
+
 ### Plano B
-- `make warm-ollama`; resposta pré-gravada.
+- Screenshot do README / `docs/demo-assets/diagrama-grafo.png` (gerar antes).
 
 ---
 
-## 4. Demo ao vivo — RAG (~3 min) ★ principal
+## BLOCO 3 — ★ CLÍMAX: ligação ao vivo (~6–7 min)
 
-O script `backend/scripts/validate_rag.py` reproduz o que o grafo faz: seed no pgvector, busca semântica isolada, bloco injetado e `route_message` com Redis limpo.
+**Objetivo memorável:** o agente **atende**, **oferece um horário por voz**, **agenda** e **desliga sozinho** — enquanto o dashboard mostra o compromisso.
+
+### Pré-condições (CHECKLIST_DEMO)
+- Stack no ar (`make up` ou `make setup`).
+- Túnel **named** + `PUBLIC_BASE_URL` fixa (`docs/CHECKLIST_DEMO.md` §0).
+- Twilio Voice configurado; lead com telefone válido vinculado.
+- Disponibilidade com slots livres: `/dashboard/availability` (grade seg–sex, ex. 09:00–18:00).
+- Abas abertas: **Agendamentos** + **Monitoramento** (opcional).
 
 ### Sequência ensaiada
 
-**Passo 1 — Limpar memória curta** (evitar confundir Redis com RAG):
+**1. Disparar ou receber a ligação** (outbound de teste ou inbound para o número Twilio).
+
+**2. Roteiro da fala (cliente/banca):**
+- *"Quero marcar um horário."* → intent `schedule`
+- Agente oferece **um slot por vez**, por extenso: *"Tenho **terça-feira às quatorze horas**, serve?"*
+- Cliente: *"Sim."* → confirmação → gravação em `appointments`
+- Agente pergunta se há mais alguma coisa; cliente encerra → **desligamento autônomo** (`farewell` / wrap-up → `should_hangup` → TwiML `<Hangup/>`)
+
+**3. Em paralelo no navegador:**
+- http://localhost:3000/dashboard/appointments — **atualizar** → novo registro `created_by=AGENT`, canal `voice`
+
+**4. Destaques técnicos (30 s cada, se couber):**
+- **Data/hora por extenso:** `format_slot_label_spoken` — código determinístico, não o LLM inventando data para TTS
+- **1 slot por vez na voz:** STT de sim/não mais robusto que "opção 3"
+- **Tudo local:** STT faster-whisper + LLM Ollama + TTS Coqui (cache de latents do speaker reduz latência entre turnos)
+- **Agenda interna Postgres** — não Google Calendar; conflito checado antes de gravar
+
+### O que falar
+> "Fechamos o ciclo operacional: voz → grafo → Postgres → dashboard. O operador humano **não** precisou anotar o horário nem desligar a linha."
+
+### Plano B — ligação
+
+| Situação | Ação |
+|----------|------|
+| Ligação não conecta em **45 s** | **Parar.** Dizer: *"Rede/túnel instável — mostro o vídeo de backup."* Tocar `docs/demo-assets/ligacao-voz-backup.mp4` |
+| Twilio/túnel OK mas áudio falha | Mostrar aba Agendamentos com registro de ensaio anterior + rodar script abaixo |
+| Sem Twilio no auditório | Vídeo backup + script `validate_voice_inbound.py` |
+
+**⚠ Recurso a preparar:** não há vídeo versionado no repositório. **Gravar antes da banca** um MP4 da ligação completa (agendar + hangup) e salvar em `docs/demo-assets/ligacao-voz-backup.mp4` (gitignored).
+
+**Script alternativo (sem Twilio — pipeline STT→grafo→TTS):**
+
+```bash
+docker exec autonomous-agent-backend python /workspace/backend/scripts/validate_voice_inbound.py
+```
+
+Mede turno completo com WAV em `/voices/reference.wav`. Útil para provar pipeline local; **não** substitui o impacto da ligação real.
+
+---
+
+## BLOCO 4 — ★ NÚCLEO TÉCNICO: RAG + Teoria de Filas (~8–9 min)
+
+### 4a. RAG (~4 min)
+
+#### Fundamentos (falar — ~1,5 min)
+
+> "Fine-tuning atualiza o modelo inteiro, é caro e opaco sobre **de onde veio** a informação. **RAG** mantém fatos na base documental + memória do contato, recupera por **similaridade vetorial** e injeta no prompt — atualizável sem retreinar."
+>
+> "Pipeline: texto → **embedding** (`nomic-embed-text`, **768 dimensões**) → armazenamento **pgvector** → busca `<=>` (distância cosseno) → **similaridade = 1 − distância** → filtro `top-k` + **threshold** → bloco no prompt. KB: chunking (~512 tokens, overlap 64) na ingestão assíncrona."
+
+#### Demo ao vivo (~2 min)
+
+**Passo 1 — Limpar memória curta** (não confundir Redis com RAG):
 
 ```bash
 docker exec autonomous-agent-redis redis-cli DEL chat:RAGTEST
 ```
 
-**Passo 2 — Rodar validação:**
+**Passo 2 — Rodar validação RAG** (script real: `backend/scripts/validate_rag.py`):
 
 ```bash
 docker cp backend/scripts/validate_rag.py autonomous-agent-worker:/tmp/validate_rag.py
 docker exec autonomous-agent-worker python /tmp/validate_rag.py
 ```
 
-**Passo 3 — Destacar na saída (na ordem do script):**
+**Passo 3 — Destacar na saída (ordem do script):**
 
-| Etapa do script | O que mostrar |
-|-----------------|---------------|
-| Seed | 3 pares para `RAGTEST` + 1 interação `OTHERUSER` (prova de isolamento) |
-| `get_similar` | Linhas `sim=… dist=…` — pergunta antiga sobre horário próxima de *"Que horas vocês abrem?"* |
-| Bloco RAG | `Bloco RAG injetado? SIM` + trecho *"Conversas anteriores relevantes…"* |
-| Isolamento | `Vazamento: NAO (OK)` — `OTHERUSER` não aparece na busca de `RAGTEST` |
-| Threshold | Com `0.9` → 0 resultados; com `0` → várias memórias (comportamento da UI) |
-| `route_message` | Resposta citando **9h–18h** sem colar no prompt; `rag_memories no state:` ≥ 1 |
+| Linha / etapa | O que mostrar |
+|---------------|---------------|
+| Seed | 3 interações para `RAGTEST` + 1 para `OTHERUSER` |
+| `get_similar` | `sim=…` — pergunta sobre horário próxima de *"Que horas vocês abrem?"* |
+| Bloco RAG | `Bloco RAG injetado? SIM` |
+| Isolamento | `Vazamento: NAO (OK)` |
+| `route_message` | Resposta citando **9h–18h**; `rag_memories` ≥ 1 |
 
-**Passo 4 (opcional):** Settings → `rag_similarity_threshold` = `0.9` → Salvar → rerodar só a query; voltar threshold.
+**Passo 4 (opcional, 30 s):** http://localhost:3000/dashboard/knowledge — documento `READY` ingerido.
 
-### O que falar
-> "Memória longa só no Postgres; Redis deste `user_id` está vazio. A busca usa **similaridade = 1 − distância cossena** (`<=>` no pgvector) com `WHERE user_id = $1` — mesmo filtro que `retrieve_similar_memories` no nó `generate_response`. O LLM recebe o bloco RAG e responde alinhado ao atendimento passado, **sem vazar** o cliente `OTHERUSER`."
+#### O que falar (fechar 4a)
+> "Memória longa só no Postgres; Redis deste contato está vazio. Mesmo filtro `WHERE user_id = $1` que `retrieve_similar_memories` no nó `generate_response`."
 
-### Plano B
-- Arquivo `docs/demo-assets/validate-rag-output.txt` (saída completa de um ensaio bem-sucedido).
-- Trecho de `agents/orchestrator/graph.py` (chamada RAG) + `agents/memory/long_term.py` (`get_similar`).
-
----
-
-## 5. Demo ao vivo — Roteamento de agentes ATIVO/RECEPTIVO (~2–3 min) ★ IA + negócio
-
-### A regra (antes do terminal)
-
-| Fluxo | Regra |
-|-------|--------|
-| **Outbound** | Só agente **ACTIVE** da campanha dispara; `set_acionamento` na `LeadInteraction`. Agente **RECEPTIVE** → `_send_campaign_message` retorna `blocked=True` (sem envio). |
-| **Inbound — conversa aberta** | `is_active_conversation_open`: `data_acionamento` + status não terminal + inatividade ≤ 24h → agente **ACTIVE** (da campanha se for ACTIVE, senão seed `Agente_Ativo`). |
-| **Inbound — primeiro contato ou encerrada** | Status terminal, sem acionamento ou inatividade > 24h → agente **RECEPTIVE** (campanha RECEPTIVE ou seed `Agente_Receptivo`). |
-| **Lead desconhecido** | `lead=None` → sempre `Agente_Receptivo`. |
-
-**Dono da conversa:** o outbound **ACTIVE** que acionou (`data_acionamento`) mantém o atendimento inbound **enquanto a conversa estiver aberta** — o cliente volta para o mesmo perfil proativo, não para o receptivo genérico. Quando a conversa **encerra** (terminal ou timeout), o próximo inbound é **novo ciclo** → RECEPTIVE.
-
-> Dois timeouts: `active_conversation_timeout_hours` (24h, roteamento) ≠ `status_timeout_hours` (48h, sweep Celery → `nao_atendido`).
-
-### Demo ao vivo
-
-```bash
-docker cp backend/scripts/validate_phase4_routing.py autonomous-agent-backend:/tmp/validate_phase4_routing.py
-docker exec autonomous-agent-backend python /tmp/validate_phase4_routing.py
-```
-
-**Cinco cenários (linhas com `OK=True`):**
-
-| Cenário | O que o script faz | Resultado esperado |
-|---------|-------------------|-------------------|
-| **A** | `resolve_inbound_agent(session, None, "whatsapp")` | `Agente_Receptivo`, `mode=RECEPTIVE` |
-| **B** | `LeadInteraction` `acionado` + `data_acionamento` agora | `open=True`, agente **ACTIVE** |
-| **C** | Status `convertido` (terminal) | Agente **RECEPTIVE** |
-| **D** | `data_ultimo_contato` > `active_conversation_timeout_hours` | `open=False`, **RECEPTIVE** |
-| **E** | Campanha com `Agente_Receptivo` + `_send_campaign_message` | `blocked=True`, `channels=0` |
-
-> Se aparecer `B–E SKIP: nenhuma campanha no banco`, criar uma campanha mínima no dashboard antes da banca (o script precisa de campanha/lead para B–D).
-
-### O que falar
-> "Não é só prompt: `resolve_inbound_agent` lê o **estado da conversa** na `LeadInteraction` mais recente por canal. O agente que **iniciou** o relacionamento ativo continua **dono** enquanto `is_active_conversation_open` for verdadeiro — isso evita que um retorno pós-campanha caia no receptivo genérico no meio do funil. O script `validate_phase4_routing.py` é a prova automatizada dos cinco casos."
-
-### Plano B
-- `docs/demo-assets/validate-phase4-routing-output.txt` (saída com todos `OK=True`).
-- Flowchart do README + log `Inbound routing: open active conversation…` do worker.
+#### Plano B — RAG
+- `docs/demo-assets/validate-rag-output.txt` — gerar antes: `docker exec … > docs/demo-assets/validate-rag-output.txt`
+- Trecho de `agents/memory/long_term.py` + `agents/orchestrator/graph.py` na tela
 
 ---
 
-## 5b. Demo ao vivo — Atendimento receptivo: filas + métricas + Erlang (~3–4 min) ★ teoria de filas
+### 4b. Teoria de filas / Erlang C (~4–5 min)
 
-### O que fazer
+#### O problema (falar — ~1 min)
 
-**1. Prova automatizada da fila (terminal)**
+> "Telemarketing não é só gerar texto: é **quantos atendentes** (ou slots de IA) preciso para atender **X ligações/hora** com **80% respondidas em 20 segundos**? Isso é **dimensionamento de call center**."
+
+#### O modelo (falar com fórmulas do código — ~2 min)
+
+Implementação: `backend/app/core/erlang.py` · uso: `backend/app/services/capacity_analysis.py` · tela: `/dashboard/capacity`
+
+**Premissas clássicas Erlang C:** chegadas Poisson, tempo de serviço exponencial, fila infinita, servidores homogêneos.
+
+**Fórmulas (como no código):**
+
+- Intensidade de tráfego: **A = λ × AHT** (λ em contatos/h, AHT em horas; default AHT = **180 s**)
+- **Erlang B** — probabilidade de bloqueio
+- **Erlang C** — probabilidade de espera: `C(N,A) = B(N,A) × N / (N − A)` (requer **A < N**)
+- **Nível de serviço:** `SL = 1 − C(N,A) × exp(−(N − A) × T / AHT)` com **T = 20 s** (`service_level_target_seconds`), alvo **80%** (`erlang_target_service_level`)
+- **`required_agents`:** menor N tal que SL ≥ alvo
+
+> "Importante: Erlang aqui é **planejamento analítico** — a feedback na aba Capacidade. Quem **bloqueia** fila e outbound em runtime é o **Redis** (`MAX_WEIGHTED_CAPACITY`, pesos por canal)."
+
+#### Demo (~1–2 min)
+
+1. Abrir http://localhost:3000/dashboard/capacity
+2. Mostrar: recursos do container (estimativa), uso ativo vs receptivo, **λ** e **AHT** observados/default, **SL previsto** com N atual, **N necessário** para 80/20
+3. (Opcional, terminal) script de regressão Erlang:
 
 ```bash
 docker exec -e MAX_WEIGHTED_CAPACITY_OVERRIDE=2 autonomous-agent-worker \
-  python /workspace/backend/scripts/validate_layer_ra_receptive.py
+  python /workspace/backend/scripts/validate_layer_rc_capacity.py
 ```
 
-- Passou: com `MAX_WEIGHTED_CAPACITY` baixo, 3º contato entra na fila, mensagem de espera, após liberar capacidade o Beat atende **FIFO** (`[OK]` em fila/processador).
+Referência interna: A=10 Erlangs, N=14, AHT=180s, T=20s → SL ≈ **87%** (tolerância ±2% no script).
 
-**2. Métricas de call center (navegador)**
+#### O que falar (amarrar na tese)
+> "Agente autônomo **+** dimensionamento analítico = operação de telemarketing **modelada**, não só demonstrada."
 
-- http://localhost:3000/dashboard/metrics — rolar até **Fila de atendimento**  
-- Mostrar: tempo médio de espera, **nível de serviço** (alvo em segundos, ex. 20s), taxa de abandono (mensagem honesta se zero: *só voz, sem inbound de voz ainda*).
+#### Plano B — Erlang
+- Screenshot da aba Capacidade com números legíveis
+- Saída de `validate_layer_rc_capacity.py` salva em `docs/demo-assets/validate-layer-rc-output.txt`
 
-**3. Capacidade e Erlang C (navegador)**
+#### ⏱ Se atrasado no Bloco 4
+- Se já passou **min 18:** pule a demo terminal; mostre só a tela Capacity + cite as fórmulas verbalmente.
 
-- http://localhost:3000/dashboard/capacity  
-- Mostrar: CPU/RAM do **container** (estimativa), teto global, barra **ativo vs receptivo**, λ/AHT observados, **nível de serviço previsto** e canais necessários para 80/20.
+---
 
-**4. (Opcional) APIs no Swagger**
+## BLOCO 5 — Reforço: 3 canais + disponibilidade (~3–4 min)
 
-- `GET /api/v1/metrics/queue?days=1`  
-- `GET /api/v1/capacity`
+> **⛔ BLOCO CORTÁVEL — pular se restarem < 8 min para perguntas ou se o Bloco 4 estourou.**
 
-**5. Scripts de regressão (mencionar, não precisa rodar todos ao vivo)**
+### 5a. Agendamento por texto (~1,5 min)
 
-- `validate_layer_rb_queue.py` — `QueueEntry`, SLA, API de fila  
-- `validate_layer_rc_capacity.py` — Erlang C (ex.: A=10 Erlangs, N=14 → SL ≈ 87%), outbound no mesmo teto global
+- WhatsApp ou Telegram: *"Quero agendar"* → lista **numerada** de slots (até `booking_max_offered_slots`)
+- Escolha → confirmação → registro em `/dashboard/appointments`
+
+### 5b. Disponibilidade configurável — Fase D (~1,5 min)
+
+- http://localhost:3000/dashboard/availability
+- Mostrar grade semanal (tenant ou agente)
+- Explicar hierarquia: **agente > tenant > default** (`resolve_availability`)
+- Alterar faixa de um dia (ex. fechar sábado) → slots oferecidos mudam na próxima conversa
+
+### 5c. Túnel (15 s, se sobrar tempo)
+
+- Settings → aba **Túnel & Webhooks** — status auto-refresh 10s, URLs de webhook
+
+---
+
+## BLOCO 6 — Fechamento (~2 min)
 
 ### O que falar
-
-> "Além do roteamento ACTIVE/RECEPTIVE, implementamos **teoria de filas de call center**: capacidade **ponderada compartilhada** entre campanha ativa e receptivo, fila **FIFO** no Redis com histórico em `queue_entries`, e métricas clássicas — tempo de espera, **nível de serviço** configurável e abandono **só para voz** (estrutura pronta; mensageria não abandona). O webhook **não** roda o LLM na thread HTTP: enfileira Celery e responde pelo worker, como um contact center real."
-
-> "A aba **Capacidade** usa **psutil** no container e coeficientes por canal para uma **estimativa** de quantos atendimentos simultâneos cabem — não é benchmark de hardware. O **Erlang C** dimensiona: dado λ (chegadas/h do histórico) e AHT, qual SLA previsto temos e quantos 'agentes' precisaríamos para 80% em 20 segundos. Isso é **planejamento**; quem manda no runtime é o Redis e o scheduler."
-
-### Plano B
-
-- Screenshots das abas Métricas (fila) e Capacidade.  
-- Saída salva de `validate_layer_ra_receptive.py` em `docs/demo-assets/`.  
-- README — seção **Atendimento receptivo** + diagrama Mermaid do inbound.
-
-### Perguntas prováveis (filas / Erlang) — respostas honestas
-
-| Pergunta | Resposta sugerida |
-|----------|------------------|
-| **Por que Erlang C?** | É o modelo clássico de filas M/M/c com espera; permite traduzir volume (λ) e tempo de atendimento (AHT) em **probabilidade de espera** e **nível de serviço** — útil para dimensionar equipe/canais antes de gastar infra. No projeto fica em `erlang.py` e na API `/capacity`; **não** substitui o controle da fila em tempo real. |
-| **Como medem nível de serviço?** | **Operacional (R-B):** % de `QueueEntry` **ANSWERED** com `wait_seconds` ≤ `SERVICE_LEVEL_TARGET_SECONDS` (default 20s). **Planejamento (R-C):** fórmula Erlang C com o mesmo alvo T e `ERLANG_TARGET_SERVICE_LEVEL` (80%). |
-| **A capacidade é real ou estimada?** | **Runtime:** teto `MAX_WEIGHTED_CAPACITY` (pesos por canal) no Redis — isso é **real** no sentido de que bloqueia fila/outbound. **Aba Capacidade:** **estimativa** a partir de CPU/RAM visíveis ao container Docker + `CHANNEL_COST_*`; honestamente não mede GPU do host nem carga de LLM por mensagem. |
-| **Abandono na fila?** | Só **voz** (desligou esperando). WhatsApp/Telegram: espera ou atendimento, sem `ABANDONED`. Sem inbound de voz, a taxa na UI tende a zero — deixamos explícito na interface. |
-| **Inbound síncrono no webhook?** | **Não.** Webhook/polling enfileira `process_inbound_message`; grafo + envio no worker. Evita timeout do Twilio e unifica com Telegram. |
+> "Demonstramos o arco **operador → agente autônomo**: voz com agendamento e hangup, texto omnichannel, RAG rastreável, dimensionamento Erlang C, disponibilidade configurável."
+>
+> "**797 testes** (303 unit + 146 integração + 288 API), **CI verde**, versão **1.0.0**, documentação técnica completa (`docs/documentacao.md`)."
+>
+> "**Limitações honestas:** Media Streams (voz bidirecional em tempo real) ainda não conectado; tabulação SIP automática depende de callback Twilio; estimativa de capacidade na UI usa recursos do **container**, não benchmark de GPU."
+>
+> "Obrigado — perguntas."
 
 ---
 
-## 5c. Demo ao vivo — Comportamento receptivo: qualificar, escalar e handoff (~3 min) ★ atendimento real
+## Comandos úteis (referência rápida)
 
-### O que fazer
+| Objetivo | Comando |
+|----------|---------|
+| Subir stack (1ª vez) | `make setup` |
+| Subir / rebuild | `make up` |
+| Aquecer Ollama | `make warm-ollama` |
+| Testes unitários | `make test` |
+| Validar RAG | ver Bloco 4a |
+| Validar Erlang/capacidade | `validate_layer_rc_capacity.py` (Bloco 4b) |
+| Pipeline voz sem Twilio | `validate_voice_inbound.py` (Plano B Bloco 3) |
+| Listar modelos Ollama | `docker exec autonomous-agent-ollama ollama list` |
 
-**1. Receptivo qualificando + RAG (terminal ou WhatsApp/Telegram)**
-
-```bash
-docker exec autonomous-agent-redis redis-cli DEL chat:<user_id_teste>
-docker exec autonomous-agent-worker \
-  python /workspace/backend/scripts/validate_receptive_b1.py
-```
-
-- Destacar no output: bloco `RECEPTIVE_BEHAVIOR_PROMPT` injetado; lead vago recebe pergunta de qualificação; dúvida usa RAG (horário 9h–18h no script).
-
-**2. Escalonamento ao vivo (mensagem real)**
-
-- Enviar pelo canal: *"Quero falar com um humano"* **ou** reclamação grave (*"isso é um absurdo, vou processar vocês"*)  
-- Mostrar no **Monitoramento** (http://localhost:3000/dashboard/monitoring): evento **Escalada** + contato na seção **Modo humano**
-
-**3. Modo humano — bot para de responder**
-
-- Enviar **outra** mensagem pelo mesmo contato  
-- Esperado: **sem** resposta do LLM; no máximo a mensagem ocasional de fila humana (throttle ~5 min)  
-- Rodar (opcional): `validate_human_mode_b2.py` — curto-circuito e throttle com `[OK]`
-
-**4. Reativação no painel**
-
-- **Devolver ao bot** na seção Modo humano  
-- Nova mensagem → bot atende normalmente de novo
-
-**5. APIs (Swagger ou curl)**
-
-- `GET /api/v1/handoff/active`  
-- `POST /api/v1/handoff/reactivate` `{ "channel": "...", "user_id": "..." }`
-
-### O que falar
-
-> "O receptivo não é só FAQ: **responde com RAG** e **qualifica** com perguntas naturais quando o lead está vago — bloco operacional `RECEPTIVE_BEHAVIOR_PROMPT`, separado da personalidade do agente."
-
-> "O escalonamento é **inteligente**: pedido explícito de humano, confiança **muito baixa** na classificação (`< 0.25`), ou **reclamação grave** avaliada pela IA (`complaint_severity`). Reclamação leve o bot tenta resolver."
-
-> "Quando escala, não é só um aviso: entra **modo humano** no Redis — o bot **para** de consumir capacidade e de chamar o LLM. O operador vê quem aguarda no Monitoramento e pode **devolver ao bot**; se ninguém assumir, o **TTL** (4h default) devolve automaticamente. Tabulação **`NEG:ESCALADO`** registra o handoff para a devolutiva."
-
-### Plano B
-
-- Saída de `validate_receptive_b1.py` e `validate_human_mode_b2.py` em `docs/demo-assets/`.  
-- Screenshot da seção **Modo humano** no Monitoramento.  
-- README — seção **Comportamento do Agente Receptivo** (5c) + diagrama Mermaid.
-
-### Perguntas prováveis (comportamento / handoff)
-
-| Pergunta | Resposta sugerida |
-|----------|------------------|
-| **Como decide escalar?** | Três gatilhos em `resolve_should_escalate`: `intent=escalate`, `confidence < 0.25` (incerteza extrema), ou `complaint` com `severity=high`. Reclamação leve fica com o bot. |
-| **O que acontece depois que escala?** | Resposta de transferência, tabulação `NEG:ESCALADO` (origem `ESCALATION`), `enter_human_mode` no Redis. Inbound seguinte **não** chama o grafo. |
-| **E se ninguém assumir?** | `HUMAN_MODE_TTL_SECONDS` (default 4h) expira a chave; contato volta ao bot. Operador pode reativar antes via painel ou `POST /handoff/reactivate`. |
-| **Spamma mensagem de espera?** | Não — throttle `HUMAN_MODE_NOTIFY_INTERVAL_SECONDS` (default 5 min) via chave `human_mode_notified:*`. |
-| **Afeta campanha ACTIVE?** | Modo humano é por **contato** (`channel:user_id`). Gatilho vem do inbound; contatos que não escalaram seguem normais. |
+Outros scripts de regressão (mencionar, não rodar todos ao vivo): `validate_phase4_routing.py`, `validate_layer_ra_receptive.py`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `validate_test_dispatch.py`.
 
 ---
 
-## 5d. Demo ao vivo — Tabulação / status (~2 min) ★ call center + IA
+## Perguntas prováveis da banca — respostas curtas
 
-### O que fazer
+| Pergunta | Resposta |
+|----------|----------|
+| **Usa ChatGPT?** | **Não por padrão.** Ollama `llama3.1` local. OpenAI é plugável via `LLM_PROVIDER=openai` — mesma factory, sem mudar código. |
+| **Por que local?** | Reprodutibilidade da defesa, custo zero de inferência, dados no ambiente controlado, independência de API externa. |
+| **Por que RAG e não fine-tuning?** | Atualização de KB sem retreinar; **rastreabilidade** da fonte; custo menor; memória por contato isolada no pgvector. |
+| **Por que Erlang C?** | Linguagem clássica de call center para traduzir λ e AHT em SLA — complementa a IA (texto) com **dimensionamento** (concorrência). Implementado em `erlang.py`; **não** substitui fila Redis em runtime. |
+| **Como garante qualidade?** | **797 testes** em 3 camadas + CI GitHub Actions; scripts de validação ponta a ponta (`validate_rag.py`, etc.). |
+| **E se o LLM alucinar?** | Prompt global anti-alucinação; identidade separada da KB; RAG injeta só contexto recuperado; agente neutro sem KB; escalonamento se confiança < 0,25 ou reclamação grave. |
+| **Escala?** | API stateless; workers Celery horizontais; gargalo típico = **GPU do Ollama/Coqui**; fila receptiva com capacidade ponderada no Redis. |
+| **Por que 1 slot por vez na voz?** | STT de **sim/não** é mais robusto que reconhecer "opção três" ou datas faladas. |
+| **Por que agenda Postgres e não Google Calendar?** | Coerência transacional com leads/tenant; sem OAuth; conflitos no mesmo banco. |
+| **Hangup autônomo — não desliga cedo demais?** | Conservador: `confidence ≥ 0,9` para farewell; bloqueado durante booking ativo; wrap-up explícito pós-agendamento. |
+| **Disponibilidade — agente vs tenant?** | Hierarquia **agente > tenant > default**; regras do agente **substituem** as do tenant (não faz merge dia a dia). |
 
-**1. Catálogo no dashboard**
-
-- http://localhost:3000/dashboard/tabulacoes  
-- Mostrar tabulações **Padrão do sistema**: códigos `SIP:*` (Ocupado, Número inexistente…) e `NEG:*` (Venda, Recusado, Cliente Ausente…).  
-- Criar uma tabulação **customizada** (ex.: `CUSTOM:DEMO` / categoria CUSTOMIZADO) — CRUD habilitado; seeds só Visualizar.
-
-**2. Atribuição automática (terminal ou script)**
-
-```bash
-docker exec autonomous-agent-backend \
-  python /workspace/backend/scripts/validate_tabulacao_t2.py
-```
-
-- Destacar linhas `[OK]`: regra `purchase` → `NEG:VENDA`, `nao_atendido` → `NEG:AUSENTE`, camada IA (mock) e colunas na devolutiva Excel.
-
-**3. Devolutiva (opcional, 30 s)**
-
-- Baixar Excel de uma base com interações tabuladas — colunas **Status operacional**, **Tabulação**, **Categoria Tabulação**.
-
-### O que falar
-
-> "Separamos **status operacional** — o que o motor usa para roteamento e cadência — da **tabulação**, que é o vocabulário de **resultado de call center** para o gestor. A atribuição é **híbrida**: primeiro regras (`purchase` vira Venda, sweep sem resposta vira Cliente Ausente); se não resolver, a **IA escolhe um código do catálogo** — saída restrita, não inventa rótulo livre. **Não tabulamos a cada mensagem**, só em momentos de classificação: status terminal ou intent claro."
-
-> "Os códigos **SIP** já estão no seed — Ocupado, Timeout, Número inexistente — mas o **preenchimento automático via telefonia** depende de integração futura: Twilio StatusCallback ou discador Asterisk. Hoje funciona por **regras + IA**; o campo `twilio_call_sid` e `apply_tabulacao(sip_code=…)` estão prontos para quando o discador existir."
-
-### Perguntas prováveis (tabulação)
-
-| Pergunta | Resposta sugerida |
-|----------|------------------|
-| **Como o status é atribuído?** | Camadas: (1) regras intent/status em `tabulacao_mapping.py`; (2) se não resolver e houver texto, LLM em `tabulacao_agent.py` escolhe **só** códigos do catálogo; (3) SIP futuro. Gravado em `LeadInteraction.tabulacao_id` + `tabulacao_origem`. |
-| **E os códigos SIP?** | Catálogo seed pronto (`SIP:486` = Ocupado, etc.). **Automático via hangup/cause code ainda não** — precisa webhook de telefonia. Honestidade: hoje SIP manual/teste via `apply_tabulacao`; produção = discador ou Twilio callbacks. |
-| **Tabulação vs status interno?** | Status (`convertido`, `nao_atendido`…) governa grafo, slots e cadência. Tabulação é **relatório** para devolutiva Excel e gestão — pode ser mais granular (ex.: Venda vs Sucesso genérico). |
-
-### Plano B
-
-- Screenshot da aba Tabulações + saída de `validate_tabulacao_t2.py` em `docs/demo-assets/`.  
-- README — seção **Tabulação / Status de Atendimento** (5d).
+Detalhes e trade-offs: `docs/documentacao.md` §18.
 
 ---
 
-## 5e. Demo ao vivo — Teste de acionamento ★ melhor recurso para banca (~2–3 min)
+## Planos B por bloco (resumo)
 
-**Por quê:** resposta **síncrona na tela** — sem depender de campanha rodando, janela ou cadência. Ideal para **Telegram** (token no `.env`, lead com `telegram_id`).
+| Bloco | Fallback |
+|-------|----------|
+| 1–2 Arquitetura | Screenshots README / diagramas em `docs/demo-assets/` |
+| **3 Ligação** | **`ligacao-voz-backup.mp4`** (gravar antes) · `validate_voice_inbound.py` · screenshot Agendamentos |
+| **4a RAG** | `validate-rag-output.txt` |
+| **4b Erlang** | Screenshot `/dashboard/capacity` · `validate-layer-rc-output.txt` |
+| 5 Reforço | Pular bloco |
+| 6 Fechamento | Sempre verbal — números na slide |
 
-### O que fazer
-1. http://localhost:3000/dashboard/activation → aba **Teste de acionamento**
-2. Agente **ACTIVE** (ex.: `Agente_Ativo`), lead com contato válido, canal **telegram** ou **whatsapp**
-3. **Disparar** → aguardar resposta do LLM (dezenas de segundos)
-4. Mostrar bloco **Resultado** com texto gerado
-
-### O que falar
-> "É o mesmo grafo LangGraph da produção, mas em modo **demonstração**: um disparo, um canal, capacidade global respeitada. Na banca, o Telegram costuma ser o caminho mais estável — a resposta aparece na hora, sem abrir Swagger."
-
-### Plano B
-- Saída de `validate_test_dispatch.py` ou screenshot da aba com resultado prévio
+Gerar `.txt` antes da banca: rodar scripts com smoke verde e redirecionar saída — ver `docs/demo-assets/README.md`.
 
 ---
 
-## 5f. Demo ao vivo — Ciclo operacional completo (~3–4 min)
+## Checklist do apresentador (~5 min antes)
 
-### Sequência sugerida
-1. **Iniciar campanha** — `/dashboard/campaigns` → Iniciar (se Twilio/Telegram configurado)
-2. **Monitorar** — `/dashboard/monitoring` → aba **Tempo real** (eventos WebSocket + modo humano se escalar)
-3. **Parar campanha** — **Parar** na campanha ativa → `status=paused`, motor desligado por canal
-4. **Supervisionar** — aba **Histórico de atendimentos** → **Abrir conversa** → thread user/assistant + metadados (início, duração estimada em chat; voz = indisponível)
-5. **Operação outbound** — `/dashboard/activation` → aba **Histórico de acionamentos** → finalizar manual com tabulação (se atendimento aberto)
+Resumo — detalhe operacional em **`docs/CHECKLIST_DEMO.md`**.
 
-### O que falar
-> "Não é só chatbot: é **sistema de atendimento** — acionar, monitorar em tempo real, **parar** a operação, **supervisionar** conversas (somente leitura) e **encerrar** acionamentos no painel operacional. Dois históricos distintos: **Acionamento** = outbound de campanha; **Monitoramento** = conversas e mensagens, inclusive inbound receptivo."
-
-### Ponto de honestidade
-> "Duração de **chamada** de voz ainda não temos — falta callback Twilio. Em chat, a duração é **estimada** pela primeira e última mensagem. Unificamos `+55…` e `whatsapp:+55…` na thread para não partir a conversa."
+- [ ] Stack verde (`make up`, Ollama quente: `make warm-ollama`)
+- [ ] Túnel named + `PUBLIC_BASE_URL` OK (Settings → Túnel & Webhooks)
+- [ ] Browser: **Agendamentos**, **Availability**, **Capacity**, Knowledge, Monitoramento, Settings
+- [ ] `redis-cli DEL chat:RAGTEST` (antes do RAG ao vivo)
+- [ ] Saídas salvas em `docs/demo-assets/` (RAG, Erlang)
+- [ ] **Vídeo backup da ligação** pronto no laptop (`ligacao-voz-backup.mp4`)
+- [ ] Lead + telefone testados; slots livres na grade de disponibilidade
+- [ ] Slide de abertura + slide de fechamento (797 testes, v1.0.0)
 
 ---
 
-## 6. Demo ao vivo — Modelo de propriedade (sistema vs usuário) (~2 min)
+## Recursos que o roteiro assume — status
 
-### O que fazer (navegador + API)
-
-**1. Seeds visíveis (admin)**  
-- http://localhost:3000/dashboard/agents — **Agente_Ativo**, **Agente_Receptivo**: selo **Padrão do sistema**, ações só **Visualizar** (descrição longa no modal).  
-- http://localhost:3000/dashboard/channels — **WhatsApp_Agent**, **Telegram_Agent**, **Voice_Agent**: mesmo selo; **Visualizar** mostra credenciais **mascaradas** (`lib/credentials.ts`).
-
-**2. Registro próprio com CRUD**  
-- Criar agente ou canal com nome próprio → **Editar** e **Excluir** habilitados.
-
-**3. Prova API — 403 em sistema** (Swagger ou terminal):
-
-```bash
-# Token admin (JSON)
-curl -s -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@admin.com","password":"admin"}'
-
-# Copiar access_token; listar agentes; PUT no Agente_Ativo (is_system=true)
-curl -s -o /dev/null -w "%{http_code}\n" -X PUT "http://localhost:8000/api/v1/agents/<UUID_AGENTE_ATIVO>" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"TentativaHack"}'
-```
-
-- Passou: **403** com detalhe *"Registro padrão do sistema não pode ser editado"* (`authorization.py` → `raise_if_cannot_edit`).
-
-**4. (Opcional) Multi-usuário**  
-- Registrar `user2@test.com` → user2 **vê** seeds + **cria** canal próprio; PUT no seed → 403; não vê campanhas do admin.
-
-**5. Leads (30 s)**  
-- Base **IMPORT**: badge somente leitura; **Excluir base** OK. Base **MANUAL**: editar lead.
-
-### O que falar
-> "**Multi-tenancy leve**: listagens `is_system OR user_id == eu` (`authorization.py`). Registros padrão são **referência global imutável** — ninguém altera o playbook do sistema, mas qualquer usuário pode montar campanha com `agent_id` de agente sistema (`can_view`). Dados privados ficam isolados por dono."
-
-### Plano B
-- Screenshots das telas com selo; print do 403 no Swagger.
+| Recurso | Existe? | Ação |
+|---------|---------|------|
+| `backend/scripts/validate_rag.py` | ✅ | Usar no Bloco 4a |
+| `backend/scripts/validate_layer_rc_capacity.py` | ✅ | Opcional Bloco 4b |
+| `backend/scripts/validate_voice_inbound.py` | ✅ | Plano B voz sem Twilio |
+| Tela `/dashboard/appointments` | ✅ | Bloco 3 e 5 |
+| Tela `/dashboard/availability` | ✅ | Bloco 5 |
+| Tela `/dashboard/capacity` (Erlang) | ✅ | Bloco 4b |
+| `docs/demo-assets/validate-rag-output.txt` | ⚠ Gerar | Rodar script e salvar antes da banca |
+| `docs/demo-assets/ligacao-voz-backup.mp4` | ❌ Não versionado | **Gravar ensaio completo** antes da defesa |
+| `docs/demo-assets/voz-demo.mp3` | ⚠ Opcional | Aba Settings → Áudio |
 
 ---
 
-## 7. Demo ao vivo — voz clonada (~2 min)
-
-1. Settings → **Áudio** — `reference.wav` + **Gerar e ouvir** (~10–20 s).
-
-### O que falar
-> "Coqui XTTS com clonagem; outbound voz usa MP3 + Twilio `<Play>`."
-
-### Plano B
-- `docs/demo-assets/voz-demo.mp3`
-
----
-
-## 8. Aplicação de negócio (~1 min)
-
-- **Campanhas** — `Agente_Ativo` no `agent_id`; **Iniciar** / **Parar** / retomar.
-- **Acionamento** — 3 abas: motor, teste ad-hoc, histórico outbound.
-- **Monitoramento** — 2 abas: tempo real, histórico de conversas.
-- **Métricas** — campanha/base + **Fila de atendimento** (SLA).
-- **Capacidade** — estimativa + Erlang (1 slide se faltar tempo na **5b**; ver também **5f**).
-- **Devolutiva** — download Excel (status operacional + tabulação).
-
-### O que falar
-> "A camada operacional **dispara** o mesmo grafo; receptivo com **fila** quando o contact center enche; `LeadInteraction`, **tabulação call center**, supervisão de conversas, parar campanha e devolutiva Excel fecham o ciclo para o gestor."
-
----
-
-## 9. Fechamento (~1 min)
-
-> "Entregamos **RAG ativo**, **roteamento por dono da conversa**, **fila receptiva com métricas de call center**, **comportamento receptivo com handoff humano real** (5c), **tabulação híbrida (regras + IA)** (5d), **ciclo operacional completo** (5f: acionar, testar ao vivo em 5e, parar, supervisionar, finalizar), **dimensionamento Erlang C**, **proteção is_system/IMPORT**, voz local (Coqui) e stack reproduzível. Scripts `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `validate_campaign_stop.py`, `validate_test_dispatch.py`, `validate_activation_history.py` e `validate_attendance_history.py` são evidência de regressão para a defesa."
-
----
-
-## Perguntas prováveis da banca + respostas
-
-### Por que IA local?
-> "Reprodutibilidade, custo zero em inferência, dados no ambiente controlado. OpenAI/ElevenLabs via `ProviderFactory` quando necessário."
-
-### Como decidem qual agente atende cada contato?
-> "**Dono da conversa** em `conversation_routing.py`: outbound ACTIVE abre com `data_acionamento`; inbound reutiliza esse ACTIVE enquanto `is_active_conversation_open`; senão RECEPTIVE (ou desconhecido → seed `Agente_Receptivo`). Escopo: última `LeadInteraction` por `(lead_id, channel_type)`."
-
-### O agente ativo pode atender inbound?
-> "**Sim, mas só** se for a conversa que **ele** (ou a campanha ACTIVE vinculada) abriu e que ainda está **aberta**. **Primeiro contato** ou conversa **encerrada** vai para o **RECEPTIVE** — não mistura funil ativo com triagem passiva."
-
-### Como protegem os registros padrão do sistema?
-> "Campo `is_system=true` + `authorization.py`: `can_edit`/`can_delete` falsos para todos; API retorna **403**; UI com selo **Padrão do sistema** e só visualizar. Seeds idempotentes no lifespan (`seed_default_channels`, `seed_default_agents`, `ensure_seed_flags`)."
-
-### O RAG está ativo de verdade?
-> "**Sim.** `generate_response` em `graph.py` chama `retrieve_similar_memories` antes do `response_agent`. Prova ao vivo: `validate_rag.py` — `get_similar` com `sim=…`, bloco injetado, `route_message` com `rag_memories` ≥ 1 e `Vazamento: NAO`."
-
-### Como isolam dados entre usuários?
-> "Listagens: `or_(is_system, user_id == current_user)` em agents/channels/campaigns/leads; lead_bases via campanha visível. Registros do usuário B **não** aparecem para A. RAG/pgvector: filtro **`user_id` do contato no canal**, não do usuário logado."
-
-### Como o RAG evita misturar clientes?
-> "`WHERE user_id = $1` em `get_similar`; `user_id` estável (telefone / `telegram_id`). Script grava `OTHERUSER` e confirma que não vaza na busca de `RAGTEST`."
-
-### ATIVO vs RECEPTIVE — por que dois agentes de campanha?
-> "Separa **disparo proativo** (ACTIVE, abre conversa) de **triagem/receptivo** (RECEPTIVE). Distinto dos dois workers LangGraph (intenção vs resposta). `description` vira `agent_personality` no prompt."
-
-### O que é conversa ativa aberta?
-> "Todas verdadeiras: existe `LeadInteraction`; `data_acionamento` preenchido; status ∉ {`convertido`,`recusou`,`nao_atendido`,`erro`}; `(agora − data_ultimo_contato) ≤ 24h` (`is_active_conversation_open`)."
-
-### Leads importados podem ser editados?
-> "Lead individual: **não** (`LeadBase.source=IMPORT` → 403). **Excluir a base inteira**: sim (`DELETE /lead-bases/{id}`)."
-
-### Dois agentes LangGraph vs dois Agent no banco?
-> "LangGraph: pipeline técnico. `Agent` ACTIVE/RECEPTIVE: persona + regra de quem dispara e quem atende inbound."
-
-### Distância ou similaridade no pgvector?
-> "Similaridade = 1 − distância cosseno; threshold `rag_similarity_threshold` na UI/`app_settings`."
-
-### Hot-reload de settings?
-> "`app_settings` + Redis `settings_version`; worker recarrega sem restart de container."
-
-### Limitações?
-> "GPU Ollama; 2 LLM + RAG por mensagem; Twilio trial; Telegram polling manual; cenário E do script precisa de campanha no DB para B–D."
-
-### Escalabilidade?
-> "API stateless, Celery horizontal; gargalo principal na GPU do Ollama."
-
-### Por que Erlang C num sistema de IA?
-> "O gargalo operacional é **concorrência de atendimentos**, não só tokens. Erlang C traduz histórico (λ, AHT) em SLA **previsto** e headroom — mesma linguagem de call center que o gestor entende. A IA decide o texto; a fila decide **quando** há slot."
-
-### Como o agente receptivo decide passar para humano?
-> "`resolve_should_escalate` após `identify_intent`: pedido explícito (`escalate`), confiança **muito baixa** (`confidence < 0.25`), ou reclamação **grave** (`complaint_severity=high` no structured output). Leve → bot resolve. Escala → `NEG:ESCALADO` + **modo humano** Redis — bot para de responder até reativação ou TTL."
-
-### O handoff é real ou só mensagem?
-> "**Real.** `human_handoff.py` curto-circuita inbound antes do grafo; libera capacidade; mensagem ocasional com throttle. Operador reativa em `/dashboard/monitoring` ou TTL devolve ao bot. Scripts `validate_human_mode_b2.py` provam curto-circuito e reativação."
-
-### Nível de serviço — duas leituras?
-> "**R-B (realizado):** % atendidos na fila dentro de T segundos nos `queue_entries`. **R-C (previsto):** Erlang com capacidade N atual. Podem divergir enquanto λ/AHT ainda usam default — deixamos `aht_source` explícito na API."
-
-### Capacidade real vs estimada?
-> "**Real no runtime:** pesos no Redis (`MAX_WEIGHTED_CAPACITY`, compartilhado ativo+receptivo). **Estimativa na aba Capacidade:** psutil + `CHANNEL_COST_*` no container — útil para planejar, não para substituir monitoramento de produção."
-
-### Tabulação automática via SIP?
-> "Catálogo e API prontos; **automático** depende de Twilio StatusCallback ou discador (Asterisk) — trabalho futuro. Hoje: **regras + IA** em transições significativas; devolutiva Excel já exporta tabulação."
-
-### Como a IA escolhe a tabulação?
-> "`tabulacao_agent.py`: structured output com lista fechada de códigos do dono (sistema + custom). Só roda se regras não resolverem e houver texto da conversa — não a cada turno."
-
----
-
-## Plano B — resumo rápido
-
-| Demo | Fallback |
-|------|----------|
-| Diagramas | Screenshots / `docs/demo-assets/diagrama-*.png` |
-| Ollama / grafo | Log + resposta pré-gravada |
-| **RAG** | **`docs/demo-assets/validate-rag-output.txt`** |
-| **Roteamento** | **`docs/demo-assets/validate-phase4-routing-output.txt`** + flowchart README |
-| **Fila receptiva / Erlang** (5b) | Saída `validate_layer_ra_receptive.py` + screenshots Métricas/Capacidade |
-| **Comportamento receptivo / handoff** (5c) | Saída `validate_receptive_b1.py` + `validate_human_mode_b2.py` + screenshot Modo humano |
-| **Tabulação / status** (5d) | Saída `validate_tabulacao_t2.py` + screenshot `/dashboard/tabulacoes` |
-| **Teste de acionamento** (5e) | Aba Teste em `/dashboard/activation` ou saída `validate_test_dispatch.py` |
-| **Ciclo operacional** (5f) | Screenshots Parar campanha + Histórico de atendimentos (thread aberta) |
-| Voz | `voz-demo.mp3` |
-| Propriedade UI | Screenshots agentes/canais + print 403 |
-| Campanha real | Métricas de base antiga |
-
-**Gerar os `.txt` antes da banca:** rodar os dois scripts uma vez com smoke verde e redirecionar a saída para `docs/demo-assets/` (ver [demo-assets/README.md](demo-assets/README.md)).
-
----
-
-## Checklist do apresentador (5 min antes)
-
-- [ ] `docs/SMOKE_TEST.md` todo verde
-- [ ] `make warm-ollama`
-- [ ] `redis-cli DEL chat:RAGTEST`
-- [ ] Scripts copiados no container; saídas salvas em `docs/demo-assets/` (Plano B)
-- [ ] Campanha existente no DB (para cenários B–D do routing)
-- [ ] Browser: Settings, Agentes, Canais, **Acionamento (3 abas — demo 5e/5f)**, Tabulações (**5d**), Métricas (fila **5b**), Capacidade, **Monitoramento (2 abas — 5c handoff, 5f supervisão)**, README
-- [ ] `validate_layer_ra_receptive.py` ensaiado (MAX_WEIGHTED_CAPACITY_OVERRIDE=2)
-- [ ] `validate_receptive_b1.py` e `validate_human_mode_b2.py` ensaiados
-- [ ] `validate_tabulacao_t2.py` ensaiado
-- [ ] `validate_campaign_stop.py`, `validate_test_dispatch.py`, `validate_activation_history.py`, `validate_attendance_history.py` ensaiados
-- [ ] (Opcional) `user2@test.com` para isolamento
-- [ ] MP3 fallback (voz)
-
----
-
-*Alinhado ao README (Campanhas parar/retomar, Acionamento 3 abas, Monitoramento 2 abas, Atendimento receptivo + Tabulação), `validate_rag.py`, `validate_phase4_routing.py`, `validate_layer_ra/rb/rc`, `validate_receptive_b1.py`, `validate_human_mode_b2.py`, `validate_tabulacao_t2.py`, `validate_campaign_stop.py`, `validate_test_dispatch.py`, `validate_activation_history.py`, `validate_attendance_history.py`, `conversation_routing.py`, `authorization.py`, seeds em `seed.py`, head Alembic **`k2l3m4n5o6p7`** (ajustes operacionais recentes sem migration nova; `NEG:ESCALADO` via seed).*
+*Consistente com `docs/documentacao.md` (Onda 2A): grafo com `handle_booking`/`handle_farewell`, agenda Postgres, 1-slot na voz, hierarquia de disponibilidade, 797 testes, versão 1.0.0, túnel polling 10s.*
