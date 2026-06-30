@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.whatsapp_outbound import (
+    build_appointment_content_variables,
     build_content_variables,
     is_within_whatsapp_service_window,
     resolve_whatsapp_send_mode,
@@ -58,6 +59,18 @@ def test_build_content_variables_fallback_cliente() -> None:
     lead = MagicMock()
     lead.nome_cliente = ""
     assert build_content_variables(lead) == {"1": "Cliente"}
+
+
+def test_build_appointment_content_variables_name_and_slot() -> None:
+    lead = MagicMock()
+    lead.nome_cliente = "Maria"
+    starts = datetime(2026, 6, 30, 15, 0, tzinfo=timezone.utc)
+    from app.services.appointment_service import format_slot_label
+
+    assert build_appointment_content_variables(lead, starts) == {
+        "1": "Maria",
+        "2": format_slot_label(starts),
+    }
 
 
 @pytest.mark.parametrize(
@@ -172,3 +185,11 @@ def test_resolved_whatsapp_template_followup_sid() -> None:
     assert s.resolved_whatsapp_template("followup") == (
         "HX6afa2ef98be8d7f1e67ef203bb751c95"
     )
+
+
+def test_resolved_whatsapp_template_appointment_empty_by_default() -> None:
+    from app.core.config import Settings
+
+    s = Settings()
+    assert s.resolved_whatsapp_template("appointment_reminder") is None
+    assert s.resolved_whatsapp_template("appointment_due") is None

@@ -1,4 +1,4 @@
-"""Textos fixos do lembrete proativo de agendamentos (voz/telegram — Fatia 1)."""
+"""Textos fixos do lembrete proativo de agendamentos (voz/telegram/whatsapp)."""
 
 from __future__ import annotations
 

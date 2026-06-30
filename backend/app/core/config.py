@@ -33,7 +33,13 @@ DEFAULT_VOICE_INBOUND_GREETING = (
     "Olá! Você ligou para o nosso atendimento. Como posso ajudar?"
 )
 
-WhatsAppTemplatePurpose = Literal["inicial", "followup", "retomada"]
+WhatsAppTemplatePurpose = Literal[
+    "inicial",
+    "followup",
+    "retomada",
+    "appointment_reminder",
+    "appointment_due",
+]
 
 
 class Settings(BaseSettings):
@@ -69,6 +75,9 @@ class Settings(BaseSettings):
     whatsapp_template_inicial: str = "HX564c9577120a14f2d7d5517c2e26982b"
     whatsapp_template_followup: str = "HX6afa2ef98be8d7f1e67ef203bb751c95"
     whatsapp_template_retomada: str = "HXfebf2d00b102badb36d5e81c12a0b050"
+    # Agendamentos — vazio até aprovação na Meta/Twilio (sem default HX)
+    whatsapp_template_appointment_reminder: str = ""
+    whatsapp_template_appointment_due: str = ""
     whatsapp_use_templates: bool = False
     whatsapp_template_mode: str = "auto"  # auto | sandbox | production
 
@@ -348,6 +357,8 @@ class Settings(BaseSettings):
             "inicial": self.whatsapp_template_inicial,
             "followup": self.whatsapp_template_followup,
             "retomada": self.whatsapp_template_retomada,
+            "appointment_reminder": self.whatsapp_template_appointment_reminder,
+            "appointment_due": self.whatsapp_template_appointment_due,
         }
         sid = (mapping.get(purpose) or "").strip()
         return sid or None

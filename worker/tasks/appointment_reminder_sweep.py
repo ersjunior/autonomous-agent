@@ -1,11 +1,11 @@
 """
-Sweep de lembretes proativos de agendamento (voz + telegram — Fatia 1).
+Sweep de lembretes proativos de agendamento (voz, telegram e whatsapp).
 
 Dois disparos por appointment:
   - Lembrete antecipado → reminder_sent_at
   - Acionamento na hora → due_notified_at
 
-WhatsApp e channel NULL são ignorados nesta fatia (skipped_whatsapp).
+Appointments sem canal (NULL) são ignorados (skipped_no_channel).
 
 Entrega via send_appointment_reminder (caminho direto, isento do gate RECEPTIVE de campanhas).
 """
@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from app.core.appointment_reminder_text import build_due_message, build_reminder_message
 from app.core.database import AsyncSessionLocal
 from app.services.appointment_reminder_service import plan_appointment_reminder_sweep
 from worker.async_runner import run_celery_async
@@ -25,12 +24,14 @@ from worker.tasks.outbound_campaign import _resolve_recipient
 
 logger = logging.getLogger(__name__)
 
+_SUPPORTED_CHANNELS = frozenset({"voice", "telegram", "whatsapp"})
+
 
 def _empty_stats() -> dict[str, int]:
     return {
         "reminders_sent": 0,
         "due_notified": 0,
-        "skipped_whatsapp": 0,
+        "skipped_no_channel": 0,
         "skipped_no_recipient": 0,
     }
 
@@ -57,11 +58,11 @@ async def _try_dispatch(
 
     channel = (appointment.channel or "").lower()
     if not channel:
-        stats["skipped_whatsapp"] += 1
+        stats["skipped_no_channel"] += 1
         return False
 
-    if channel not in ("voice", "telegram"):
-        stats["skipped_whatsapp"] += 1
+    if channel not in _SUPPORTED_CHANNELS:
+        stats["skipped_no_channel"] += 1
         return False
 
     recipient = _resolve_recipient(lead, channel)
@@ -93,7 +94,7 @@ async def _sweep_appointment_reminders_with_session(session) -> dict[str, int]:
     now = datetime.now(timezone.utc)
     stats = _empty_stats()
     plan = await plan_appointment_reminder_sweep(session, now)
-    stats["skipped_whatsapp"] = plan.skipped_whatsapp
+    stats["skipped_no_channel"] = plan.skipped_no_channel
 
     changed = False
 
@@ -124,7 +125,10 @@ async def _sweep_appointment_reminders_with_session(session) -> dict[str, int]:
     if changed:
         await session.commit()
 
-    if any(stats[k] for k in ("reminders_sent", "due_notified", "skipped_whatsapp")):
+    if any(
+        stats[k]
+        for k in ("reminders_sent", "due_notified", "skipped_no_channel")
+    ):
         logger.info("Appointment reminder sweep: %s", stats)
 
     return stats
@@ -137,5 +141,5 @@ async def _sweep_appointment_reminders_async() -> dict[str, int]:
 
 @celery.task(name="worker.tasks.appointment_reminder_sweep.sweep_appointment_reminders")
 def sweep_appointment_reminders() -> dict[str, int]:
-    """Beat: lembrete antecipado e acionamento na hora (voice/telegram)."""
+    """Beat: lembrete antecipado e acionamento na hora (voice/telegram/whatsapp)."""
     return run_celery_async(_sweep_appointment_reminders_async())

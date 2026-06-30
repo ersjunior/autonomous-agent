@@ -482,8 +482,9 @@ Conferido em `worker/celery_app.py` → `beat_schedule`:
 | `sweep-queue-abandonment` | a cada 2 min (`*/2`) |
 | `sweep-human-handoff-timeouts` | `human_handoff_sweep_seconds` (~60s) |
 | `sweep-messaging-inactivity` | `inactivity_sweep_seconds` (~60s) |
+| `sweep-appointment-reminders` | `appointment_reminder_sweep_seconds` (~60s) |
 
-**Por que Beat:** várias regras de negócio são baseadas em tempo (retomar leads na janela, expirar handoff, encerrar conversas inativas, abandonar fila). O Beat centraliza esses gatilhos periódicos em vez de espalhar `sleep`/cron pelo sistema.
+**Lembrete proativo de agendamentos** (`appointment_reminder_sweep.py`): sweep Beat enfileira lembrete antecipado e acionamento na hora para appointments `SCHEDULED`/`CONFIRMED` nos canais **voice**, **telegram** e **whatsapp**. WhatsApp: dentro da janela Meta 24h → texto livre; fora → template `appointment_reminder` / `appointment_due` (se SID configurado). Appointments sem `channel` são ignorados (`skipped_no_channel`). várias regras de negócio são baseadas em tempo (retomar leads na janela, expirar handoff, encerrar conversas inativas, abandonar fila). O Beat centraliza esses gatilhos periódicos em vez de espalhar `sleep`/cron pelo sistema.
 
 ### 7.4 Padrão async em tasks Celery
 
@@ -665,7 +666,7 @@ Três canais (`ChannelType`: `WHATSAPP`, `TELEGRAM`, `VOICE`). O seed cria um ag
 
 - **Inbound:** `POST /api/v1/channels/webhooks/whatsapp` (form-data). Deduplicação por `MessageSid` no Redis; resposta **TwiML vazio** imediata; processamento assíncrono; resposta enviada depois pela API da Twilio.
 - **Status de entrega:** `POST /api/v1/channels/webhooks/whatsapp/status` (queued → sent → delivered → read/failed), persistido em `lead_interactions.last_delivery_status`/`last_delivery_error_code`.
-- **Templates Meta (HSM):** fora da janela de sessão de 24h, mensagens proativas exigem templates aprovados. Há três propósitos (`inicial`, `followup`, `retomada`) com SIDs configuráveis; `whatsapp_use_templates` (master switch) + `whatsapp_template_mode` (`auto`/`sandbox`/`production`). O modo `auto` detecta o **sandbox** Twilio (`+14155238886`) e desabilita templates nele.
+- **Templates Meta (HSM):** fora da janela de sessão de 24h, mensagens proativas exigem templates aprovados. Propósitos de campanha/inatividade: `inicial`, `followup`, `retomada` (SIDs com default em `config.py`). Propósitos de **lembrete de agendamento** (Fatia 2): `appointment_reminder` (antecipado) e `appointment_due` (na hora) — variáveis `{{1}}` nome, `{{2}}` data/hora (`format_slot_label`); SIDs em `WHATSAPP_TEMPLATE_APPOINTMENT_REMINDER` / `WHATSAPP_TEMPLATE_APPOINTMENT_DUE` **sem default** até aprovação na Meta. Master switch `whatsapp_use_templates` + `whatsapp_template_mode` (`auto`/`sandbox`/`production`). Modo `auto` desliga templates no sandbox Twilio (`+14155238886`). SID vazio → fallback para texto livre (não quebra o envio).
 - **Digitando:** disparo único via API beta da Twilio (requer `message_sid`, ~25s).
 
 ### 10.2 Telegram

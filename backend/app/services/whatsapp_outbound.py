@@ -6,9 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
+from datetime import datetime
+
 from app.core.config import WhatsAppTemplatePurpose, settings
 from app.models.lead import Lead
 from app.models.lead_interaction import LeadInteraction
+from app.services.appointment_service import format_slot_label
 
 WHATSAPP_SERVICE_WINDOW_HOURS = 24
 
@@ -51,6 +54,15 @@ def build_content_variables(lead: Lead) -> dict[str, str]:
     """Variáveis do template Meta {{1}} = nome do lead."""
     name = (lead.nome_cliente or "Cliente").strip() or "Cliente"
     return {"1": name}
+
+
+def build_appointment_content_variables(
+    lead: Lead,
+    starts_at: datetime,
+) -> dict[str, str]:
+    """Variáveis dos templates de agendamento: {{1}} = nome, {{2}} = data/hora."""
+    name = (lead.nome_cliente or "Cliente").strip() or "Cliente"
+    return {"1": name, "2": format_slot_label(starts_at)}
 
 
 def resolve_whatsapp_send_mode(

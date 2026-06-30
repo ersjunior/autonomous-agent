@@ -1,4 +1,4 @@
-"""Integração — sweep de lembrete proativo de agendamentos (Fatia 1: voice/telegram)."""
+"""Integração — sweep de lembrete proativo de agendamentos (voice/telegram/whatsapp)."""
 
 from __future__ import annotations
 
@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.config import settings
 from app.models.agent import AgentMode
 from app.models.appointment import AppointmentSource, AppointmentStatus
-from app.services.appointment_service import create_appointment
+from app.models.lead_interaction import LeadInteraction
+from app.services.appointment_service import create_appointment, format_slot_label
 from tests.integration.helpers import (
     OwnerContext,
     add_lead_base_channel,
@@ -22,6 +24,9 @@ from worker.tasks.outbound_campaign import _send_campaign_message
 pytestmark = pytest.mark.integration
 
 _NOW = datetime(2026, 6, 30, 14, 0, tzinfo=timezone.utc)
+
+_REMINDER_SID = "HXappointmentreminder00000000000001"
+_DUE_SID = "HXappointmentdue000000000000000001"
 
 _REMINDER_PATCH = "worker.tasks.appointment_reminder_sweep.send_appointment_reminder"
 
@@ -52,6 +57,25 @@ async def _make_appointment(
     )
     await db_session.flush()
     return appt
+
+
+@pytest.fixture
+async def whatsapp_ctx(db_session) -> OwnerContext:
+    ctx = await create_owner_context(db_session, email_suffix="appt-wa")
+    ctx.lead.nome_cliente = "Maria Silva"
+    await add_lead_base_channel(db_session, ctx.lead_base.id, "whatsapp")
+    await db_session.flush()
+    return ctx
+
+
+def _enable_whatsapp_templates(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "whatsapp_use_templates", True)
+    monkeypatch.setattr(settings, "whatsapp_template_mode", "production")
+    monkeypatch.setattr(settings, "twilio_phone_number", "+551150399542")
+    monkeypatch.setattr(
+        settings, "whatsapp_template_appointment_reminder", _REMINDER_SID
+    )
+    monkeypatch.setattr(settings, "whatsapp_template_appointment_due", _DUE_SID)
 
 
 @pytest.fixture
@@ -180,7 +204,7 @@ async def test_due_not_sent_when_too_late(
 @pytest.mark.asyncio
 @patch(_REMINDER_PATCH)
 @patch("worker.tasks.appointment_reminder_sweep.datetime")
-async def test_whatsapp_and_null_channel_counted_as_skipped(
+async def test_null_channel_counted_as_skipped_no_channel(
     mock_dt,
     mock_send,
     voice_ctx: OwnerContext,
@@ -188,12 +212,7 @@ async def test_whatsapp_and_null_channel_counted_as_skipped(
 ):
     mock_dt.now.return_value = _NOW
     mock_send.delay = MagicMock()
-    starts_due = _NOW - timedelta(minutes=2)
     starts_rem = _NOW + timedelta(minutes=20)
-
-    await _make_appointment(
-        db_session, voice_ctx, starts_at=starts_due, channel="whatsapp"
-    )
 
     null_ctx = await create_owner_context(db_session, email_suffix="appt-null")
     await add_lead_base_channel(db_session, null_ctx.lead_base.id, "voice")
@@ -205,8 +224,32 @@ async def test_whatsapp_and_null_channel_counted_as_skipped(
 
     assert stats["reminders_sent"] == 0
     assert stats["due_notified"] == 0
-    assert stats["skipped_whatsapp"] == 2
+    assert stats["skipped_no_channel"] == 1
     mock_send.delay.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch(_REMINDER_PATCH)
+@patch("worker.tasks.appointment_reminder_sweep.datetime")
+async def test_whatsapp_channel_dispatches_in_sweep(
+    mock_dt,
+    mock_send,
+    whatsapp_ctx: OwnerContext,
+    db_session,
+):
+    mock_dt.now.return_value = _NOW
+    mock_send.delay = MagicMock()
+    starts = _NOW - timedelta(minutes=2)
+
+    appt = await _make_appointment(
+        db_session, whatsapp_ctx, starts_at=starts, channel="whatsapp"
+    )
+
+    stats = await _sweep_appointment_reminders_with_session(db_session)
+
+    assert stats["due_notified"] == 1
+    assert stats["skipped_no_channel"] == 0
+    mock_send.delay.assert_called_once_with(str(appt.id), "due")
 
 
 @pytest.mark.asyncio
@@ -430,3 +473,155 @@ async def test_campaign_outbound_still_blocks_receptive_agent(
 
     assert result["blocked"] is True
     assert result["reason"] == "campaign_agent_not_active"
+
+
+@pytest.mark.asyncio
+@patch("app.services.outbound_delivery.send_whatsapp_message")
+async def test_whatsapp_reminder_inside_24h_uses_freeform(
+    mock_send_wa,
+    whatsapp_ctx: OwnerContext,
+    db_session,
+    monkeypatch,
+):
+    """Dentro da janela 24h → texto livre (body), mesmo com templates ligados."""
+    _enable_whatsapp_templates(monkeypatch)
+    mock_send_wa.return_value = "SMfreeform123"
+    starts = _NOW - timedelta(minutes=2)
+
+    db_session.add(
+        LeadInteraction(
+            lead_id=whatsapp_ctx.lead.id,
+            campaign_id=whatsapp_ctx.campaign.id,
+            channel_type="whatsapp",
+            status="em_andamento",
+            data_ultimo_contato=_NOW - timedelta(hours=1),
+        )
+    )
+    await db_session.flush()
+
+    appt = await _make_appointment(
+        db_session, whatsapp_ctx, starts_at=starts, channel="whatsapp"
+    )
+
+    result = await _send_appointment_reminder_with_session(
+        db_session, str(appt.id), "due", commit=False
+    )
+
+    assert result["ok"] is True
+    assert result["whatsapp_mode"] == "freeform"
+    mock_send_wa.assert_called_once()
+    args, kwargs = mock_send_wa.call_args
+    assert kwargs.get("content_sid") is None
+    body = kwargs.get("body") or (args[1] if len(args) > 1 else None)
+    assert body
+    assert "Chegou o horario" in body
+
+
+@pytest.mark.asyncio
+@patch("app.services.outbound_delivery.send_whatsapp_message")
+async def test_whatsapp_reminder_outside_24h_uses_template(
+    mock_send_wa,
+    whatsapp_ctx: OwnerContext,
+    db_session,
+    monkeypatch,
+):
+    """Fora da janela 24h + SID configurado → template com nome e data/hora."""
+    _enable_whatsapp_templates(monkeypatch)
+    mock_send_wa.return_value = "SMtemplate123"
+    starts = _NOW - timedelta(minutes=2)
+
+    appt = await _make_appointment(
+        db_session, whatsapp_ctx, starts_at=starts, channel="whatsapp"
+    )
+
+    result = await _send_appointment_reminder_with_session(
+        db_session, str(appt.id), "due", commit=False
+    )
+
+    assert result["ok"] is True
+    assert result["whatsapp_mode"] == "template"
+    assert result["content_sid"] == _DUE_SID
+    mock_send_wa.assert_called_once()
+    kwargs = mock_send_wa.call_args.kwargs
+    assert kwargs["content_sid"] == _DUE_SID
+    assert kwargs["content_variables"] == {
+        "1": "Maria Silva",
+        "2": format_slot_label(starts),
+    }
+    assert kwargs.get("body") is None
+
+
+@pytest.mark.asyncio
+@patch("app.services.outbound_delivery.send_whatsapp_message")
+async def test_whatsapp_reminder_outside_24h_empty_sid_fallback_freeform(
+    mock_send_wa,
+    whatsapp_ctx: OwnerContext,
+    db_session,
+    monkeypatch,
+):
+    """SID vazio → fallback freeform sem quebrar."""
+    monkeypatch.setattr(settings, "whatsapp_use_templates", True)
+    monkeypatch.setattr(settings, "whatsapp_template_mode", "production")
+    monkeypatch.setattr(settings, "twilio_phone_number", "+551150399542")
+    monkeypatch.setattr(settings, "whatsapp_template_appointment_due", "")
+    mock_send_wa.return_value = "SMfallback123"
+    starts = _NOW - timedelta(minutes=2)
+
+    appt = await _make_appointment(
+        db_session, whatsapp_ctx, starts_at=starts, channel="whatsapp"
+    )
+
+    result = await _send_appointment_reminder_with_session(
+        db_session, str(appt.id), "due", commit=False
+    )
+
+    assert result["ok"] is True
+    assert result["whatsapp_mode"] == "freeform"
+    mock_send_wa.assert_called_once()
+    kwargs = mock_send_wa.call_args.kwargs
+    assert kwargs.get("content_sid") is None
+    body = kwargs.get("body") or mock_send_wa.call_args.args[1]
+    assert body
+
+
+@pytest.mark.asyncio
+@patch("app.services.outbound_delivery.send_whatsapp_message")
+async def test_whatsapp_reminder_vs_due_use_distinct_template_sids(
+    mock_send_wa,
+    whatsapp_ctx: OwnerContext,
+    db_session,
+    monkeypatch,
+):
+    """kind reminder → appointment_reminder SID; kind due → appointment_due SID."""
+    _enable_whatsapp_templates(monkeypatch)
+    mock_send_wa.return_value = "SMtpl"
+    starts_rem = _NOW + timedelta(hours=2)
+    starts_due = _NOW - timedelta(minutes=2)
+
+    appt_rem = await _make_appointment(
+        db_session,
+        whatsapp_ctx,
+        starts_at=starts_rem,
+        channel="whatsapp",
+    )
+    appt_due = await _make_appointment(
+        db_session,
+        whatsapp_ctx,
+        starts_at=starts_due,
+        channel="whatsapp",
+    )
+
+    await _send_appointment_reminder_with_session(
+        db_session, str(appt_rem.id), "reminder", commit=False
+    )
+    rem_sid = mock_send_wa.call_args.kwargs["content_sid"]
+
+    mock_send_wa.reset_mock()
+    await _send_appointment_reminder_with_session(
+        db_session, str(appt_due.id), "due", commit=False
+    )
+    due_sid = mock_send_wa.call_args.kwargs["content_sid"]
+
+    assert rem_sid == _REMINDER_SID
+    assert due_sid == _DUE_SID
+    assert rem_sid != due_sid

@@ -20,7 +20,7 @@ ACTIVE_REMINDER_STATUSES = (
     AppointmentStatus.CONFIRMED.value,
 )
 
-SWEEP_CHANNELS = ("voice", "telegram")
+SWEEP_CHANNELS = ("voice", "telegram", "whatsapp")
 
 
 def _aware(dt: datetime) -> datetime:
@@ -110,11 +110,8 @@ def _channel_in_sweep():
     return Appointment.channel.in_(SWEEP_CHANNELS)
 
 
-def _channel_skipped_whatsapp():
-    return or_(
-        Appointment.channel.is_(None),
-        Appointment.channel == "whatsapp",
-    )
+def _channel_skipped_no_channel():
+    return Appointment.channel.is_(None)
 
 
 async def fetch_reminder_candidates(
@@ -159,17 +156,17 @@ async def fetch_due_candidates(
     return list(result.scalars().all())
 
 
-async def count_skipped_whatsapp_in_windows(
+async def count_skipped_no_channel_in_windows(
     session: AsyncSession,
     now: datetime,
 ) -> int:
-    """Conta appointments whatsapp/NULL que estariam due mas são ignorados nesta fatia."""
+    """Conta appointments sem canal que estariam elegíveis mas não têm destino."""
     rem_min, rem_max = _reminder_starts_at_bounds(now)
     due_min, due_max = _due_starts_at_bounds(now)
     result = await session.execute(
         select(Appointment.id).where(
             _base_status_filter(),
-            _channel_skipped_whatsapp(),
+            _channel_skipped_no_channel(),
             or_(
                 and_(
                     Appointment.reminder_sent_at.is_(None),
@@ -206,19 +203,19 @@ async def resolve_campaign_for_lead(
 class AppointmentReminderSweepPlan:
     reminders: list[Appointment]
     due: list[Appointment]
-    skipped_whatsapp: int
+    skipped_no_channel: int
 
 
 async def plan_appointment_reminder_sweep(
     session: AsyncSession,
     now: datetime,
 ) -> AppointmentReminderSweepPlan:
-    """Agrega candidatos e contagem de skips whatsapp/NULL."""
+    """Agrega candidatos e contagem de skips sem canal."""
     reminders = await fetch_reminder_candidates(session, now)
     due = await fetch_due_candidates(session, now)
-    skipped = await count_skipped_whatsapp_in_windows(session, now)
+    skipped = await count_skipped_no_channel_in_windows(session, now)
     return AppointmentReminderSweepPlan(
         reminders=reminders,
         due=due,
-        skipped_whatsapp=skipped,
+        skipped_no_channel=skipped,
     )
