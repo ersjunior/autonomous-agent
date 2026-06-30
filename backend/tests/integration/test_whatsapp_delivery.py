@@ -32,7 +32,7 @@ async def test_upsert_stores_twilio_message_sid_and_delivery_status(
 
 
 @patch(
-    "worker.tasks.outbound_campaign.send_whatsapp_message",
+    "app.services.outbound_delivery.send_whatsapp_message",
     return_value="SMoutbound456",
 )
 async def test_deliver_message_whatsapp_returns_message_sid(
@@ -57,7 +57,7 @@ async def test_deliver_message_whatsapp_returns_message_sid(
 
 
 @patch(
-    "worker.tasks.outbound_campaign.send_whatsapp_message",
+    "app.services.outbound_delivery.send_whatsapp_message",
     return_value="SMtemplate789",
 )
 async def test_deliver_message_whatsapp_template_returns_message_sid(

@@ -66,6 +66,16 @@ class Appointment(Base):
     )
     created_by: Mapped[str] = mapped_column(String(50), nullable=False)
     channel: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Timestamp do lembrete antecipado (idempotência).",
+    )
+    due_notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        doc="Timestamp do acionamento na hora do compromisso (idempotência).",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

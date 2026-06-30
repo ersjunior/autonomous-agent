@@ -72,7 +72,7 @@ async def test_first_message_whatsapp_template_skips_llm_and_stores_sid() -> Non
             new_callable=AsyncMock,
         ) as route_mock,
         patch(
-            "worker.tasks.outbound_campaign.send_whatsapp_message",
+            "app.services.outbound_delivery.send_whatsapp_message",
             return_value="SMtemplate001",
         ) as send_mock,
         patch(
@@ -127,7 +127,7 @@ async def test_followup_whatsapp_template_uses_followup_sid() -> None:
         ) as resolve_mock,
         patch("worker.tasks.outbound_campaign.route_message", new_callable=AsyncMock) as route_mock,
         patch(
-            "worker.tasks.outbound_campaign.send_whatsapp_message",
+            "app.services.outbound_delivery.send_whatsapp_message",
             return_value="SMfollow001",
         ) as send_mock,
         patch(
@@ -174,7 +174,7 @@ async def test_templates_off_keeps_llm_freeform_flow() -> None:
             return_value={"response": "Olá do LLM"},
         ) as route_mock,
         patch(
-            "worker.tasks.outbound_campaign.send_whatsapp_message",
+            "app.services.outbound_delivery.send_whatsapp_message",
             return_value="SMfree001",
         ) as send_mock,
         patch(
@@ -216,7 +216,7 @@ async def test_inside_24h_window_uses_freeform_even_when_templates_configured() 
             return_value={"response": "Resposta conversacional"},
         ) as route_mock,
         patch(
-            "worker.tasks.outbound_campaign.send_whatsapp_message",
+            "app.services.outbound_delivery.send_whatsapp_message",
             return_value="SMwin001",
         ),
         patch(
@@ -244,7 +244,7 @@ async def test_deliver_message_whatsapp_template_path() -> None:
     session = AsyncMock()
 
     with patch(
-        "worker.tasks.outbound_campaign.send_whatsapp_message",
+        "app.services.outbound_delivery.send_whatsapp_message",
         return_value="SMdeliverTpl",
     ) as send_mock:
         result = await _deliver_message(
@@ -316,7 +316,7 @@ async def test_send_test_dispatch_forces_whatsapp_template_within_24h() -> None:
             return_value=template_mode,
         ) as resolve_mock,
         patch(
-            "worker.tasks.outbound_campaign.send_whatsapp_message",
+            "app.services.outbound_delivery.send_whatsapp_message",
             return_value="SMtestTpl",
         ) as send_mock,
         patch(

@@ -736,7 +736,7 @@ async def test_test_dispatch_whatsapp_template_skips_llm_and_passes_dict_variabl
 
     route_mock = AsyncMock()
     monkeypatch.setattr(
-        "worker.tasks.outbound_campaign.send_whatsapp_message",
+        "app.services.outbound_delivery.send_whatsapp_message",
         fake_send_whatsapp,
     )
     monkeypatch.setattr("worker.tasks.outbound_campaign.route_message", route_mock)

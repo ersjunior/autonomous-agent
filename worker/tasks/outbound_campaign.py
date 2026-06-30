@@ -4,26 +4,15 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from agents.channels.phone import to_e164
-from agents.channels.telegram.client import send_telegram_message
-from agents.channels.voice.twilio_voice_client import (
-    MAX_TWIML_QUERY_TEXT_CHARS,
-    build_outbound_audio_twiml_url,
-    build_outbound_twiml_url,
-    make_outbound_call,
-)
-from agents.channels.whatsapp.twilio_client import send_whatsapp_message
 from agents.orchestrator.router import route_message
 from app.core.config import WhatsAppTemplatePurpose
 from app.core.database import AsyncSessionLocal
 from app.models.lead_interaction import LeadInteraction
-from app.services.voice_audio import gerar_audio_chamada
 from app.services.whatsapp_outbound import (
     WhatsAppSendMode,
     build_content_variables,
@@ -43,14 +32,9 @@ from app.services.agent_context import enrich_agent_context_with_identity
 from worker.tasks.conversation_routing import agent_personality_context, agent_routing_metadata
 from worker.tasks.lead_tracking import upsert_lead_interaction
 
+from app.services.outbound_delivery import DeliverResult, deliver_outbound_message
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class DeliverResult:
-    ok: bool
-    twilio_message_sid: str | None = None
-    initial_delivery_status: str | None = None
 
 
 def get_phone(lead: Lead) -> str | None:
@@ -160,94 +144,38 @@ async def _deliver_message(
     content_sid: str | None = None,
     content_variables: dict[str, str] | None = None,
 ) -> DeliverResult:
-    """Envia texto/mídia no canal. Retorna resultado com SID WhatsApp quando aplicável."""
-    if channel == "whatsapp":
-        if content_sid:
-            variables = content_variables or build_content_variables(lead)
-            message_sid = send_whatsapp_message(
-                recipient,
-                content_sid=content_sid,
-                content_variables=variables,
-            )
-        else:
-            message_sid = send_whatsapp_message(recipient, response or "")
-        return DeliverResult(
-            ok=True,
-            twilio_message_sid=message_sid,
-            initial_delivery_status="queued",
-        )
-    if channel == "telegram":
-        await send_telegram_message(recipient, response)
-        return DeliverResult(ok=True)
+    """Envia via ``deliver_outbound_message`` e registra LeadInteraction em voz."""
+    delivery = await deliver_outbound_message(
+        channel,
+        recipient,
+        response or "",
+        lead=lead,
+        content_sid=content_sid,
+        content_variables=content_variables,
+    )
     if channel == "voice":
-        speech_text = (response or "").strip()
-        if not speech_text:
-            speech_text = "Desculpe, não consegui gerar a mensagem de voz no momento."
-        speech_text_for_say = speech_text
-        if len(speech_text_for_say) > MAX_TWIML_QUERY_TEXT_CHARS:
-            logger.info(
-                "Truncating voice speech for Say fallback (lead %s) to %s chars",
-                lead.id,
-                MAX_TWIML_QUERY_TEXT_CHARS,
-            )
-            speech_text_for_say = speech_text_for_say[:MAX_TWIML_QUERY_TEXT_CHARS]
-        try:
-            recipient_e164 = to_e164(recipient)
-            try:
-                filename = await gerar_audio_chamada(speech_text)
-                twiml_url = build_outbound_audio_twiml_url(filename)
-                logger.info(
-                    "Voice outbound using Coqui MP3 for lead %s (file=%s)",
-                    lead.id,
-                    filename,
-                )
-            except Exception as audio_exc:
-                logger.warning(
-                    "Coqui/ffmpeg indisponível para lead %s, fallback <Say>: %s",
-                    lead.id,
-                    audio_exc,
-                )
-                twiml_url = build_outbound_twiml_url(speech_text_for_say)
-            call_sid = make_outbound_call(recipient_e164, twiml_url)
-            from app.services.voice_call_state import remember_call_from_number
-
-            remember_call_from_number(call_sid, recipient_e164)
+        if delivery.ok and delivery.twilio_call_sid:
             await upsert_lead_interaction(
                 session,
                 lead.id,
                 campaign.id,
                 channel,
                 status="acionado",
-                devolutiva=f"twilio_call_sid={call_sid}",
+                devolutiva=f"twilio_call_sid={delivery.twilio_call_sid}",
                 set_acionamento=first_touch,
                 record_outbound_attempt=True,
-                twilio_call_sid=call_sid,
+                twilio_call_sid=delivery.twilio_call_sid,
             )
-            logger.info(
-                "Voice outbound call placed for lead %s to %s (sid=%s)",
-                lead.id,
-                recipient_e164,
-                call_sid,
-            )
-            return DeliverResult(ok=True)
-        except Exception as exc:
-            logger.exception(
-                "Voice outbound failed for lead %s (user_id=%s): %s",
-                lead.id,
-                recipient,
-                exc,
-            )
+        elif not delivery.ok:
             await upsert_lead_interaction(
                 session,
                 lead.id,
                 campaign.id,
                 channel,
                 status="erro",
-                devolutiva=str(exc),
+                devolutiva=delivery.error or "voice delivery failed",
             )
-            return DeliverResult(ok=False)
-    logger.warning("Unsupported channel %s for lead %s", channel, lead.id)
-    return DeliverResult(ok=False)
+    return delivery
 
 
 async def _send_on_channel(
@@ -259,6 +187,7 @@ async def _send_on_channel(
     followup: bool = False,
     agent_override: Agent | None = None,
     force_whatsapp_template: bool = False,
+    message_override: str | None = None,
 ) -> dict | None:
     channel = channel_type.lower()
     recipient = _resolve_recipient(lead, channel)
@@ -299,10 +228,16 @@ async def _send_on_channel(
         channel == "whatsapp"
         and whatsapp_send_mode is not None
         and whatsapp_send_mode.mode == "template"
+        and message_override is None
     )
 
     response = ""
-    if use_whatsapp_template:
+    if message_override is not None:
+        response = message_override.strip()
+        if not response:
+            logger.warning("Empty message_override for lead %s channel %s", lead.id, channel)
+            return None
+    elif use_whatsapp_template:
         logger.info(
             "WhatsApp outbound template purpose=%s lead=%s sid=%s (LLM skipped)",
             purpose,
@@ -477,6 +412,7 @@ async def _send_campaign_message(
     followup: bool = False,
     slot_token: str | None = None,
     agent_id: str | None = None,
+    message_override: str | None = None,
 ) -> dict:
     from app.services.settings_sync import ensure_settings_fresh_async
 
@@ -505,6 +441,8 @@ async def _send_campaign_message(
             raise ValueError(f"Campaign {campaign_id} has no agent")
 
         if campaign.agent.mode != AgentMode.ACTIVE:
+            # Gate de prospecção: campanhas outbound exigem agente ACTIVE.
+            # Lembretes de agendamento usam worker.tasks.appointment_reminder (isentos).
             if lead.lead_base is None or not lead.lead_base.lead_base_channels:
                 logger.warning(
                     "Lead %s has no lead_base_channels; non-ACTIVE outbound block only logged",
@@ -549,6 +487,7 @@ async def _send_campaign_message(
                 campaign,
                 base_channel.channel_type,
                 followup=followup,
+                message_override=message_override,
             )
             if result is not None:
                 channel_results.append(result)
@@ -580,6 +519,7 @@ def send_campaign_message(
     channel_type: str | None = None,
     slot_token: str | None = None,
     agent_id: str | None = None,
+    message_override: str | None = None,
 ) -> dict:
     """Envia mensagem ativa (1ª abordagem) para um lead no canal indicado."""
     try:
@@ -590,6 +530,7 @@ def send_campaign_message(
                 channel_type,
                 slot_token=slot_token,
                 agent_id=agent_id,
+                message_override=message_override,
             )
         )
     except Exception as exc:

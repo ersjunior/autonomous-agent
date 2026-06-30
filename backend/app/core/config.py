@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     booking_state_ttl_seconds: int = 1800
     booking_offer_business_days: int = 5
     booking_max_offered_slots: int = 5
+    # Lembrete proativo de agendamentos (sweep Beat)
+    appointment_reminder_lead_minutes: int = 30
+    appointment_reminder_grace_minutes: int = 5
+    appointment_due_tolerance_minutes: int = 15
+    appointment_reminder_sweep_seconds: float = 60
 
     # URL pública do backend (ngrok, domínio, IP, Cloudflare Tunnel) — sem barra final
     public_base_url: Optional[str] = None

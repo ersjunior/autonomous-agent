@@ -32,6 +32,8 @@ celery.conf.update(
         "worker.tasks.kb_ingestion",
         "worker.tasks.human_handoff_sweep",
         "worker.tasks.inactivity_sweep",
+        "worker.tasks.appointment_reminder_sweep",
+        "worker.tasks.appointment_reminder",
         "worker.tasks.voice_inbound_turn",
     ),
     beat_schedule={
@@ -72,6 +74,11 @@ celery.conf.update(
         "sweep-messaging-inactivity": {
             "task": "worker.tasks.inactivity_sweep.sweep_messaging_inactivity",
             "schedule": float(settings.inactivity_sweep_seconds),
+        },
+        # Agendamentos — lembrete antecipado + acionamento na hora (voice/telegram; Fatia 1)
+        "sweep-appointment-reminders": {
+            "task": "worker.tasks.appointment_reminder_sweep.sweep_appointment_reminders",
+            "schedule": float(settings.appointment_reminder_sweep_seconds),
         },
     },
 )
