@@ -13,9 +13,12 @@
 | Marco | Minuto acumulado | Ação se atrasar |
 |-------|------------------|-----------------|
 | **Clímax (ligação)** | ~6–13 | Prioridade máxima — não adie |
+| **Beat pós-clímax (lembrete proativo)** | ~13–14 | **CORTÁVEL** — pular se já passou de min 14 ou se Bloco 4 precisa começar |
 | **Núcleo RAG + Erlang** | ~13–22 | Se passar de **min 18** no Bloco 4, encurte 4b para 2 min (só tela Capacity) |
-| **Bloco 5 (reforço)** | ~22–26 | **CORTÁVEL** — pular inteiro se restarem **< 8 min** para perguntas |
+| **Bloco 5 (reforço + métricas)** | ~22–26 | **CORTÁVEL** — pular inteiro se restarem **< 8 min** para perguntas |
 | **Fechamento** | ~26–28 | Nunca cortar por completo; 1 min mínimo |
+
+**Conteúdo novo (fora dos 25 min originais):** beat de acionamento proativo (+~1 min) e métricas de campanha (+~30–45 s) são **cortáveis / carta na manga** — o apresentador decide no ensaio. **Não inflar** Bloco 3 nem Bloco 4.
 
 **Regra de ouro:** se passar de **15 min** sem ter feito a ligação (Bloco 3), **pule para o Bloco 3 agora** e encurte o Bloco 4 depois.
 
@@ -25,7 +28,7 @@
 
 | Recurso | URL |
 |---------|-----|
-| Dashboard | http://localhost:3000 |
+| **Dashboard (visão geral + tabela de campanhas)** | http://localhost:3000/dashboard |
 | Login (seed) | `admin@admin.com` / `admin` |
 | **Agendamentos** ★ | http://localhost:3000/dashboard/appointments |
 | **Disponibilidade (Fase D)** | http://localhost:3000/dashboard/availability |
@@ -143,6 +146,30 @@ Mede turno completo com WAV em `/voices/reference.wav`. Útil para provar pipeli
 
 ---
 
+## BEAT PÓS-CLÍMAX (opcional) — Fechamento do ciclo: acionamento proativo (~60–90 s)
+
+> **⛔ CORTÁVEL / carta na manga** — encaixe **recomendado** logo após o Bloco 3: o agente marcou o horário na ligação; quando a hora chega, **ele mesmo aciona o lead de volta**. Conecta o ciclo operacional sem competir com o clímax.
+>
+> **⏱ +~1 min** se incluir. **Não é demo ao vivo** (depende de tempo real e do sweep Celery Beat); é **narrativa falada** + opcionalmente mostrar `docs/documentacao.md` §10.7 ou trecho de código. Se houver vídeo de ensaio com lembrete disparando, mencionar — senão, só falar.
+>
+> **Se atrasado:** pule inteiro e cite uma frase no fechamento (Bloco 6) ou responda só se a banca perguntar.
+
+### O que fazer (opcional)
+- **Não** esperar o lembrete ao vivo na banca.
+- (Opcional) Abrir §10.7 no laptop ou `worker/tasks/appointment_reminder_sweep.py` por 10 s — só se sobrar tempo e a banca pedir detalhe.
+
+### O que falar
+> "O ciclo não termina na gravação do compromisso. Quando o horário se aproxima, o sistema **aciona o lead proativamente** — lembrete antecipado e acionamento na hora — pelo **mesmo canal** da marcação: voz, Telegram ou WhatsApp."
+>
+> "São **dois disparos idempotentes** por appointment: marcamos `reminder_sent_at` e `due_notified_at` **antes do commit** — o sweep **não liga nem manda mensagem repetida**."
+>
+> "Diferencial de design: isso **não passa pelo gate de campanha outbound**. Lembrete é **contato consentido** — o lead pediu o horário na conversa —, distinto de prospecção fria. O gate de modo ATIVO para campanhas **permanece intacto**."
+
+### Plano B
+- Omitir beat; apontar para §10.7 e perguntas da banca abaixo.
+
+---
+
 ## BLOCO 4 — ★ NÚCLEO TÉCNICO: RAG + Teoria de Filas (~8–9 min)
 
 ### 4a. RAG (~4 min)
@@ -256,12 +283,26 @@ Referência interna: A=10 Erlangs, N=14, AHT=180s, T=20s → SL ≈ **87%** (tol
 
 - Settings → aba **Túnel & Webhooks** — status auto-refresh 10s, URLs de webhook
 
+### 5d. Métricas de campanha — funil de telemarketing (~30–45 s)
+
+> **⛔ CORTÁVEL** — incluir só se Bloco 5 não for pulado e restarem **≥ 2 min** antes do fechamento. Alternativa: 1 frase no Bloco 6.
+
+- Abrir http://localhost:3000/dashboard (visão geral)
+- Mostrar a **tabela de campanhas**: colunas **Acionáveis**, **Spin**, **Contato**, **CPC**, **Recusa**, **Sucesso**, **Conversão**
+
+### O que falar
+> "O dashboard fala a **língua do telemarketing**: funil **Tentativas ≥ Contato ≥ CPC = Sucesso + Recusa**; **Conversão = Sucesso / CPC** — taxa de aceite entre quem **decidiu**. **Spin** é tentativas por ponto de contato, não percentual. Contagem por **ocorrência**, não por lead distinto — reflete retentativas e multi-canal. Fonte: `get_dashboard_campaigns` em `dashboard_metrics.py` (§11.1)."
+
 ---
 
 ## BLOCO 6 — Fechamento (~2 min)
 
 ### O que falar
 > "Demonstramos o arco **operador → agente autônomo**: voz com agendamento e hangup, texto omnichannel, RAG rastreável, dimensionamento Erlang C, disponibilidade configurável."
+>
+> *(Se pulou o beat pós-clímax:)* "O ciclo fecha também com **lembrete proativo** na hora do compromisso — contato consentido, idempotente — documentado em §10.7."
+>
+> *(Se pulou métricas no Bloco 5:)* "A home do dashboard traz **métricas de campanha** alinhadas ao funil de telemarketing (§11.1)."
 >
 > "**797 testes** (303 unit + 146 integração + 288 API), **CI verde**, versão **1.0.0**, documentação técnica completa (`docs/documentacao.md`)."
 >
@@ -303,6 +344,9 @@ Outros scripts de regressão (mencionar, não rodar todos ao vivo): `validate_ph
 | **Por que agenda Postgres e não Google Calendar?** | Coerência transacional com leads/tenant; sem OAuth; conflitos no mesmo banco. |
 | **Hangup autônomo — não desliga cedo demais?** | Conservador: `confidence ≥ 0,9` para farewell; bloqueado durante booking ativo; wrap-up explícito pós-agendamento. |
 | **Disponibilidade — agente vs tenant?** | Hierarquia **agente > tenant > default**; regras do agente **substituem** as do tenant (não faz merge dia a dia). |
+| **O sistema não vai ligar/mandar mensagem repetidamente para o lead?** | **Idempotência:** cada appointment tem `reminder_sent_at` e `due_notified_at`. O sweep (`appointment_reminder_sweep`) **grava a coluna antes do commit** e enfileira uma única task por disparo — lembrete antecipado e acionamento na hora **só uma vez** cada. |
+| **As métricas do dashboard refletem o negócio real?** | Sim — funil de telemarketing por **ocorrência** (`lead_interactions`), não lead distinto: **Tentativas ≥ Contato ≥ CPC = Sucesso + Recusa**; **Conversão = Sucesso / CPC**. Mesmo lead pode negociar várias vezes; fallback por `status` só sem tabulação. Ver §11.1 / `dashboard_metrics.py`. |
+| **Por que o lembrete de agendamento ignora o modo do agente (RECEPTIVE)?** | Lembrete = **contato consentido** (horário pedido na conversa), não prospecção fria. Entrega direta via `outbound_delivery.py`, **fora** do gate de campanha (`outbound_campaign.py`). Campanhas outbound continuam exigindo agente **ACTIVE** — testado. Ver §10.7 e §18. |
 
 Detalhes e trade-offs: `docs/documentacao.md` §18.
 
@@ -329,7 +373,7 @@ Resumo — detalhe operacional em **`docs/CHECKLIST_DEMO.md`**.
 
 - [ ] Stack verde (`make up`, Ollama quente: `make warm-ollama`)
 - [ ] Túnel named + `PUBLIC_BASE_URL` OK (Settings → Túnel & Webhooks)
-- [ ] Browser: **Agendamentos**, **Availability**, **Capacity**, Knowledge, Monitoramento, Settings
+- [ ] Browser: **Agendamentos**, **Dashboard** (tabela campanhas, se for Bloco 5d), **Availability**, **Capacity**, Knowledge, Monitoramento, Settings
 - [ ] `redis-cli DEL chat:RAGTEST` (antes do RAG ao vivo)
 - [ ] Saídas salvas em `docs/demo-assets/` (RAG, Erlang)
 - [ ] **Vídeo backup da ligação** pronto no laptop (`ligacao-voz-backup.mp4`)
@@ -346,6 +390,7 @@ Resumo — detalhe operacional em **`docs/CHECKLIST_DEMO.md`**.
 | `backend/scripts/validate_layer_rc_capacity.py` | ✅ | Opcional Bloco 4b |
 | `backend/scripts/validate_voice_inbound.py` | ✅ | Plano B voz sem Twilio |
 | Tela `/dashboard/appointments` | ✅ | Bloco 3 e 5 |
+| Tela `/dashboard` (tabela campanhas §11.1) | ✅ | Bloco 5d (cortável) |
 | Tela `/dashboard/availability` | ✅ | Bloco 5 |
 | Tela `/dashboard/capacity` (Erlang) | ✅ | Bloco 4b |
 | `docs/demo-assets/validate-rag-output.txt` | ⚠ Gerar | Rodar script e salvar antes da banca |
@@ -354,4 +399,4 @@ Resumo — detalhe operacional em **`docs/CHECKLIST_DEMO.md`**.
 
 ---
 
-*Consistente com `docs/documentacao.md` (Onda 2A): grafo com `handle_booking`/`handle_farewell`, agenda Postgres, 1-slot na voz, hierarquia de disponibilidade, 797 testes, versão 1.0.0, túnel polling 10s.*
+*Consistente com `docs/documentacao.md`: grafo com `handle_booking`/`handle_farewell`, agenda Postgres, acionamento proativo §10.7, métricas §11.1, 1-slot na voz, hierarquia de disponibilidade, 797 testes, versão 1.0.0, túnel polling 10s.*

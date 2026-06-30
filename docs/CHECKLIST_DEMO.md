@@ -73,7 +73,7 @@ docker exec -e MAX_WEIGHTED_CAPACITY_OVERRIDE=2 autonomous-agent-worker `
 ## A2. Ensaiar apresentação cronometrada
 
 - [ ] Ler [`ROTEIRO_APRESENTACAO.md`](ROTEIRO_APRESENTACAO.md) de ponta a ponta.
-- [ ] Ensaio **com cronômetro** (~25 min): Blocos 1→2→**3 (clímax voz)**→4 (RAG+Erlang)→5→6.
+- [ ] Ensaio **com cronômetro** (~25 min): Blocos 1→2→**3 (clímax voz)**→*(beat lembrete proativo, cortável)*→4 (RAG+Erlang)→5→6.
 - [ ] Validar que a **ligação + agendamento + hangup** funciona de ponta a ponta.
 - [ ] Ensaiar **corte do Bloco 5** se passar de min 18 no Bloco 4 (roteiro: pular reforço se `< 8 min` restantes).
 - [ ] Ensaiar **Plano B**: trocar ligação pelo vídeo `ligacao-voz-backup.mp4` em ≤30 s.
@@ -104,6 +104,22 @@ Select-String -Path .env -Pattern "TUNNEL_MODE","PUBLIC_BASE_URL"
 ```
 
 > `TUNNEL_MODE=temporary` → URL aleatória → webhooks quebram na demo.
+
+### A0b. WhatsApp — templates de lembrete de agendamento (opcional / condicional)
+
+> Só se for **demonstrar lembrete proativo via WhatsApp** fora da janela Meta 24h. Aprovação Meta leva **até ~1 dia** — fazer com antecedência.
+
+- [ ] Templates Meta criados/aprovados: `appointment_reminder` e `appointment_due`
+- [ ] Content SID (`HX...`) no `.env`:
+
+```
+WHATSAPP_USE_TEMPLATES=true
+WHATSAPP_TEMPLATE_MODE=production
+WHATSAPP_TEMPLATE_APPOINTMENT_REMINDER=HX...
+WHATSAPP_TEMPLATE_APPOINTMENT_DUE=HX...
+```
+
+- [ ] Sem template aprovado: lembrete WhatsApp **só funciona dentro da janela 24h** (texto livre). Para demo de lembrete, preferir **voice** ou **Telegram** (não dependem de template).
 
 ---
 
@@ -223,6 +239,12 @@ docker exec autonomous-agent-redis redis-cli DEL chat:RAGTEST
 - [ ] Sem `lead_id` resolvido no canal, o bot **não grava** appointment (degrada com mensagem honesta).
 - [ ] Lead **não** preso em status terminal que impeça contexto (conferir última interação se inbound).
 
+### B3f. Métricas de campanha (opcional — se for mostrar Bloco 5d)
+
+- [ ] Abrir http://localhost:3000/dashboard — conferir **tabela de campanhas** com dados coerentes.
+- [ ] Ideal: ao menos **uma campanha** com **Tentativas**, **Contato** e **CPC** preenchidos (funil legível: Tentativas ≥ Contato ≥ CPC = Sucesso + Recusa).
+- [ ] Se a banca **não** for ver métricas, pode pular — **não é ★ crítico**.
+
 ---
 
 ## B4. Fumaça rápida por canal
@@ -257,6 +279,28 @@ Esperado: STT → grafo → TTS, tempos impressos, `[OK]` no final.
 - [ ] Conferir registro em `/dashboard/appointments`.
 - [ ] **Cancelar** o agendamento de teste na UI (ou PATCH status `CANCELLED`) para **não poluir** a demo ao vivo.
 
+### B4e. Acionamento proativo de agendamento (opcional — bastidores)
+
+> O **clímax continua sendo a ligação** (Bloco 3). Este passo só se quiser **validar** o sweep de lembrete antes da banca ou gravar evidência. **Não é ★ crítico.**
+
+- [ ] Criar appointment com `starts_at` **dentro da janela de lembrete**:
+  - Lembrete antecipado (default lead 30 min): ex. **daqui a ~20 min** → cai na janela `[starts_at − 30, starts_at − 5]`
+  - Acionamento na hora: ex. **daqui a 2–5 min** → janela `[starts_at, starts_at + 15]`
+- [ ] Preencher **`channel`** no appointment (`voice` ou `telegram` — não dependem de template Meta).
+- [ ] Confirmar **`celery-beat` Up** (`docker compose … ps`). Se mudou `worker/celery_app.py` (schedule): **recriar o container `celery-beat`**, não só o worker:
+
+```powershell
+docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml up -d --force-recreate celery-beat
+```
+
+- [ ] (Opcional) Observar logs do worker — stats `reminders_sent` / `due_notified` > 0:
+
+```powershell
+docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml logs --tail=80 worker | Select-String -Pattern "reminder","due_notified","appointment_reminder" -CaseSensitive:$false
+```
+
+- [ ] Cancelar appointment de teste após validar (não poluir demo).
+
 ---
 
 ## B5. Telas abertas (ordem sugerida do roteiro)
@@ -266,12 +310,13 @@ Abas prontas no navegador (login: `admin@admin.com` / `admin`):
 | # | URL | Uso |
 |---|-----|-----|
 | 1 | http://localhost:3000/dashboard/appointments | Clímax — ciclo fechado voz |
-| 2 | http://localhost:3000/dashboard/availability | Conferir grade (B3d) |
-| 3 | http://localhost:3000/dashboard/capacity | Erlang C (Bloco 4b) |
-| 4 | http://localhost:3000/dashboard/knowledge | RAG / KB (Bloco 4a) |
-| 5 | http://localhost:3000/dashboard/monitoring | Eventos / handoff (opcional) |
-| 6 | http://localhost:3000/dashboard/settings | Túnel (aba) + versão 1.0.0 |
-| 7 | http://localhost:8000/docs | Swagger (referência) |
+| 2 | http://localhost:3000/dashboard | Tabela campanhas / métricas (Bloco 5d, cortável) |
+| 3 | http://localhost:3000/dashboard/availability | Conferir grade (B3d) |
+| 4 | http://localhost:3000/dashboard/capacity | Erlang C (Bloco 4b) |
+| 5 | http://localhost:3000/dashboard/knowledge | RAG / KB (Bloco 4a) |
+| 6 | http://localhost:3000/dashboard/monitoring | Eventos / handoff (opcional) |
+| 7 | http://localhost:3000/dashboard/settings | Túnel (aba) + versão 1.0.0 |
+| 8 | http://localhost:8000/docs | Swagger (referência) |
 
 - [ ] Vídeo backup acessível no player (`docs/demo-assets/ligacao-voz-backup.mp4`).
 - [ ] Terminal com comando RAG copiado (Bloco 4a) ou `.txt` do plano B aberto.
@@ -304,6 +349,8 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 | IA lenta na 1ª msg | Ollama frio | `make warm-ollama` (B1) |
 | Voz sem áudio Coqui | GPU/serviço coqui-tts | ps coqui-tts; mencionar fallback Polly |
 | Agente "vira" empresa fictícia da KB errada | TCC na KB | B3b — remover docs errados |
+| **Lembrete de agendamento não dispara** | **`celery-beat` não recriado** após mudar `beat_schedule` em `celery_app.py` | `up -d --force-recreate celery-beat`; conferir job `sweep-appointment-reminders` nos logs do beat |
+| Lembrete WhatsApp falha fora 24h | Template Meta não aprovado / SID vazio | A0b — templates `appointment_reminder`/`appointment_due`; ou usar voice/Telegram na demo |
 
 ---
 
@@ -320,11 +367,12 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml -f infra/docke
 8.  B3e lead                número/id bate com contato ★
 9.  B3a liberar humano      exit_human_mode
 10. B4 fumaça               TG/WA "oi" + agendamento teste → cancelar
-11. Abas prontas            appointments, capacity, knowledge
-12. Vídeo backup            ligacao-voz-backup.mp4 à mão
-13. ROTEIRO                 docs/ROTEIRO_APRESENTACAO.md → apresentar
+11. B3f dashboard           tabela campanhas coerente (se Bloco 5d)
+12. Abas prontas            appointments, dashboard, capacity, knowledge
+13. Vídeo backup            ligacao-voz-backup.mp4 à mão
+14. ROTEIRO                 docs/ROTEIRO_APRESENTACAO.md → apresentar
 ```
 
 ---
 
-*Alinhado a [`ROTEIRO_APRESENTACAO.md`](ROTEIRO_APRESENTACAO.md) e [`documentacao.md`](documentacao.md): clímax voz, RAG+Erlang, 797 testes, v1.0.0, availability Fase D, agenda Postgres.*
+*Alinhado a [`ROTEIRO_APRESENTACAO.md`](ROTEIRO_APRESENTACAO.md) e [`documentacao.md`](documentacao.md): clímax voz, acionamento proativo §10.7, métricas §11.1, RAG+Erlang, 797 testes, v1.0.0, availability Fase D, agenda Postgres.*

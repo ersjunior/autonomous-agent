@@ -43,7 +43,7 @@ frontend/src/
 
 | Tela | Função |
 |---|---|
-| Visão geral | Contadores: agentes, canais ativos, leads, campanhas ativas |
+| Visão geral | Cards (agentes, canais, leads, campanhas) + **tabela de campanhas** com métricas de funil (§11.1 em `documentacao.md`: Acionáveis, Spin, Contato, CPC, Recusa, Sucesso, Conversão) + gráficos |
 | Leads | Bases (importadas/manuais), importação via CSV, CRUD de leads |
 | Canais | CRUD de canais WhatsApp/Telegram/Voz e suas credenciais |
 | Agentes | CRUD de agentes ACTIVE/RECEPTIVE; selo de agente de sistema |
@@ -54,7 +54,7 @@ frontend/src/
 | Agendamentos | Agenda interna — listagem, filtros, criação/cancelamento manual (`/dashboard/appointments`) |
 | Disponibilidade | Grade semanal de horários (tenant ou agente) para geração de slots (`/dashboard/availability`) |
 | Monitoramento | Eventos em tempo real (WebSocket) + histórico de conversas + modo humano |
-| Métricas | Funil de campanha/base e fila de call center (gráficos) |
+| Métricas | Página separada (`/dashboard/metrics`): métricas por agente + fila de call center (gráficos) |
 | Capacidade | Estimativa de hardware + dimensionamento por Erlang C |
 | Configurações | Seleção de providers de IA, prompts/RAG, identidade da empresa, áudio (voz), aba **Túnel & Webhooks** (auto-refresh a cada 10s) e versão **1.0.0** no header |
 

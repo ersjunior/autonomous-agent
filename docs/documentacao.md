@@ -17,8 +17,8 @@
 7. [Worker (Celery)](#7-worker-celery)
 8. [Inteligência artificial (camada agnóstica)](#8-inteligência-artificial-camada-agnóstica)
 9. [Agentes e orquestração (LangGraph)](#9-agentes-e-orquestração-langgraph) — intents, booking, farewell
-10. [Canais de atendimento](#10-canais-de-atendimento) — WhatsApp, Telegram, Voz; agendamento e disponibilidade (Fase D)
-11. [Motor de acionamento (modo ativo)](#11-motor-de-acionamento-modo-ativo)
+10. [Canais de atendimento](#10-canais-de-atendimento) — WhatsApp, Telegram, Voz; agendamento conversacional, disponibilidade (Fase D) e acionamento proativo (§10.7)
+11. [Motor de acionamento (modo ativo)](#11-motor-de-acionamento-modo-ativo) — inclui métricas de campanha (§11.1)
 12. [Atendimento receptivo e teoria de filas](#12-atendimento-receptivo-e-teoria-de-filas)
 13. [Frontend (Next.js 15)](#13-frontend-nextjs-15)
 14. [APIs (referência)](#14-apis-referência)
@@ -323,6 +323,7 @@ Compromissos por tenant, vinculados a um lead (e opcionalmente a um agente).
 - `starts_at`, `ends_at` (timestamptz), `title`, `notes` (nullable).
 - `status` (`SCHEDULED` | `CONFIRMED` | `CANCELLED` | `COMPLETED` | `NO_SHOW`; bloqueio de slot usa `SCHEDULED` e `CONFIRMED`).
 - `created_by` (`AGENT` | `MANUAL`), `channel` (nullable — canal de origem conversacional).
+- `reminder_sent_at`, `due_notified_at` (timestamptz, nullable) — marcas de **idempotência** do acionamento proativo (§10.7): uma por tipo de disparo (lembrete antecipado / acionamento na hora); o sweep não reenvia após preenchimento.
 - `created_at`, `updated_at`.
 - Relacionamentos: `user`, `lead`, `agent`.
 
@@ -468,7 +469,7 @@ O `worker` executa as tarefas pesadas/assíncronas; o `celery-beat` agenda as pe
 | `lead_tracking.py` | Atualiza rastreamento/estado dos leads |
 | `voice_cleanup.py` | Limpeza de MP3s de chamadas |
 
-### 7.3 Celery Beat (agendamentos)
+### 7.3 Celery Beat
 
 Conferido em `worker/celery_app.py` → `beat_schedule`:
 
@@ -484,7 +485,9 @@ Conferido em `worker/celery_app.py` → `beat_schedule`:
 | `sweep-messaging-inactivity` | `inactivity_sweep_seconds` (~60s) |
 | `sweep-appointment-reminders` | `appointment_reminder_sweep_seconds` (~60s) |
 
-**Lembrete proativo de agendamentos** (`appointment_reminder_sweep.py`): sweep Beat enfileira lembrete antecipado e acionamento na hora para appointments `SCHEDULED`/`CONFIRMED` nos canais **voice**, **telegram** e **whatsapp**. WhatsApp: dentro da janela Meta 24h → texto livre; fora → template `appointment_reminder` / `appointment_due` (se SID configurado). Appointments sem `channel` são ignorados (`skipped_no_channel`). várias regras de negócio são baseadas em tempo (retomar leads na janela, expirar handoff, encerrar conversas inativas, abandonar fila). O Beat centraliza esses gatilhos periódicos em vez de espalhar `sleep`/cron pelo sistema.
+**Por quê Beat:** várias regras de negócio são baseadas em tempo (retomar leads na janela, expirar handoff, encerrar conversas inativas, abandonar fila, lembretes de agendamento). O Beat centraliza esses gatilhos periódicos em vez de espalhar `sleep`/cron pelo sistema.
+
+**Lembrete proativo de agendamentos:** a tarefa `sweep-appointment-reminders` enfileira lembretes antecipados e acionamentos na hora para compromissos elegíveis. Detalhes completos (janelas, idempotência, canais, isenção do gate de modo de agente) em §10.7.
 
 ### 7.4 Padrão async em tasks Celery
 
@@ -729,6 +732,40 @@ Cada regra define `weekday` (0=seg … 6=dom), `start_time`/`end_time`, `slot_mi
 
 **Dashboard:** `/dashboard/availability` — grade semanal editável (tenant ou agente selecionado), espelhando a API.
 
+### 10.7 Acionamento proativo de agendamentos (outbound pós-marcação)
+
+Complementa o agendamento **conversacional** (§10.5): após o compromisso gravado, o sistema **aciona o lead proativamente** quando o horário se aproxima ou chega — sem depender de nova mensagem inbound.
+
+**O quê — dois disparos por appointment** (`SCHEDULED` ou `CONFIRMED`):
+
+| Disparo | Janela (`now` em UTC) | Coluna de idempotência |
+|---|---|---|
+| **Lembrete antecipado** | `[starts_at − lead_minutes, starts_at − grace_minutes]` | `reminder_sent_at` |
+| **Acionamento na hora** | `[starts_at, starts_at + tolerance_minutes]` | `due_notified_at` |
+
+Defaults em `app/core/config.py`: `appointment_reminder_lead_minutes=30`, `appointment_reminder_grace_minutes=5`, `appointment_due_tolerance_minutes=15`, `appointment_reminder_sweep_seconds=60`. A detecção de janelas e candidatos está em `app/services/appointment_reminder_service.py` (`is_in_reminder_window`, `is_in_due_window`, `SWEEP_CHANNELS`).
+
+**Idempotência:** o sweep (`worker/tasks/appointment_reminder_sweep.py`) **grava a coluna correspondente antes do `commit`** e enfileira a task Celery; candidatos já marcados não entram de novo na query. Evita ligar/mensagear repetidamente o mesmo lead.
+
+**Canais:** usa o `channel` gravado no appointment (`voice`, `telegram`, `whatsapp`). `channel` nulo → contabilizado como `skipped_no_channel` (sem envio). WhatsApp: dentro da janela Meta 24h → texto livre; fora → template Meta (`appointment_reminder` / `appointment_due`) — ver §10.1.
+
+**Isenção do gate de modo de agente (decisão deliberada):** o lembrete **não** passa por `worker/tasks/outbound_campaign.py` (que exige agente ACTIVE para prospecção). A entrega usa caminho **direto** via `app/services/outbound_delivery.py` → `deliver_outbound_message`, invocado por `worker/tasks/appointment_reminder.py` (`send_appointment_reminder`, `kind` = `reminder` | `due`). **Justificativa:** lembrete de horário já **consentido** pelo lead (marcação conversacional), distinto de campanha outbound fria. O gate de prospecção permanece intacto para campanhas (`send_campaign_message` continua bloqueando agente RECEPTIVE — coberto por testes de integração).
+
+**Arquitetura (fluxo):**
+
+```
+Beat sweep-appointment-reminders
+  → appointment_reminder_sweep.py (_try_dispatch)
+  → appointment_reminder_service.py (plan_appointment_reminder_sweep)
+  → send_appointment_reminder.delay (Celery)
+  → appointment_reminder.py (_send_appointment_reminder_with_session)
+  → outbound_delivery.deliver_outbound_message
+```
+
+Textos fixos: `app/core/appointment_reminder_text.py` (`build_reminder_message`, `build_due_message`); horário por extenso via `format_slot_label` (`app/services/appointment_service.py`). Registro opcional em `lead_interactions` quando há campanha resolvível para o lead (`resolve_campaign_for_lead`).
+
+**Stats retornados pelo sweep:** `reminders_sent`, `due_notified`, `skipped_no_channel`, `skipped_no_recipient`.
+
 Mais detalhe: [`docs/canais.md`](canais.md) e [`docs/infra.md`](infra.md).
 
 ---
@@ -743,7 +780,54 @@ Cobre a operação outbound: **campanhas** que disparam mensagens para **bases d
 - **Follow-up e retomada:** leads pendentes são retomados pelo scheduler (`process-active-activations`, a cada 5 min) enquanto a ativação estiver `is_running` e dentro da janela.
 - **Sweep de inatividade:** conversas `em_andamento` (com `lifecycle_version >= 1`) recebem um aviso ("Ainda está aí?") após `inactivity_warning_minutes=20` e são encerradas após mais `inactivity_close_minutes=20`. O `status_sweep` marca como `nao_atendido` acionamentos sem resposta após `status_timeout_hours=48`.
 
-Mais detalhe: [`docs/agentes.md`](agentes.md) (seções de acionamento) e telas em §13.
+Mais detalhe: [`docs/agentes.md`](agentes.md) (seções de acionamento), telas em §13 e **métricas de campanha** em §11.1.
+
+### 11.1 Métricas de campanha (dashboard)
+
+A **visão geral** (`/dashboard`, `frontend/src/app/dashboard/page.tsx`) exibe cards de resumo (`GET /api/v1/dashboard/summary`) e uma **tabela por campanha** (`GET /api/v1/dashboard/campaigns`). A agregação é feita em **`app/services/dashboard_metrics.py`** — função **`get_dashboard_campaigns`** (fonte única da semântica abaixo). Filtro opcional por canal via query `channel_type` (`whatsapp` | `telegram` | `voice`).
+
+**Colunas da tabela:**
+
+| Coluna | Significado |
+|---|---|
+| Campanha | Nome da campanha visível ao tenant |
+| Leads | `COUNT(DISTINCT lead.id)` via `lead_bases` da campanha |
+| Acionáveis | Soma, por lead, dos **pontos de contato** preenchidos: `telefone_1`, `telefone_2`, `telefone_3`, `email_cliente`, `aux_values.telegram_id` (cada campo não vazio = 1 ponto) |
+| Recebimento | `MIN(lead_base.data_recebimento)` |
+| Início | `MIN(lead_base.data_inicio)` |
+| Vigência | `MAX(lead_base.data_fim)` |
+| Tentativas | `SUM(lead_interactions.tentativas)` — total de outbounds registrados |
+| Spin | `tentativas / acionáveis` (média de tentativas por ponto de contato; **razão decimal**, ex.: 1,5 — não é percentual) |
+| Contato | **Ocorrências** (`COUNT(lead_interactions.id)`) em que o cliente respondeu ou finalizou contato telefônico |
+| CPC | **Ocorrências finalizadoras** do cliente: `Sucesso + Recusa` (identidade garantida) |
+| Recusa | Ocorrências classificadas como recusa |
+| Sucesso | Ocorrências classificadas como sucesso/venda |
+| Conversão | `sucesso / cpc` (taxa de aceite entre quem decidiu; exibida como % no frontend) |
+
+**Predicados de classificação** (em `dashboard_metrics.py`):
+
+| Métrica | Regra SQL (resumo) |
+|---|---|
+| **Contato** | `data_ultimo_contato IS NOT NULL` **OU** tabulação `SIP:200` / `NEG:ESCALADO` |
+| **Sucesso** | tabulação `NEG:SUCESSO` / `NEG:VENDA`; **fallback** `status = 'convertido'` somente se `tabulacao_id IS NULL` |
+| **Recusa** | tabulação `NEG:RECUSADO`; **fallback** `status = 'recusou'` somente se `tabulacao_id IS NULL` |
+| **CPC** | `sucesso + recusa` (calculado em Python após as queries) |
+
+**Regra-chave — contagem por ocorrência, não por lead distinto:** Contato, CPC, Recusa e Sucesso contam **linhas de `lead_interactions`**. O mesmo lead pode gerar várias ocorrências (retentativas, canais distintos). O fallback por `status` só entra quando **não há tabulação** (`tabulacao_id IS NULL`), evitando dupla contagem.
+
+**Funil de leitura (telemarketing):**
+
+```
+Tentativas  ≥  Contato  ≥  CPC  =  Sucesso + Recusa
+                                    ↳ Conversão = Sucesso / CPC
+```
+
+- **Tentativas:** esforço de discagem/disparo.
+- **Contato:** alguém atendeu/respondeu (inclui quem depois recusa ou converte).
+- **CPC:** subset que **decidiu** (sucesso ou recusa explícita).
+- **Conversão:** entre os que decidiram, quantos fecharam positivamente.
+
+A página **`/dashboard/metrics`** (§13.2) é **separada**: métricas por agente e fila receptiva (`app/services/metrics.py`), não a tabela de campanhas acima.
 
 ---
 
@@ -803,7 +887,7 @@ frontend/src/
 
 | Rota | Tela |
 |---|---|
-| `/dashboard` | Visão geral / indicadores |
+| `/dashboard` | Visão geral — **cards** (`GET /dashboard/summary`) + **tabela de campanhas** com métricas de funil (§11.1; `GET /dashboard/campaigns`) + gráficos (leads acionados/virgens, tentativas por canal/status) |
 | `/dashboard/agents` | Agentes (ACTIVE/RECEPTIVE) + identidade por agente |
 | `/dashboard/channels` | Canais e credenciais (WhatsApp/Telegram/Voz) |
 | `/dashboard/leads` | Bases, importação CSV (wizard), CRUD |
@@ -814,7 +898,7 @@ frontend/src/
 | `/dashboard/appointments` | Agenda interna — listagem, filtros, criação/cancelamento manual |
 | `/dashboard/availability` | Grade semanal de disponibilidade (tenant ou agente) |
 | `/dashboard/tabulacoes` | Catálogo de tabulações |
-| `/dashboard/metrics` | Funil e fila (gráficos Recharts) |
+| `/dashboard/metrics` | **Página separada** — métricas por agente + fila receptiva (Recharts); **não** é a tabela de campanhas da home |
 | `/dashboard/monitoring` | Tempo real (WebSocket) + histórico + modo humano |
 | `/dashboard/settings` | Providers de IA, prompts, RAG, voz, identidade do workspace, **Túnel & Webhooks** |
 
@@ -846,15 +930,15 @@ Todos os routers ficam em `backend/app/api/v1/` e são montados em `api_router` 
 | `channels` | Canais + webhooks (WhatsApp inbound/status, Telegram, Voz) + áudio outbound |
 | `lead_bases` | Bases de leads, import CSV, devolutiva, métricas |
 | `leads` | CRUD de leads |
-| `campaigns` | CRUD + start/stop + ciclo de vida + métricas |
+| `campaigns` | CRUD + start/stop + ciclo de vida (métricas por campanha na home: §11.1, `GET /dashboard/campaigns`) |
 | `activation` | Janela, cadência, agendamento, test-dispatch, histórico |
 | `capacity` | Estimativa de capacidade (hardware + Erlang C) |
 | `tabulacoes` | Catálogo de tabulações |
 | `handoff` | Modo humano: listar, assumir, finalizar, reativar |
 | `knowledge` | Documentos KB: upload (`.txt`/`.pdf`/`.docx`), cadastro manual, ingestão, listagem |
 | `settings` | Settings (hot-reload) + identidade do workspace (`/settings/identity`) + amostra/teste de voz |
-| `dashboard` | Agregados/indicadores do painel |
-| `metrics` | Métricas detalhadas (fila, por agente, atendimento) |
+| `dashboard` | Home: `GET /dashboard/summary` (cards + gráficos) e `GET /dashboard/campaigns` (tabela §11.1) |
+| `metrics` | Métricas por agente e fila receptiva (`/dashboard/metrics`) |
 | `monitoring` | WebSocket de eventos em tempo real + histórico |
 | `tunnel` | Status e controle do túnel Cloudflare |
 | `appointments` | CRUD de compromissos (`GET/POST /`, `GET/PATCH /{id}`; filtros `lead_id`, `status`, `from`, `to`; conflito → 409) |
@@ -884,6 +968,7 @@ Configuração via `.env` (a partir de `.env.example`). Dentro do Compose, `DATA
 | Túnel | `TUNNEL_MODE` (temporary\|named), `CLOUDFLARE_TUNNEL_TOKEN`, `PUBLIC_BASE_URL` |
 | Comportamento do agente | `INTENT_TEMPERATURE`, `RESPONSE_TEMPERATURE`, `RAG_TOP_K`, thresholds de RAG/KB, limites de voz |
 | Acionamento/Capacidade | `ACTIVATION_TIMEZONE`, pesos/custos por canal, Erlang, fila receptiva, handoff, inatividade |
+| Lembrete de agendamento | `APPOINTMENT_REMINDER_LEAD_MINUTES`, `APPOINTMENT_REMINDER_GRACE_MINUTES`, `APPOINTMENT_DUE_TOLERANCE_MINUTES`, `APPOINTMENT_REMINDER_SWEEP_SECONDS` |
 | KB | `KB_CHUNK_SIZE` (512), `KB_CHUNK_OVERLAP` (64), `KB_MAX_UPLOAD_BYTES` (10MB) |
 
 **Premissa local por padrão:** os defaults de `Settings` (`backend/app/core/config.py`) apontam para a stack OSS (`ollama`/`faster_whisper`/`coqui`/`768`) e **não exigem nenhuma chave de API**. As chaves de nuvem só são necessárias ao ativar a respectiva alternativa. O `.env` contém segredos e **não é versionado**.
@@ -967,6 +1052,8 @@ Mais detalhe: [`docs/testes.md`](testes.md). Scripts de validação ponta a pont
 | **Data/hora por extenso (código)** | LLM formata para TTS | Determinístico, testável (`format_slot_label_spoken`); evita alucinação de datas | Menos flexível que linguagem natural livre |
 | **Hangup conservador na voz** | Desligar em qualquer despedida vaga | `confidence >= 0.9` + bloqueio durante booking ativo; wrap-up explícito pós-agendamento | Client-side desligamentos tardios se o cliente não usar frases reconhecidas |
 | **Hierarquia de disponibilidade agente > tenant > default** | Só env global | Retrocompatível (sem regras → comportamento anterior); override fino por agente | Agente com regras parciais **substitui** o tenant (não faz merge dia a dia) |
+| **Lembrete de agendamento isento do gate de modo** | Exigir ACTIVE também no lembrete | Lembrete = contato **consentido** (horário pedido pelo lead), não prospecção fria; permite acionar mesmo com `Agente_Receptivo` na campanha | Dois caminhos de outbound (campanha vs lembrete) — documentado em §10.7 |
+| **Métricas de campanha por ocorrência** | Contar leads distintos | Reflete retentativas e multi-canal; funil Tentativas ≥ Contato ≥ CPC alinhado ao telemarketing | Mesmo lead pode inflar Contato/CPC se houver várias interações |
 
 ### Limitações conhecidas e trabalhos futuros
 
@@ -1003,7 +1090,15 @@ Ver [`docs/roadmap.md`](roadmap.md).
 | **Slot de capacidade** | Marcador no Redis que representa uma conversa simultânea ocupando recurso. |
 | **`is_system`** | Flag de registro padrão do sistema: visível a todos, somente leitura (com exceção de campanhas). |
 | **Tenant** | Inquilino lógico (uma conta `user_id`) cujos dados são isolados dos demais. |
-| **Sweep** | Tarefa periódica (Celery Beat) que varre estados e aplica regras de tempo (inatividade, abandono, timeouts). |
+| **Sweep** | Tarefa periódica (Celery Beat) que varre estados e aplica regras de tempo (inatividade, abandono, timeouts, lembretes de agendamento). |
+| **Acionáveis** | Soma dos pontos de contato preenchidos por lead (telefones, e-mail, `telegram_id`) — quantos canais/endereços dá para acionar. |
+| **Spin** | `tentativas / acionáveis` — média de tentativas por ponto de contato (razão, não percentual). |
+| **Contato** | Ocorrência em que o cliente respondeu (`data_ultimo_contato`) ou tabulação de contato telefônico (`SIP:200`, `NEG:ESCALADO`). |
+| **CPC** | *Contato Positivo de Conclusão* — ocorrências em que o cliente **decidiu**: sucesso + recusa. |
+| **Recusa** | Ocorrência tabulada `NEG:RECUSADO` (ou status legado `recusou` sem tabulação). |
+| **Sucesso** | Ocorrência tabulada `NEG:SUCESSO` / `NEG:VENDA` (ou status legado `convertido` sem tabulação). |
+| **Conversão** | `sucesso / cpc` — taxa de aceite entre quem concluiu a negociação. |
+| **Lembrete proativo / acionamento de agendamento** | Outbound automático antes e na hora do compromisso (§10.7), distinto de campanha fria. |
 
 ---
 
