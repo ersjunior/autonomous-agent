@@ -323,6 +323,14 @@ async def test_receptive_agent_does_not_block_sweep(
 
 
 @pytest.mark.asyncio
+@patch(
+    "app.services.outbound_delivery.build_outbound_twiml_url",
+    return_value="https://test.example.com/outbound-say",
+)
+@patch(
+    "app.services.outbound_delivery.build_outbound_audio_twiml_url",
+    return_value="https://test.example.com/outbound-audio?audio=reminder.mp3",
+)
 @patch("app.services.voice_call_state.remember_call_from_number")
 @patch("app.services.outbound_delivery.make_outbound_call", return_value="CAtest123")
 @patch(
@@ -334,6 +342,8 @@ async def test_appointment_reminder_task_delivers_voice_with_receptive_agent(
     _mock_audio,
     mock_call,
     _mock_remember,
+    _mock_audio_twiml_url,
+    _mock_say_twiml_url,
     voice_ctx: OwnerContext,
     db_session,
 ):
