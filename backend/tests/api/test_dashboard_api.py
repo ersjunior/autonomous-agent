@@ -114,8 +114,11 @@ async def test_dashboard_campaigns_returns_200_with_schema(
     row = next(r for r in body["campaigns"] if r["campaign_id"] == str(owner_ctx.campaign.id))
     assert row["campaign_name"] == owner_ctx.campaign.name
     assert row["tentativas"] >= 2
+    assert "acionaveis" in row
+    assert "recusa" in row
     assert "spin" in row
     assert "conversao" in row
+    assert row["cpc"] == row["sucesso"] + row["recusa"]
 
 
 async def test_dashboard_campaigns_invalid_channel_returns_400(auth_client) -> None:

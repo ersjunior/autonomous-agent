@@ -40,6 +40,7 @@ const CHANNEL_FILTER_OPTIONS: { value: DashboardChannelFilter; label: string }[]
 const TABLE_COLUMNS = [
   "Campanha",
   "Leads",
+  "Acionáveis",
   "Recebimento",
   "Início",
   "Vigência",
@@ -47,6 +48,7 @@ const TABLE_COLUMNS = [
   "Spin",
   "Contato",
   "CPC",
+  "Recusa",
   "Sucesso",
   "Conversão",
 ] as const;
@@ -509,7 +511,7 @@ export default function DashboardPage() {
               </p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[960px] border-collapse text-sm">
+                <table className="w-full min-w-[1100px] border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-border text-left">
                       {TABLE_COLUMNS.map((col) => {
@@ -541,6 +543,7 @@ export default function DashboardPage() {
                           {row.campaign_name}
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{row.leads}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">{row.acionaveis}</td>
                         <td className="whitespace-nowrap px-3 py-2.5 text-left tabular-nums">
                           {formatDateBR(row.data_recebimento)}
                         </td>
@@ -556,6 +559,7 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{row.contato}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{row.cpc}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">{row.recusa}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{row.sucesso}</td>
                         <td
                           className={`px-3 py-2.5 text-right tabular-nums ${conversaoTone(row.conversao)}`}

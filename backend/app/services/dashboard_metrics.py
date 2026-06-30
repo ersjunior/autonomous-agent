@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
@@ -24,6 +24,10 @@ from app.services.metrics import (
     _empty_channel_counts,
     _empty_status_counts,
 )
+
+_CONTATO_TABULACAO_CODIGOS = ("SIP:200", "NEG:ESCALADO")
+_SUCESSO_TABULACAO_CODIGOS = ("NEG:SUCESSO", "NEG:VENDA")
+_RECUSA_TABULACAO_CODIGO = "NEG:RECUSADO"
 
 
 def _campaign_scope(user_id: uuid.UUID):
@@ -50,11 +54,6 @@ def _acionado_interaction_exists(channel_type: str | None):
     return exists(select(1).select_from(LeadInteraction).where(*conditions))
 
 
-_CONTATO_STATUSES = ("em_andamento", "convertido", "recusou")
-_CPC_STATUSES = ("convertido", "recusou")
-_ESCALADO_CODIGO = "NEG:ESCALADO"
-
-
 def _safe_ratio(numerator: int, denominator: int, *, decimals: int = 2) -> float:
     """Divisão com guarda de zero; conversão/spin como fração 0–1 (frontend formata %)."""
     if denominator <= 0:
@@ -69,17 +68,59 @@ def _interaction_filters(campaign_filter, channel_type: str | None):
     return filters
 
 
-def _contato_predicate():
-    return or_(
-        LeadInteraction.data_ultimo_contato.isnot(None),
-        LeadInteraction.status.in_(_CONTATO_STATUSES),
+def _filled_string_point(column):
+    """1 se coluna string não-nula e não-vazia após trim; senão 0."""
+    trimmed = func.trim(column)
+    return case(
+        (and_(column.isnot(None), trimmed != ""), 1),
+        else_=0,
     )
 
 
-def _cpc_predicate():
+def _telegram_id_point():
+    """1 se aux_values.telegram_id presente e não-vazio."""
+    telegram_id = Lead.aux_values["telegram_id"].as_string()
+    return case(
+        (and_(telegram_id.isnot(None), telegram_id != ""), 1),
+        else_=0,
+    )
+
+
+def _lead_contact_points_expr():
+    """Pontos de contato acionáveis por lead (telefones, email, telegram_id)."""
+    return (
+        _filled_string_point(Lead.telefone_1)
+        + _filled_string_point(Lead.telefone_2)
+        + _filled_string_point(Lead.telefone_3)
+        + _filled_string_point(Lead.email_cliente)
+        + _telegram_id_point()
+    )
+
+
+def _contato_predicate():
     return or_(
-        LeadInteraction.status.in_(_CPC_STATUSES),
-        Tabulacao.codigo == _ESCALADO_CODIGO,
+        LeadInteraction.data_ultimo_contato.isnot(None),
+        Tabulacao.codigo.in_(_CONTATO_TABULACAO_CODIGOS),
+    )
+
+
+def _sucesso_predicate():
+    return or_(
+        Tabulacao.codigo.in_(_SUCESSO_TABULACAO_CODIGOS),
+        and_(
+            LeadInteraction.tabulacao_id.is_(None),
+            LeadInteraction.status == "convertido",
+        ),
+    )
+
+
+def _recusa_predicate():
+    return or_(
+        Tabulacao.codigo == _RECUSA_TABULACAO_CODIGO,
+        and_(
+            LeadInteraction.tabulacao_id.is_(None),
+            LeadInteraction.status == "recusou",
+        ),
     )
 
 
@@ -95,11 +136,12 @@ async def get_dashboard_campaigns(
     Estratégia (sem N+1):
       Q1 — campanhas (id, name)
       Q2 — leads + datas via lead_bases (GROUP BY campaign_id)
-      Q3 — SUM(tentativas) por campanha
-      Q4 — COUNT(DISTINCT lead_id) contato por campanha
-      Q5 — COUNT(DISTINCT lead_id) sucesso por campanha
-      Q6 — COUNT(DISTINCT lead_id) CPC por campanha (JOIN tabulacoes p/ NEG:ESCALADO)
-    Merge em Python por campaign_id; spin/conversao calculados aqui.
+      Q3 — SUM(acionáveis) por campanha (pontos de contato nos leads)
+      Q4 — SUM(tentativas) por campanha
+      Q5 — COUNT(lead_interactions.id) contato por campanha (ocorrências)
+      Q6 — COUNT(lead_interactions.id) sucesso por campanha (ocorrências)
+      Q7 — COUNT(lead_interactions.id) recusa por campanha (ocorrências)
+    Merge em Python; cpc = sucesso + recusa; spin/conversao calculados aqui.
     """
     campaign_filter = _campaign_scope(user_id)
     interaction_filters = _interaction_filters(campaign_filter, channel_type)
@@ -118,13 +160,14 @@ async def get_dashboard_campaigns(
         campaign_id: {
             "campaign_name": name,
             "leads": 0,
+            "acionaveis": 0,
             "data_recebimento": None,
             "data_inicio": None,
             "data_fim": None,
             "tentativas": 0,
             "contato": 0,
-            "cpc": 0,
             "sucesso": 0,
+            "recusa": 0,
         }
         for campaign_id, name in campaign_rows
     }
@@ -155,6 +198,20 @@ async def get_dashboard_campaigns(
         bucket["data_inicio"] = inicio
         bucket["data_fim"] = fim
 
+    acionaveis_rows = await db.execute(
+        select(LeadBase.campaign_id, func.sum(_lead_contact_points_expr()))
+        .select_from(LeadBase)
+        .join(Lead, Lead.lead_base_id == LeadBase.id)
+        .join(Campaign, LeadBase.campaign_id == Campaign.id)
+        .where(campaign_filter)
+        .group_by(LeadBase.campaign_id)
+    )
+    for campaign_id, total in acionaveis_rows.all():
+        bucket = rows_by_id.get(campaign_id)
+        if bucket is None:
+            continue
+        bucket["acionaveis"] = int(total or 0)
+
     tentativas_rows = await db.execute(
         select(LeadInteraction.campaign_id, func.sum(LeadInteraction.tentativas))
         .select_from(LeadInteraction)
@@ -169,9 +226,10 @@ async def get_dashboard_campaigns(
         bucket["tentativas"] = int(total or 0)
 
     contato_rows = await db.execute(
-        select(LeadInteraction.campaign_id, func.count(func.distinct(LeadInteraction.lead_id)))
+        select(LeadInteraction.campaign_id, func.count(LeadInteraction.id))
         .select_from(LeadInteraction)
         .join(Campaign, LeadInteraction.campaign_id == Campaign.id)
+        .outerjoin(Tabulacao, LeadInteraction.tabulacao_id == Tabulacao.id)
         .where(*interaction_filters, _contato_predicate())
         .group_by(LeadInteraction.campaign_id)
     )
@@ -182,10 +240,11 @@ async def get_dashboard_campaigns(
         bucket["contato"] = int(total or 0)
 
     sucesso_rows = await db.execute(
-        select(LeadInteraction.campaign_id, func.count(func.distinct(LeadInteraction.lead_id)))
+        select(LeadInteraction.campaign_id, func.count(LeadInteraction.id))
         .select_from(LeadInteraction)
         .join(Campaign, LeadInteraction.campaign_id == Campaign.id)
-        .where(*interaction_filters, LeadInteraction.status == "convertido")
+        .outerjoin(Tabulacao, LeadInteraction.tabulacao_id == Tabulacao.id)
+        .where(*interaction_filters, _sucesso_predicate())
         .group_by(LeadInteraction.campaign_id)
     )
     for campaign_id, total in sucesso_rows.all():
@@ -194,39 +253,42 @@ async def get_dashboard_campaigns(
             continue
         bucket["sucesso"] = int(total or 0)
 
-    cpc_rows = await db.execute(
-        select(LeadInteraction.campaign_id, func.count(func.distinct(LeadInteraction.lead_id)))
+    recusa_rows = await db.execute(
+        select(LeadInteraction.campaign_id, func.count(LeadInteraction.id))
         .select_from(LeadInteraction)
         .join(Campaign, LeadInteraction.campaign_id == Campaign.id)
         .outerjoin(Tabulacao, LeadInteraction.tabulacao_id == Tabulacao.id)
-        .where(*interaction_filters, _cpc_predicate())
+        .where(*interaction_filters, _recusa_predicate())
         .group_by(LeadInteraction.campaign_id)
     )
-    for campaign_id, total in cpc_rows.all():
+    for campaign_id, total in recusa_rows.all():
         bucket = rows_by_id.get(campaign_id)
         if bucket is None:
             continue
-        bucket["cpc"] = int(total or 0)
+        bucket["recusa"] = int(total or 0)
 
     campaigns_out: list[DashboardCampaignRow] = []
     for campaign_id, name in campaign_rows:
         data = rows_by_id[campaign_id]
-        leads = data["leads"]
         tentativas = data["tentativas"]
-        cpc = data["cpc"]
+        acionaveis = data["acionaveis"]
         sucesso = data["sucesso"]
+        recusa = data["recusa"]
+        cpc = sucesso + recusa
         campaigns_out.append(
             DashboardCampaignRow(
                 campaign_id=campaign_id,
                 campaign_name=data["campaign_name"],
-                leads=leads,
+                leads=data["leads"],
+                acionaveis=acionaveis,
                 data_recebimento=data["data_recebimento"],
                 data_inicio=data["data_inicio"],
                 data_fim=data["data_fim"],
                 tentativas=tentativas,
-                spin=_safe_ratio(tentativas, leads),
+                spin=_safe_ratio(tentativas, acionaveis),
                 contato=data["contato"],
                 cpc=cpc,
+                recusa=recusa,
                 sucesso=sucesso,
                 conversao=_safe_ratio(sucesso, cpc),
             )

@@ -16,6 +16,17 @@ from tests.integration.helpers import create_owner_context
 pytestmark = pytest.mark.integration
 
 
+async def _tabulacao_id(db_session, codigo: str):
+    return (
+        await db_session.execute(
+            select(Tabulacao.id).where(
+                Tabulacao.is_system.is_(True),
+                Tabulacao.codigo == codigo,
+            )
+        )
+    ).scalar_one()
+
+
 async def test_dashboard_summary_counts_acionados_virgens_and_aggregates(
     db_session,
     system_seeds,
@@ -107,11 +118,11 @@ async def test_dashboard_summary_channel_filter(db_session, system_seeds) -> Non
     assert summary.tentativas_por_status["em_andamento"] == 0
 
 
-async def test_dashboard_campaigns_distinct_lead_metrics_and_spin(
+async def test_dashboard_campaigns_occurrence_metrics_and_spin(
     db_session,
     system_seeds,
 ) -> None:
-    """Contato/CPC/Sucesso contam lead único; spin = tentativas/leads."""
+    """Ocorrências (COUNT LI); spin = tentativas/acionáveis; cpc = sucesso + recusa."""
     ctx = await create_owner_context(db_session)
 
     second_lead = Lead(
@@ -161,27 +172,22 @@ async def test_dashboard_campaigns_distinct_lead_metrics_and_spin(
     row = next(r for r in result.campaigns if r.campaign_id == ctx.campaign.id)
 
     assert row.leads == 2
+    assert row.acionaveis == 2
     assert row.tentativas == 12
     assert row.spin == 6.0
-    assert row.contato == 2
-    assert row.cpc == 2
+    assert row.contato == 1
     assert row.sucesso == 1
+    assert row.recusa == 1
+    assert row.cpc == row.sucesso + row.recusa == 2
     assert row.conversao == 0.5
 
 
-async def test_dashboard_campaigns_cpc_includes_escalado_tabulacao(
+async def test_dashboard_campaigns_escalado_counts_contato_not_cpc(
     db_session,
     system_seeds,
 ) -> None:
     ctx = await create_owner_context(db_session)
-    escalado_id = (
-        await db_session.execute(
-            select(Tabulacao.id).where(
-                Tabulacao.is_system.is_(True),
-                Tabulacao.codigo == "NEG:ESCALADO",
-            )
-        )
-    ).scalar_one()
+    escalado_id = await _tabulacao_id(db_session, "NEG:ESCALADO")
 
     from app.models.lead_interaction import LeadInteraction
 
@@ -206,8 +212,10 @@ async def test_dashboard_campaigns_cpc_includes_escalado_tabulacao(
         ).campaigns
         if r.campaign_id == ctx.campaign.id
     )
-    assert row.cpc == 1
+    assert row.contato == 1
     assert row.sucesso == 0
+    assert row.recusa == 0
+    assert row.cpc == 0
     assert row.conversao == 0.0
 
 
@@ -233,10 +241,12 @@ async def test_dashboard_campaigns_empty_campaign_has_zeros(
         if r.campaign_id == empty.id
     )
     assert row.leads == 0
+    assert row.acionaveis == 0
     assert row.tentativas == 0
     assert row.spin == 0.0
     assert row.contato == 0
     assert row.cpc == 0
+    assert row.recusa == 0
     assert row.sucesso == 0
     assert row.conversao == 0.0
     assert row.data_recebimento is None
@@ -283,7 +293,256 @@ async def test_dashboard_campaigns_channel_filter(db_session, system_seeds) -> N
         if r.campaign_id == ctx.campaign.id
     )
     assert row.tentativas == 3
-    assert row.contato == 1
+    assert row.contato == 0
     assert row.sucesso == 1
+    assert row.recusa == 0
     assert row.cpc == 1
     assert row.conversao == 1.0
+
+
+async def test_dashboard_campaigns_acionaveis_contact_points(db_session, system_seeds) -> None:
+    """Lead com 2 telefones + email + telegram → 4 acionáveis."""
+    ctx = await create_owner_context(db_session)
+    ctx.lead.telefone_2 = "5511888777000"
+    ctx.lead.email_cliente = "lead@example.com"
+    ctx.lead.aux_values = {"telegram_id": "9988776655"}
+    await db_session.flush()
+
+    row = next(
+        r
+        for r in (
+            await get_dashboard_campaigns(db_session, user_id=ctx.user.id)
+        ).campaigns
+        if r.campaign_id == ctx.campaign.id
+    )
+    assert row.acionaveis == 4
+
+
+async def test_dashboard_campaigns_neg_venda_success_and_cpc(db_session, system_seeds) -> None:
+    ctx = await create_owner_context(db_session)
+    venda_id = await _tabulacao_id(db_session, "NEG:VENDA")
+
+    from app.models.lead_interaction import LeadInteraction
+
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        LeadInteraction(
+            lead_id=ctx.lead.id,
+            campaign_id=ctx.campaign.id,
+            channel_type="whatsapp",
+            status="convertido",
+            tentativas=1,
+            data_acionamento=now,
+            tabulacao_id=venda_id,
+        )
+    )
+    await db_session.flush()
+
+    row = next(
+        r
+        for r in (
+            await get_dashboard_campaigns(db_session, user_id=ctx.user.id)
+        ).campaigns
+        if r.campaign_id == ctx.campaign.id
+    )
+    assert row.sucesso == 1
+    assert row.recusa == 0
+    assert row.cpc == 1
+
+
+async def test_dashboard_campaigns_neg_recusado_recusa_and_cpc(db_session, system_seeds) -> None:
+    ctx = await create_owner_context(db_session)
+    recusado_id = await _tabulacao_id(db_session, "NEG:RECUSADO")
+
+    from app.models.lead_interaction import LeadInteraction
+
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        LeadInteraction(
+            lead_id=ctx.lead.id,
+            campaign_id=ctx.campaign.id,
+            channel_type="whatsapp",
+            status="recusou",
+            tentativas=1,
+            data_acionamento=now,
+            tabulacao_id=recusado_id,
+        )
+    )
+    await db_session.flush()
+
+    row = next(
+        r
+        for r in (
+            await get_dashboard_campaigns(db_session, user_id=ctx.user.id)
+        ).campaigns
+        if r.campaign_id == ctx.campaign.id
+    )
+    assert row.recusa == 1
+    assert row.sucesso == 0
+    assert row.cpc == 1
+
+
+async def test_dashboard_campaigns_convertido_fallback_without_tabulacao(
+    db_session,
+    system_seeds,
+) -> None:
+    ctx = await create_owner_context(db_session)
+
+    from app.models.lead_interaction import LeadInteraction
+
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        LeadInteraction(
+            lead_id=ctx.lead.id,
+            campaign_id=ctx.campaign.id,
+            channel_type="voice",
+            status="convertido",
+            tentativas=1,
+            data_acionamento=now,
+            tabulacao_id=None,
+        )
+    )
+    await db_session.flush()
+
+    row = next(
+        r
+        for r in (
+            await get_dashboard_campaigns(db_session, user_id=ctx.user.id)
+        ).campaigns
+        if r.campaign_id == ctx.campaign.id
+    )
+    assert row.sucesso == 1
+    assert row.cpc == 1
+
+
+async def test_dashboard_campaigns_no_double_count_with_tabulacao_and_status(
+    db_session,
+    system_seeds,
+) -> None:
+    """Com tabulação de sucesso, status convertido não soma em dobro."""
+    ctx = await create_owner_context(db_session)
+    sucesso_id = await _tabulacao_id(db_session, "NEG:SUCESSO")
+
+    from app.models.lead_interaction import LeadInteraction
+
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        LeadInteraction(
+            lead_id=ctx.lead.id,
+            campaign_id=ctx.campaign.id,
+            channel_type="whatsapp",
+            status="convertido",
+            tentativas=1,
+            data_acionamento=now,
+            tabulacao_id=sucesso_id,
+        )
+    )
+    await db_session.flush()
+
+    row = next(
+        r
+        for r in (
+            await get_dashboard_campaigns(db_session, user_id=ctx.user.id)
+        ).campaigns
+        if r.campaign_id == ctx.campaign.id
+    )
+    assert row.sucesso == 1
+    assert row.cpc == 1
+
+
+async def test_dashboard_campaigns_neg_ausente_excluded_from_metrics(
+    db_session,
+    system_seeds,
+) -> None:
+    ctx = await create_owner_context(db_session)
+    ausente_id = await _tabulacao_id(db_session, "NEG:AUSENTE")
+
+    from app.models.lead_interaction import LeadInteraction
+
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        LeadInteraction(
+            lead_id=ctx.lead.id,
+            campaign_id=ctx.campaign.id,
+            channel_type="voice",
+            status="nao_atendido",
+            tentativas=2,
+            data_acionamento=now,
+            tabulacao_id=ausente_id,
+        )
+    )
+    await db_session.flush()
+
+    row = next(
+        r
+        for r in (
+            await get_dashboard_campaigns(db_session, user_id=ctx.user.id)
+        ).campaigns
+        if r.campaign_id == ctx.campaign.id
+    )
+    assert row.contato == 0
+    assert row.sucesso == 0
+    assert row.recusa == 0
+    assert row.cpc == 0
+
+
+async def test_dashboard_campaigns_cpc_identity_sucesso_plus_recusa(
+    db_session,
+    system_seeds,
+) -> None:
+    """CPC = sucesso + recusa em todas as campanhas retornadas."""
+    ctx = await create_owner_context(db_session)
+    venda_id = await _tabulacao_id(db_session, "NEG:VENDA")
+    recusado_id = await _tabulacao_id(db_session, "NEG:RECUSADO")
+
+    from app.models.lead_interaction import LeadInteraction
+
+    now = datetime.now(timezone.utc)
+    second_lead = Lead(
+        user_id=ctx.user.id,
+        lead_base_id=ctx.lead_base.id,
+        nome_cliente="Other",
+        telefone_1="5511666555444",
+    )
+    db_session.add(second_lead)
+    await db_session.flush()
+
+    db_session.add_all(
+        [
+            LeadInteraction(
+                lead_id=ctx.lead.id,
+                campaign_id=ctx.campaign.id,
+                channel_type="whatsapp",
+                status="convertido",
+                tentativas=1,
+                data_acionamento=now,
+                tabulacao_id=venda_id,
+            ),
+            LeadInteraction(
+                lead_id=second_lead.id,
+                campaign_id=ctx.campaign.id,
+                channel_type="telegram",
+                status="recusou",
+                tentativas=1,
+                data_acionamento=now,
+                tabulacao_id=recusado_id,
+            ),
+            LeadInteraction(
+                lead_id=ctx.lead.id,
+                campaign_id=ctx.campaign.id,
+                channel_type="voice",
+                status="convertido",
+                tentativas=1,
+                data_acionamento=now,
+                tabulacao_id=None,
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    result = await get_dashboard_campaigns(db_session, user_id=ctx.user.id)
+    row = next(r for r in result.campaigns if r.campaign_id == ctx.campaign.id)
+    assert row.sucesso == 2
+    assert row.recusa == 1
+    assert row.cpc == 3
+    assert row.cpc == row.sucesso + row.recusa

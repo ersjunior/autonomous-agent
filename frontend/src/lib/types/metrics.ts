@@ -50,6 +50,7 @@ export interface DashboardCampaignRow {
   campaign_id: string;
   campaign_name: string;
   leads: number;
+  acionaveis: number;
   data_recebimento: string | null;
   data_inicio: string | null;
   data_fim: string | null;
@@ -57,6 +58,7 @@ export interface DashboardCampaignRow {
   spin: number;
   contato: number;
   cpc: number;
+  recusa: number;
   sucesso: number;
   conversao: number;
 }

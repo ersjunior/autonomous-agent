@@ -41,6 +41,7 @@ class DashboardCampaignRow(BaseModel):
     campaign_id: UUID
     campaign_name: str
     leads: int
+    acionaveis: int
     data_recebimento: date | None
     data_inicio: date | None
     data_fim: date | None
@@ -48,6 +49,7 @@ class DashboardCampaignRow(BaseModel):
     spin: float
     contato: int
     cpc: int
+    recusa: int
     sucesso: int
     conversao: float
 
