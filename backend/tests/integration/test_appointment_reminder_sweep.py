@@ -494,7 +494,7 @@ async def test_whatsapp_reminder_inside_24h_uses_freeform(
             campaign_id=whatsapp_ctx.campaign.id,
             channel_type="whatsapp",
             status="em_andamento",
-            data_ultimo_contato=_NOW - timedelta(hours=1),
+            data_ultimo_contato=datetime.now(timezone.utc) - timedelta(hours=1),
         )
     )
     await db_session.flush()
