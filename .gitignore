@@ -55,6 +55,9 @@ docs/demo-assets/**
 .DS_Store
 Thumbs.db
 
+# PoC descartável (Media Streams — não versionar)
+poc/
+
 # Cursor (mantém as rules, ignora config pessoal)
 .cursor/mcp.json
 

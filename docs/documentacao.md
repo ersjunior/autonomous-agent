@@ -17,7 +17,7 @@
 7. [Worker (Celery)](#7-worker-celery)
 8. [Inteligência artificial (camada agnóstica)](#8-inteligência-artificial-camada-agnóstica)
 9. [Agentes e orquestração (LangGraph)](#9-agentes-e-orquestração-langgraph) — intents, booking, farewell
-10. [Canais de atendimento](#10-canais-de-atendimento) — WhatsApp, Telegram, Voz; agendamento conversacional, disponibilidade (Fase D) e acionamento proativo (§10.7)
+10. [Canais de atendimento](#10-canais-de-atendimento) — WhatsApp, Telegram, Voz; agendamento conversacional, disponibilidade (Fase D), acionamento proativo (§10.7) e evolução para streaming (§10.8)
 11. [Motor de acionamento (modo ativo)](#11-motor-de-acionamento-modo-ativo) — inclui métricas de campanha (§11.1)
 12. [Atendimento receptivo e teoria de filas](#12-atendimento-receptivo-e-teoria-de-filas)
 13. [Frontend (Next.js 15)](#13-frontend-nextjs-15)
@@ -686,7 +686,7 @@ Três canais (`ChannelType`: `WHATSAPP`, `TELEGRAM`, `VOICE`). O seed cria um ag
 - **Agendamento por voz:** mesmo fluxo Redis/`booking_handler` dos canais de texto, mas com `voice_mode=True` — oferece **um slot por vez** (`slot_cursor` sobre `all_slots`); confirmação por sim/não (`extract_booking_confirmation` com limiar de confiança). Labels TTS vêm de `format_slot_label_spoken` (ex.: *"terça-feira às quinze horas"*, sem data numérica). Após commit, `set_wrap_up_pending` pergunta se há mais alguma coisa antes de permitir desligar.
 - **Encerramento autônomo:** quando `should_hangup` chega no turno pronto, `channels.py` monta `_build_voice_hangup_twiml` (reproduz a despedida + `<Hangup/>`). Ver §9.5.
 - **TTS — cache de speaker (Coqui):** o serviço `infra/docker/coqui-tts/app.py` mantém `_speaker_latent_cache` indexado por path+mtime do sample de voz; latents (`gpt_cond_latent`, `speaker_embedding`) são reutilizados entre sínteses, reduzindo `speaker_ms` a ~0 em hits (warmup também pré-carrega).
-- **Inbound de voz "ao vivo"** via Twilio Media Streams (transcrição bidirecional em tempo real) **ainda não está totalmente conectado** — ver [`roadmap.md`](roadmap.md).
+- **Inbound de voz em tempo real (Media Streams):** o transporte bidirecional foi **validado em PoC** (§10.8, Fase 0); a integração ao sistema de produção ainda não está conectada — ver também [`roadmap.md`](roadmap.md).
 
 ### 10.4 Túnel Cloudflare
 
@@ -767,6 +767,85 @@ Textos fixos: `app/core/appointment_reminder_text.py` (`build_reminder_message`,
 **Stats retornados pelo sweep:** `reminders_sent`, `due_notified`, `skipped_no_channel`, `skipped_no_recipient`.
 
 Mais detalhe: [`docs/canais.md`](canais.md) e [`docs/infra.md`](infra.md).
+
+### 10.8 Evolução da voz: roadmap para streaming
+
+Esta subseção consolida o **estado atual** do canal de voz, a **motivação** para migrar de turnos com gravação para **Twilio Media Streams** (WebSocket bidirecional) e um **roadmap faseado** com o que já foi validado em ambiente real versus o que permanece plano.
+
+#### Pipeline atual (turnos com gravação)
+
+O inbound de voz em produção usa o modo `voice_inbound_mode=record` (§10.3). O ciclo de um turno é **sequencial** e **não pipelinizado**:
+
+1. Twilio executa TwiML `<Record>`; o lead fala até silêncio (`voice_record_silence_timeout_sec=2`) ou limite de duração.
+2. Twilio POSTa `RecordingUrl` em `/api/v1/channels/webhooks/voice/inbound/record-callback`.
+3. O webhook enfileira Celery (`worker/tasks/voice_inbound_turn.py` → `app/services/voice_turn_processor.py`).
+4. O worker processa o **arquivo completo**: download da gravação → STT (faster-whisper REST) → grafo LangGraph (LLM) → TTS (Coqui → MP3 em `voice_audio_root`).
+5. Enquanto isso, a Twilio faz **polling** via `<Redirect>` em `/turn-ready` até Redis marcar o turno `ready`.
+6. Twilio toca a resposta com `<Play>` (URL pública do MP3) e reabre `<Record>` para o próximo turno.
+
+**Latências medidas em ambiente quente** (instrumentação em `voice_turn_processor.py`): STT ~1,2 s, LLM ~1,5 s, TTS ~1–1,8 s; **turno total ~4 s**. Cada etapa espera a anterior terminar — não há sobreposição de processamento nem streaming de áudio.
+
+Detecção de fim de fala hoje: **timeout do `<Record>` da Twilio**, não VAD no backend. Estado de turno/chamada: Redis (`voice_turn_state`, `voice_call_state`).
+
+#### Motivação para streaming
+
+O modelo por turnos funciona e, com stack quente, ~4 s por turno é aceitável para o TCC — sobretudo porque respostas de voz já são curtas (`cap_voice_response_for_telephony`, ~70–90 caracteres). Ainda assim, o desenho impõe custos estruturais:
+
+- **Polling ocioso** no loop `<Redirect>` enquanto STT + LLM + TTS rodam no worker.
+- **Silêncio percebido** entre o fim da fala do lead e o início do `<Play>` da resposta (soma de todas as etapas + download do MP3).
+- **Impossibilidade de pipelinizar** enquanto o transporte exige gravação e arquivo completos.
+
+**Streaming** (Media Streams) permite **processar enquanto o áudio flui** e eliminar o polling TwiML, melhorando a **fluidez percebida** da conversa. Importante: o ganho é em **sobreposição e percepção**, não em tornar cada componente intrinsecamente mais rápido — o LLM quente continua na ordem de **~1,5 s** para produzir a resposta; o STT e o TTS batch também mantêm seus tempos de inferência. O que muda é a possibilidade de começar a falar (ou transcrever) antes do turno “fechar” e de reduzir espera morta entre etapas.
+
+#### Roadmap faseado
+
+| Fase | Objetivo | O que muda | Risco | Reversibilidade | Status |
+|---|---|---|---|---|---|
+| **0 — Prova de transporte** | Validar WSS + protocolo Twilio + μ-law no ambiente real | PoC **standalone** (fora do repo; pasta `poc/` não versionada): FastAPI com WebSocket `/media`, TwiML `<Connect><Stream>`, beep inicial + eco do áudio do lead | Mínimo — não toca `backend/`, `worker/` nem `agents/` | Descartável | **✅ VALIDADA** |
+| **1 — LLM com streaming de tokens** | Pipelinizar LLM → TTS **sem** mudar o transporte | `stream: true` no Ollama/OpenAI; iniciar TTS na primeira frase completa em vez de esperar o texto inteiro. `<Record>` / `<Play>` / polling **permanecem** | Baixo | Reversível por env/provider | Plano |
+| **2 — WebSocket recebendo áudio (STT incremental)** | Substituir `<Record>` por Media Streams na entrada | Endpoint WS (ponto natural: `agents/channels/voice/handler.py`, hoje stub); frames μ-law 8 kHz; reamostragem 8→16 kHz; STT incremental; **VAD** para fim de utterance (hoje: timeout do `<Record>`). Coexistência possível: `VOICE_INBOUND_MODE=stream` vs `record` | **Alto** — divisor de águas | Modo dual por env | Plano |
+| **3 — Saída de áudio em streaming (TTS em chunks)** | Tocar resposta enquanto sintetiza | Enviar `{"event":"media",...}` em chunks pelo WS. **Trade-off de produto:** Coqui (`infra/docker/coqui-tts/app.py`) gera **arquivo completo** por request REST — não há streaming nativo. Opções: (a) refatorar o serviço Coqui para emitir chunks; (b) TTS com streaming nativo (ex.: ElevenLabs), sacrificando **clonagem de voz local** (diferencial OSS do projeto) | **Alto** + decisão de produto | **Ponto de não-retorno** arquitetural | Plano |
+| **4 — Orquestração full-duplex** | Adaptar lógica de negócio ao fluxo contínuo | Booking, farewell, silêncio e tabulação passam a reagir a eventos de fala parcial/final (não gravações); sessão por `call_sid`; **barge-in** (lead interrompe o agente); reescrita da suite `test_voice_*` (~81 testes hoje — maioria de TwiML/polling/Record ficaria obsoleta) | Médio conceitual, **alto em volume** | Acoplado à Fase 3 | Plano |
+
+##### Fase 0 — detalhe do que foi validado (✅)
+
+Prova de conceito executada **fora do sistema** (servidor Python isolado, não commitado):
+
+- **Transporte:** `cloudflared` expondo **WSS** público; webhook Twilio em `GET|POST /twiml` retornando `<Connect><Stream url="wss://…/media"/>`.
+- **Protocolo:** sequência observada em ligação real — `connected` → `start` (`streamSid`) → `media` (inbound) → `mark` → `stop`.
+- **Formato:** `audio/x-mulaw`, 8 kHz, payload base64 **sem header** de arquivo; eco reenvia o mesmo `media.payload` com `streamSid` correto.
+- **Saída:** beep inicial (~450 ms, 23 frames); Twilio confirmou reprodução via `mark` (`intro_done`).
+- **Eco bidirecional:** **1242 frames** de entrada = **1242 frames** de saída na mesma chamada de teste.
+- **Latência de rede** (round-trip puro, sem STT/LLM/TTS): **&lt; 1 s** — orçamento fixo sobre o qual um pipeline de streaming somaria o processamento.
+
+**Conclusão da Fase 0:** o transporte de streaming é **viável** na infra atual (túnel Cloudflare + FastAPI ASGI + protocolo Twilio). Não há obstáculo de rede, túnel ou formato de áudio identificado neste teste.
+
+##### Fases 1–4 — escopo resumido
+
+- **Fase 1** oferece ganho **modesto** porque respostas de voz já são uma frase curta; ainda assim é o passo de menor risco antes de tocar o transporte.
+- **Fase 2** exige STT incremental (o endpoint `POST /transcribe` do faster-whisper recebe **arquivo completo** hoje) e VAD próprio — substitui o “turno” definido pela Twilio.
+- **Fase 3** força escolha entre **voz clonada local (Coqui)** e **streaming full-duplex** com provedor que emita chunks.
+- **Fase 4** propaga a mudança para booking (`voice_mode`), farewell (`should_hangup`), silêncio acumulado, tabulação terminal e testes.
+
+#### Trade-off resumido
+
+| | Modelo atual (turnos + gravação) | Streaming (Media Streams) |
+|---|---|---|
+| **Ganho** | Simples, estável, voz clonada Coqui, ~4 s quente aceitável | Fluidez, fim do polling, pipeline LLM↔TTS↔áudio sobreposto, barge-in possível |
+| **Custo** | Latência percebida entre turnos; polling; sem full-duplex | Reescrita do núcleo de voz; VAD; STT/TTS incrementais; tensão Coqui vs TTS streaming; ~81 testes de voz a repensar |
+| **Decisão atual** | **Mantido em produção** — preserva diferencial OSS (Coqui + faster-whisper + Ollama) e atende o escopo do TCC | **Evolução futura** — Fase 0 provou que o caminho de transporte é viável; fases 1–4 permanecem planejadas |
+
+#### Referências no código
+
+| Componente | Caminho |
+|---|---|
+| Webhooks e TwiML de turno | `backend/app/api/v1/channels.py` |
+| Pipeline STT → agente → TTS | `backend/app/services/voice_turn_processor.py` |
+| Task Celery de turno | `worker/tasks/voice_inbound_turn.py` |
+| Stub Media Streams (Fase 2+) | `agents/channels/voice/handler.py` |
+| STT batch (arquivo) | `agents/providers/stt/faster_whisper_provider.py`, `infra/docker/faster-whisper/app.py` |
+| TTS batch (arquivo) | `agents/providers/tts/coqui_provider.py`, `infra/docker/coqui-tts/app.py` |
+| LLM sem streaming hoje | `agents/providers/llm/ollama_provider.py` (`"stream": false`) |
 
 ---
 
@@ -1053,11 +1132,12 @@ Mais detalhe: [`docs/testes.md`](testes.md). Scripts de validação ponta a pont
 | **Hangup conservador na voz** | Desligar em qualquer despedida vaga | `confidence >= 0.9` + bloqueio durante booking ativo; wrap-up explícito pós-agendamento | Client-side desligamentos tardios se o cliente não usar frases reconhecidas |
 | **Hierarquia de disponibilidade agente > tenant > default** | Só env global | Retrocompatível (sem regras → comportamento anterior); override fino por agente | Agente com regras parciais **substitui** o tenant (não faz merge dia a dia) |
 | **Lembrete de agendamento isento do gate de modo** | Exigir ACTIVE também no lembrete | Lembrete = contato **consentido** (horário pedido pelo lead), não prospecção fria; permite acionar mesmo com `Agente_Receptivo` na campanha | Dois caminhos de outbound (campanha vs lembrete) — documentado em §10.7 |
+| **Modelo de voz por turnos (record)** | Media Streams desde o início | Preserva voz clonada Coqui, pipeline testado (~4 s quente), heurística de intent sem LLM extra | Polling TwiML, sem full-duplex; ver roadmap §10.8 |
 | **Métricas de campanha por ocorrência** | Contar leads distintos | Reflete retentativas e multi-canal; funil Tentativas ≥ Contato ≥ CPC alinhado ao telemarketing | Mesmo lead pode inflar Contato/CPC se houver várias interações |
 
 ### Limitações conhecidas e trabalhos futuros
 
-- **Voz ao vivo:** inbound conversacional por turnos (record) está implementado; **streaming bidirecional** (Twilio Media Streams) ainda não. Abandono real de fila depende de inbound de voz com volume.
+- **Voz ao vivo (Media Streams):** o **transporte** bidirecional foi validado em PoC (§10.8, **Fase 0 ✅**); a integração ao backend de produção e as fases 1–4 (LLM/TTS pipelinizado, STT incremental, TTS em chunks, orquestração full-duplex) permanecem **plano**. Inbound por turnos (`record`) segue o modo em produção. Abandono real de fila depende de inbound de voz com volume.
 - **Telefonia/SIP:** discador SIP próprio e tabulação automática a partir do `StatusCallback` da chamada Twilio são ganchos previstos.
 - **Agentes dedicados:** `escalation_agent` e `memory_agent` são stubs (`# TODO`); hoje escalonamento é regra pura e memória é gerida diretamente.
 - **Tools:** `knowledge_base` e `calendar_tool` estão implementados; `crm_tool` permanece stub (`# TODO`).
