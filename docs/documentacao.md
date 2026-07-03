@@ -770,7 +770,7 @@ Mais detalhe: [`docs/canais.md`](canais.md) e [`docs/infra.md`](infra.md).
 
 ### 10.8 Evolução da voz: roadmap para streaming
 
-Esta subseção consolida o **estado atual** do canal de voz, a **motivação** para migrar de turnos com gravação para **Twilio Media Streams** (WebSocket bidirecional) e um **roadmap faseado** com o que já foi validado em ambiente real versus o que permanece plano.
+Esta subseção consolida o **estado atual** do canal de voz, a **motivação** para migrar de turnos com gravação para **Twilio Media Streams** (WebSocket bidirecional), o **roadmap conceitual** (fases 0–4) com o que já foi validado em ambiente real, e o **plano de execução detalhado** (fases A–F) — o *como* concreto mapeado ao código. **Nenhuma fase A–F foi implementada ainda**; apenas a Fase 0 conceitual (PoC de transporte) está ✅ validada.
 
 #### Pipeline atual (turnos com gravação)
 
@@ -797,7 +797,17 @@ O modelo por turnos funciona e, com stack quente, ~4 s por turno é aceitável p
 
 **Streaming** (Media Streams) permite **processar enquanto o áudio flui** e eliminar o polling TwiML, melhorando a **fluidez percebida** da conversa. Importante: o ganho é em **sobreposição e percepção**, não em tornar cada componente intrinsecamente mais rápido — o LLM quente continua na ordem de **~1,5 s** para produzir a resposta; o STT e o TTS batch também mantêm seus tempos de inferência. O que muda é a possibilidade de começar a falar (ou transcrever) antes do turno “fechar” e de reduzir espera morta entre etapas.
 
-#### Roadmap faseado
+#### Decisões de arquitetura (registradas)
+
+As decisões abaixo orientam o plano de execução (Fases A–F) e **não alteram** o comportamento do sistema até cada fase ser implementada.
+
+| Decisão | Escolha |
+|---|---|
+| **Coexistência de modos** | Dois modos inbound coexistem, selecionados por `VOICE_INBOUND_MODE=record\|stream`. O modo **`record`** (turnos com `<Record>` + Celery + polling) **permanece em produção e intacto**; o modo `stream` é adicionado ao lado. |
+| **Provedores (ordem)** | Começar pela stack **local OSS** (faster-whisper + Coqui + Ollama); depois plugar APIs comerciais (ElevenLabs, Google, OpenAI Realtime, etc.) via **`ProviderFactory`** existente — mesmo padrão agnóstico do resto do projeto. |
+| **Natureza realista do streaming local** | faster-whisper e Coqui **não são streaming-nativos** (batch por arquivo/utterance). O alvo não é full-duplex frame-a-frame, e sim **turnos otimizados via streaming**: VAD detecta fim de fala → STT por utterance → agente → TTS **frase-a-frase** → transporte WebSocket elimina polling. **Barge-in / full-duplex** fica como camada opcional futura (Fase F). |
+
+#### Roadmap conceitual (fases 0–4)
 
 | Fase | Objetivo | O que muda | Risco | Reversibilidade | Status |
 |---|---|---|---|---|---|
@@ -827,25 +837,169 @@ Prova de conceito executada **fora do sistema** (servidor Python isolado, não c
 - **Fase 3** força escolha entre **voz clonada local (Coqui)** e **streaming full-duplex** com provedor que emita chunks.
 - **Fase 4** propaga a mudança para booking (`voice_mode`), farewell (`should_hangup`), silêncio acumulado, tabulação terminal e testes.
 
+#### Mapeamento: roadmap conceitual (0–4) ↔ plano de execução (A–F)
+
+O roadmap **0–4** descreve **o quê** evoluir (capacidades de produto e arquitetura). O plano **A–F** descreve **como** implementar, com arquivos e entregas testáveis. As duas numerações são **independentes** — não confundir “Fase 2 conceitual” com “Fase B de execução”.
+
+| Execução | Conceitual | Relação |
+|---|---|---|
+| **Fase 0 ✅** (PoC transporte) | Fase 0 — prova de transporte | **Validada** fora do sistema (`poc/`). A **Fase A** de execução **integra** esse transporte ao backend de produção. |
+| **Fase A** | Fase 0 (integração) | WebSocket no FastAPI + `<Connect><Stream>` + coexistência por env. Sem STT/TTS ainda. |
+| **Fases B + C** | Fase 2 — STT + VAD | μ-law → PCM → resample; VAD + buffer de utterance; STT batch por utterance (não frame-a-frame). |
+| **Fase D** | Fases 2 + 3 — agente + TTS | Loop completo: `attend_inbound_message` + Coqui frase-a-frase + frames μ-law outbound. Marco funcional. |
+| **Fase E** | Fase 4 — robustez | Silêncio prolongado, estado, concorrência, testes stream; production-ready. |
+| **Fase F** (opcional) | Fase 3/4 estendida | APIs plugáveis com streaming nativo; barge-in / full-duplex verdadeiro. |
+| *(transversal)* | Fase 1 — LLM token stream | **Opcional** em qualquer fase após D: `stream: true` no Ollama/OpenAI; ganho modesto; **independe** do WebSocket. |
+
+**Status do plano de execução:** as Fases **A–F não foram iniciadas** no código de produção — apenas registradas nesta documentação. A Fase **0 conceitual** (PoC) está **✅ VALIDADA**.
+
+#### Plano de execução detalhado (Fases A–F)
+
+Cada fase abaixo é **commitável isoladamente**, **reversível por env** (`VOICE_INBOUND_MODE=record` restaura o comportamento atual) e **não altera** o modo `record` em produção enquanto `stream` não for escolhido explicitamente.
+
+##### Fase A — Fundação: transporte + coexistência de modos
+
+| | |
+|---|---|
+| **Objetivo** | Integrar o transporte Media Streams ao backend FastAPI; dois modos coexistindo por configuração. **Sem STT/TTS** — apenas receber áudio e ecoar/logar (como a PoC). |
+| **Entrega testável** | Com `VOICE_INBOUND_MODE=stream`, ligação inbound retorna `<Connect><Stream>`; WS aceita protocolo Twilio (`connected` → `start` → `media`); eco ou log de frames; com `record`, fluxo atual **inalterado**. |
+| **Arquivos novos** | `agents/channels/voice/stream_session.py` (protocolo Twilio + handler WS); possivelmente `agents/channels/voice/mulaw_codec.py` (encode/decode μ-law reutilizável da PoC). |
+| **Arquivos modificados** | `backend/app/api/v1/channels.py` (ramo `if mode == "stream"` em `voice_inbound_webhook`; rota `@router.websocket("/webhooks/voice/media-stream")`); `backend/app/core/config.py` (`voice_inbound_mode: Literal["record","gather","stream"]`); `.env.example`. |
+| **Risco** | **Baixo** — PoC validou WSS + protocolo + μ-law. |
+| **Incerteza** | Baixa. |
+| **Modo record** | Intacto: ramo `record` permanece o default; nenhum webhook record/turn-ready é tocado. |
+
+Pontos de implementação:
+
+- WebSocket no **backend FastAPI** (processo ASGI), **não** no worker Celery — conexões long-lived não cabem no modelo batch de `voice_inbound_turn.py`.
+- URL WSS pública via `settings.require_public_base_url()` (cloudflared já repassa WSS — validado na PoC).
+- `gather` permanece reservado (mesmo guarda que hoje: não implementado).
+
+##### Fase B — Áudio: resample + VAD + buffer de utterance
+
+| | |
+|---|---|
+| **Objetivo** | Pipeline de entrada de áudio: decodificar μ-law 8 kHz → PCM → resample 16 kHz; ring buffer; **VAD** (webrtcvad, leve) detecta fim de fala (silêncio configurável, ~500 ms) e fecha a utterance. **Ainda sem STT.** |
+| **Entrega testável** | WS acumula frames, VAD marca boundaries de fala; logs/métricas de utterance fechada (duração, bytes). Sem transcrição nem resposta do agente. |
+| **Arquivos novos** | `agents/channels/voice/audio_pipeline.py` (ou similar): decode μ-law, resample 8→16 kHz, ring buffer, integração webrtcvad. |
+| **Arquivos modificados** | `agents/channels/voice/stream_session.py`; `backend/requirements.txt` (webrtcvad). |
+| **Risco** | **Médio** — primeiro componente genuinamente novo; linha PSTN ruidosa exige calibração. |
+| **Incerteza** | **Média** — falsos positivos/negativos de VAD em telefonia real. |
+| **Modo record** | Intacto — VAD só existe no ramo WS. |
+
+Gap atual: o projeto **não possui VAD**; fim de fala hoje é o timeout do `<Record>` da Twilio (`voice_record_silence_timeout_sec=2`).
+
+##### Fase C — STT: transcrever a utterance (loop de entrada fecha)
+
+| | |
+|---|---|
+| **Objetivo** | Conectar utterance fechada pelo VAD ao faster-whisper (serviço REST existente em `infra/docker/faster-whisper/app.py`). Lead fala → VAD → transcreve → texto. **Sem resposta do agente ainda.** |
+| **Entrega testável** | Log ou métrica com transcript por utterance em ligação real ou teste WS mockado. |
+| **Arquivos novos** | — (ou endpoint opcional PCM no serviço faster-whisper). |
+| **Arquivos modificados** | `agents/providers/stt/faster_whisper_provider.py` (método para utterance PCM/WAV em memória); `agents/channels/voice/stream_session.py`; possivelmente `infra/docker/faster-whisper/app.py` (aceitar WAV/PCM raw além de multipart). |
+| **Risco** | **Baixo** — reutiliza STT batch existente; faster-whisper **não** faz streaming nativo (utterance completa é o modelo correto). |
+| **Incerteza** | Baixa. |
+| **Modo record** | Intacto — STT do modo record continua via Celery + download de gravação. |
+
+##### Fase D — Agente + TTS frase-a-frase: loop completo (marco)
+
+| | |
+|---|---|
+| **Objetivo** | Fechar o ciclo conversacional no modo stream: texto → **`attend_inbound_message`** (grafo, booking, farewell, RAG, tabulação — lógica reutilizável de `app/services/inbound_attendance.py`) → resposta → Coqui **frase-a-frase** → reencode μ-law 8 kHz → frames WS outbound. Adaptar farewell/hangup (áudio de despedida + evento `stop` ou REST hangup). |
+| **Entrega testável** | **Conversa completa** inbound por streaming ponta a ponta (local OSS): falar → transcript → resposta falada → próximo turno, sem `<Record>` nem polling. |
+| **Arquivos novos** | `agents/channels/voice/tts_phrase.py` (split de frases + síntese sequencial); possivelmente extensão Coqui `/tts/mulaw-chunks` ou encode no backend. |
+| **Arquivos modificados** | `agents/channels/voice/stream_session.py`; `agents/providers/tts/coqui_provider.py`; `infra/docker/coqui-tts/app.py` (opcional: chunks μ-law); integração com `voice_call_state` (`should_hangup`, `wrap_up_pending`). |
+| **Risco** | **Médio-alto**. |
+| **Incerteza** | **Alta** — TTS frase-a-frase (Coqui gera WAV completo por request; `inference_stream` do XTTS **não está exposto** no serviço atual); **event loop**: STT/TTS CPU/GPU-bound devem rodar em `asyncio.to_thread` / executor para não bloquear o ASGI. |
+| **Modo record** | Intacto — pipeline Celery + MP3 + turn-ready **não é alterado**. |
+
+Notas técnicas:
+
+- `deliver_channel_text` para canal `voice` é **no-op** (resposta não sai por push — ver `worker/tasks/inbound_handler.py`); no stream, a entrega é **direta pelo WS**.
+- Cache de speaker latents do Coqui (`_speaker_latent_cache` em `coqui-tts/app.py`) beneficia sínteses frase-a-frase na mesma ligação.
+- LLM streaming de tokens (fase conceitual 1) pode ser adicionado aqui como otimização transversal — ganho modesto dado `cap_voice_response_for_telephony`.
+
+##### Fase E — Robustez: silêncio, estado, concorrência, testes
+
+| | |
+|---|---|
+| **Objetivo** | Production-ready do modo stream: silêncio prolongado (`voice_silence_warning_seconds` / `voice_silence_close_seconds`) via timers no WS (adaptar `voice_call_state`); estado por `call_sid`; concorrência de múltiplas chamadas (executor/semaforo); suite de testes do modo stream. |
+| **Entrega testável** | Silêncio → aviso → encerramento; múltiplas chamadas simultâneas sem deadlock; testes automatizados passando; ~45 testes de **negócio** reutilizáveis (booking, farewell, intent, trim) continuam verdes. |
+| **Arquivos novos** | `backend/tests/api/test_voice_stream_websocket.py`; `backend/tests/unit/test_voice_audio_pipeline.py` (VAD/resample). |
+| **Arquivos modificados** | `agents/channels/voice/stream_session.py`; `app/services/voice_call_state.py` (campos/timers compatíveis com WS); possivelmente documentação de deploy (`workers` uvicorn). |
+| **Risco** | **Médio** (volume de testes e edge cases). |
+| **Incerteza** | **Média** — estado **in-memory** no processo WS vs **`--workers 4`** em produção (`docker-compose.prod.yml`): exige sticky session, worker dedicado ou centralizar estado crítico no Redis. |
+| **Modo record** | Intacto — testes record-specific (~35) permanecem; suite stream é **adicional**. |
+
+Testes stream: mock do protocolo Twilio via `TestClient.websocket_connect` (Starlette/FastAPI); monkeypatch de STT/TTS/LLM.
+
+##### Fase F — (opcional, futura) APIs plugáveis + full-duplex
+
+| | |
+|---|---|
+| **Objetivo** | Estender `ProviderFactory` / interfaces em `agents/providers/base.py` para STT/TTS (e eventualmente LLM) com **streaming nativo** via API (ElevenLabs, Google, OpenAI Realtime). **Barge-in**: lead interrompe o agente enquanto fala — full-duplex verdadeiro. |
+| **Entrega testável** | Provedor comercial plugável por env; opcionalmente barge-in demonstrável. |
+| **Arquivos modificados** | `agents/providers/base.py`; providers concretos; `agents/provider_factory.py`; `stream_session.py` (cancelamento de TTS outbound). |
+| **Risco** | **Variável** — APIs destravam streaming rápido; barge-in é a camada **mais difícil**. |
+| **Incerteza** | Alta para full-duplex; baixa para swap de provedor TTS/STT com streaming comercial. |
+| **Modo record** | Intacto — APIs plugáveis via factory **não exigem** abandonar `record`. |
+
+Se o stack local travar em TTS frase-a-frase ou VAD, o fallback natural é **Fase F antecipada** (API com streaming nativo) e/ou **manter `record` em produção**.
+
+#### Pontos de incerteza (honestidade técnica)
+
+| Área | Fase | Descrição |
+|---|---|---|
+| **VAD em linha ruidosa** | B | webrtcvad é leve mas sensível a ruído PSTN; pode exigir hangover, limiar de energia ou migração para silero-vad. |
+| **TTS frase-a-frase / streaming nativo Coqui** | D | Serviço atual usa `xtts.inference()` batch; `inference_stream` **não está exposto** — granularidade e latência entre frases são **incertas** sem spike. |
+| **Event loop vs GPU-bound** | D | STT/TTS no processo WS bloqueiam o loop async se inline; obrigatório `asyncio.to_thread` / executor dedicado. |
+| **Estado in-memory vs workers uvicorn** | E | Dev usa 1 processo (`--reload`); prod usa 4 workers — sessão WS presa ao worker que aceitou a conexão. |
+| **Full-duplex / barge-in** | F | Requer cancelar playback outbound e reabrir STT mid-utterance — **não** contemplado nas Fases A–E. |
+
+#### Estimativa de impacto
+
+| Métrica | Valor |
+|---|---|
+| **Arquivos novos** | ~10–15 |
+| **Arquivos modificados** | ~15–20 |
+| **Testes de voz (~81 no total)** | ~**40%** fortemente acoplados ao modo `record` (TwiML, polling, record-callback); ~**50%** de negócio **reutilizáveis** (booking, farewell, intent heuristic, response trim, RAG voice, finalize) |
+| **Implementação iniciada** | **Nenhuma** (Fases A–F = plano documentado apenas) |
+
+#### Garantia transversal: modo `record` em produção
+
+Durante **todas** as Fases A–F:
+
+1. **`VOICE_INBOUND_MODE=record`** (default) mantém o pipeline atual: `<Play>` + `<Record>` → Celery → polling → `<Play>` resposta.
+2. Cada fase de execução é **commitável isoladamente** e **reversível** trocando a env para `record`.
+3. Nenhuma fase remove ou altera comportamento do ramo `record` sem opt-in explícito em `stream`.
+4. Outbound (campanhas, lembretes) permanece em `<Play>` monólogo + `<Record>` opcional até decisão futura de `VOICE_OUTBOUND_MODE`.
+
 #### Trade-off resumido
 
-| | Modelo atual (turnos + gravação) | Streaming (Media Streams) |
-|---|---|---|
-| **Ganho** | Simples, estável, voz clonada Coqui, ~4 s quente aceitável | Fluidez, fim do polling, pipeline LLM↔TTS↔áudio sobreposto, barge-in possível |
-| **Custo** | Latência percebida entre turnos; polling; sem full-duplex | Reescrita do núcleo de voz; VAD; STT/TTS incrementais; tensão Coqui vs TTS streaming; ~81 testes de voz a repensar |
-| **Decisão atual** | **Mantido em produção** — preserva diferencial OSS (Coqui + faster-whisper + Ollama) e atende o escopo do TCC | **Evolução futura** — Fase 0 provou que o caminho de transporte é viável; fases 1–4 permanecem planejadas |
+| | Modelo atual (turnos + gravação) | Streaming local (turnos otimizados via WS) | Full-duplex (Fase F, opcional) |
+|---|---|---|---|
+| **Ganho** | Simples, estável, voz clonada Coqui, ~4 s quente aceitável | Fluidez, fim do polling, TTS frase-a-frase, VAD próprio; mantém stack OSS | Barge-in, overlap real de fala; APIs com streaming nativo |
+| **Custo** | Latência percebida entre turnos; polling; sem barge-in | VAD + resample + event loop; TTS batch por frase (não frame-a-frame) | Reescrita de cancelamento de playback; provedor comercial ou spike Coqui |
+| **Decisão atual** | **Mantido em produção** — `VOICE_INBOUND_MODE=record` | **Plano A–E** — coexistência por env; não substitui record | **Plano F** — opcional, futuro |
 
 #### Referências no código
 
 | Componente | Caminho |
 |---|---|
 | Webhooks e TwiML de turno | `backend/app/api/v1/channels.py` |
-| Pipeline STT → agente → TTS | `backend/app/services/voice_turn_processor.py` |
-| Task Celery de turno | `worker/tasks/voice_inbound_turn.py` |
-| Stub Media Streams (Fase 2+) | `agents/channels/voice/handler.py` |
-| STT batch (arquivo) | `agents/providers/stt/faster_whisper_provider.py`, `infra/docker/faster-whisper/app.py` |
-| TTS batch (arquivo) | `agents/providers/tts/coqui_provider.py`, `infra/docker/coqui-tts/app.py` |
+| Config `voice_inbound_mode` | `backend/app/core/config.py` |
+| Pipeline STT → agente → TTS (modo record) | `backend/app/services/voice_turn_processor.py` |
+| Lógica de negócio reutilizável (stream) | `backend/app/services/inbound_attendance.py` (`attend_inbound_message`) |
+| Task Celery de turno (modo record) | `worker/tasks/voice_inbound_turn.py` |
+| Stub / handler voz (Fase A+) | `agents/channels/voice/handler.py` → evolui para `stream_session.py` |
+| STT batch (arquivo / utterance) | `agents/providers/stt/faster_whisper_provider.py`, `infra/docker/faster-whisper/app.py` |
+| TTS batch (arquivo / frase) | `agents/providers/tts/coqui_provider.py`, `infra/docker/coqui-tts/app.py` |
+| Factory agnóstico | `agents/provider_factory.py`, `agents/providers/base.py` |
+| Estado chamada / silêncio | `backend/app/services/voice_call_state.py` |
+| Estado turno / polling (modo record) | `backend/app/services/voice_turn_state.py` |
 | LLM sem streaming hoje | `agents/providers/llm/ollama_provider.py` (`"stream": false`) |
+| PoC transporte (Fase 0 ✅) | `poc/media_stream_echo.py`, `poc/twiml_connect_stream.xml` |
+| Monitoring WS (referência ASGI) | `backend/app/api/v1/monitoring.py` |
 
 ---
 
