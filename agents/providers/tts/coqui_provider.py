@@ -24,17 +24,21 @@ class CoquiTTSProvider(TTSProvider):
         return "coqui"
 
     async def synthesize(
-        self, text: str, voice_id: str | None = None
+        self,
+        text: str,
+        voice_id: str | None = None,
+        *,
+        sample_rate: int | None = None,
     ) -> bytes:
         speaker = voice_id or settings.coqui_voice_sample or ""
-        response = await self._client.post(
-            "/tts",
-            json={
-                "text": text,
-                "language": "pt",
-                "speaker_wav": speaker,
-            },
-        )
+        payload: dict[str, str | int] = {
+            "text": text,
+            "language": "pt",
+            "speaker_wav": speaker,
+        }
+        if sample_rate is not None:
+            payload["sample_rate"] = int(sample_rate)
+        response = await self._client.post("/tts", json=payload)
         response.raise_for_status()
         return response.content
 

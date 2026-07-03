@@ -19,6 +19,12 @@ async def speech_to_text(
     )
 
 
-async def text_to_speech(text: str) -> bytes:
+async def text_to_speech(text: str, *, sample_rate: int | None = None) -> bytes:
     tts = ProviderFactory.get_tts()
+    if sample_rate is not None:
+        from agents.providers.tts.coqui_provider import CoquiTTSProvider
+
+        if not isinstance(tts, CoquiTTSProvider):
+            raise ValueError("sample_rate requires TTS_PROVIDER=coqui")
+        return await tts.synthesize(text, sample_rate=sample_rate)
     return await tts.synthesize(text)

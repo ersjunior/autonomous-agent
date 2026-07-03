@@ -1,4 +1,4 @@
-"""Twilio Media Streams WebSocket session handler (Fase A transport + Fase B VAD + Fase C STT)."""
+"""Twilio Media Streams WebSocket session handler (Fase A–D1: transport + VAD + STT + agent + TTS)."""
 
 from __future__ import annotations
 
@@ -17,13 +17,22 @@ from agents.channels.voice.audio_pipeline import (
     create_voice_stream_session_from_settings,
     pcm16_16k_to_wav,
 )
-from agents.channels.voice.mulaw_codec import INTRO_FRAMES, MULAW_FRAME_BYTES
-from agents.channels.voice.tts_stt import speech_to_text
+from agents.channels.voice.mulaw_codec import (
+    INTRO_FRAMES,
+    MULAW_FRAME_BYTES,
+    chunk_mulaw,
+    pcm16_to_mulaw,
+    wav_bytes_to_pcm16_mono,
+)
+from agents.channels.voice.tts_stt import speech_to_text, text_to_speech
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 MEDIA_LOG_EVERY_N = 50
+STREAM_TTS_SAMPLE_RATE = 8000
+AGENT_RESPONSE_MARK = "agent_response_done"
+VOICE_STREAM_AGENT_FALLBACK = "Desculpe, não consegui processar agora."
 
 
 def _log_unknown_call_sid(call_sid: str) -> None:
@@ -41,14 +50,56 @@ def _log_unknown_call_sid(call_sid: str) -> None:
         )
 
 
-async def _transcribe_utterance(
+async def _run_voice_agent_for_stream(
+    *,
+    from_number: str,
+    transcript: str,
+    call_sid: str | None,
+) -> str:
+    """
+    Same agent path as record mode (``process_voice_inbound_turn`` → ``run_voice_agent_turn``).
+
+    First argument is ``session`` (AsyncSession positional) — not ``db=``.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.services.voice_turn_processor import run_voice_agent_turn
+
+    async with AsyncSessionLocal() as session:
+        return await run_voice_agent_turn(
+            session,
+            from_number=from_number,
+            transcript=transcript,
+            call_sid=call_sid,
+        )
+
+
+async def _synthesize_stream_mulaw_frames(response_text: str) -> list[bytes]:
+    """Coqui @ 8 kHz WAV → PCM16 → μ-law frames (no backend downsample)."""
+    wav_bytes = await text_to_speech(
+        response_text,
+        sample_rate=STREAM_TTS_SAMPLE_RATE,
+    )
+    pcm16 = wav_bytes_to_pcm16_mono(
+        wav_bytes,
+        expected_rate=STREAM_TTS_SAMPLE_RATE,
+    )
+    mulaw = pcm16_to_mulaw(pcm16)
+    return chunk_mulaw(mulaw)
+
+
+async def _process_utterance_turn(
     result: UtteranceClosed,
     *,
     call_sid: str | None,
+    stream_sid: str | None,
+    websocket: WebSocket,
+    response_lock: asyncio.Lock,
 ) -> None:
-    """Fase C: PCM utterance → WAV → faster-whisper → diagnostic log (no agent yet)."""
+    """
+    Fase C+D1: STT (parallel-safe) → agent → TTS → μ-law outbound (serialized per call).
+    """
     wav_bytes = pcm16_16k_to_wav(result.pcm16_16k)
-    started = time.perf_counter()
+    stt_started = time.perf_counter()
     try:
         transcript = (
             await speech_to_text(
@@ -58,20 +109,8 @@ async def _transcribe_utterance(
                 content_type="audio/wav",
             )
         ).strip()
-        stt_ms = (time.perf_counter() - started) * 1000
-        logger.info(
-            "Voice stream STT utterance #%s callSid=%s duration_ms=%s wav_bytes=%s "
-            "stt_ms=%s transcript_len=%s transcript=%r",
-            result.index,
-            call_sid or "?",
-            result.duration_ms,
-            len(wav_bytes),
-            stt_ms,
-            len(transcript),
-            transcript,
-        )
     except Exception as exc:
-        stt_ms = (time.perf_counter() - started) * 1000
+        stt_ms = (time.perf_counter() - stt_started) * 1000
         logger.error(
             "Voice stream STT failed utterance #%s callSid=%s duration_ms=%s stt_ms=%s: %s",
             result.index,
@@ -80,19 +119,146 @@ async def _transcribe_utterance(
             stt_ms,
             exc,
         )
+        return
+
+    stt_ms = (time.perf_counter() - stt_started) * 1000
+    logger.info(
+        "Voice stream STT utterance #%s callSid=%s duration_ms=%s wav_bytes=%s "
+        "stt_ms=%s transcript_len=%s transcript=%r",
+        result.index,
+        call_sid or "?",
+        result.duration_ms,
+        len(wav_bytes),
+        stt_ms,
+        len(transcript),
+        transcript,
+    )
+
+    if not transcript:
+        logger.info(
+            "Voice stream utterance #%s callSid=%s empty transcript — skipping agent",
+            result.index,
+            call_sid or "?",
+        )
+        return
+
+    sid = (call_sid or "").strip()
+    if sid:
+        from app.services.voice_call_state import get_call_customer_number, reset_silence_stage
+
+        from_number = (get_call_customer_number(sid) or "").strip()
+        if from_number:
+            reset_silence_stage(sid, from_number=from_number)
+        else:
+            logger.warning(
+                "Voice stream agent skip: no from_number for callSid=%s utterance #%s",
+                sid,
+                result.index,
+            )
+            return
+    else:
+        logger.warning(
+            "Voice stream agent skip: missing callSid utterance #%s",
+            result.index,
+        )
+        return
+
+    if not (stream_sid or "").strip():
+        logger.error(
+            "Voice stream agent skip: missing streamSid callSid=%s utterance #%s",
+            sid,
+            result.index,
+        )
+        return
+
+    async with response_lock:
+        agent_started = time.perf_counter()
+        response_text = ""
+        try:
+            response_text = (
+                await _run_voice_agent_for_stream(
+                    from_number=from_number,
+                    transcript=transcript,
+                    call_sid=sid or None,
+                )
+            ).strip()
+        except Exception as exc:
+            agent_ms = (time.perf_counter() - agent_started) * 1000
+            logger.error(
+                "Voice stream agent failed utterance #%s callSid=%s agent_ms=%s: %s",
+                result.index,
+                sid,
+                agent_ms,
+                exc,
+            )
+            response_text = VOICE_STREAM_AGENT_FALLBACK
+
+        agent_ms = (time.perf_counter() - agent_started) * 1000
+        if not response_text:
+            response_text = VOICE_STREAM_AGENT_FALLBACK
+
+        tts_started = time.perf_counter()
+        try:
+            frames = await _synthesize_stream_mulaw_frames(response_text)
+        except Exception as exc:
+            tts_ms = (time.perf_counter() - tts_started) * 1000
+            logger.error(
+                "Voice stream TTS failed utterance #%s callSid=%s agent_ms=%s tts_ms=%s: %s",
+                result.index,
+                sid,
+                agent_ms,
+                tts_ms,
+                exc,
+            )
+            return
+
+        tts_ms = (time.perf_counter() - tts_started) * 1000
+        try:
+            await _send_mulaw_frames(
+                websocket,
+                stream_sid=stream_sid,
+                frames=frames,
+                label="agent",
+            )
+            await _send_mark(
+                websocket,
+                stream_sid=stream_sid,
+                name=AGENT_RESPONSE_MARK,
+            )
+        except Exception as exc:
+            logger.error(
+                "Voice stream outbound audio failed utterance #%s callSid=%s: %s",
+                result.index,
+                sid,
+                exc,
+            )
+            return
+
+        logger.info(
+            "Voice stream agent response callSid=%s utterance#%s agent_ms=%s tts_ms=%s "
+            "audio_frames=%s response=%r",
+            sid,
+            result.index,
+            agent_ms,
+            tts_ms,
+            len(frames),
+            response_text,
+        )
 
 
 async def _schedule_utterance_transcription(
     result: UtteranceClosed,
     *,
     call_sid: str | None,
+    stream_sid: str | None,
+    websocket: WebSocket,
+    response_lock: asyncio.Lock,
     stt_tasks: set[asyncio.Task[None]],
 ) -> None:
     """
-    Log utterance boundary and run STT in a background task (non-blocking receive loop).
+    Log utterance boundary and run STT → agent → TTS in a background task.
 
-    Fase D extension point: add per-call_sid asyncio.Queue or Lock here to serialize
-    agent turn processing after STT completes (parallel STT + log is OK for Fase C).
+    ``response_lock`` serializes agent/TTS/send per call; receive loop stays free.
     """
     logger.info(
         "Voice stream utterance closed #%s duration_ms=%s bytes=%s callSid=%s",
@@ -102,15 +268,21 @@ async def _schedule_utterance_transcription(
         call_sid or "?",
     )
 
-    async def _run_stt() -> None:
+    async def _run_turn() -> None:
         try:
-            await _transcribe_utterance(result, call_sid=call_sid)
+            await _process_utterance_turn(
+                result,
+                call_sid=call_sid,
+                stream_sid=stream_sid,
+                websocket=websocket,
+                response_lock=response_lock,
+            )
         finally:
             current = asyncio.current_task()
             if current is not None:
                 stt_tasks.discard(current)
 
-    task = asyncio.create_task(_run_stt())
+    task = asyncio.create_task(_run_turn())
     stt_tasks.add(task)
 
 
@@ -118,6 +290,9 @@ async def _finalize_session(
     session: VoiceStreamSession | None,
     *,
     call_sid: str | None,
+    stream_sid: str | None,
+    websocket: WebSocket,
+    response_lock: asyncio.Lock,
     stt_tasks: set[asyncio.Task[None]],
 ) -> None:
     if session is None:
@@ -133,13 +308,16 @@ async def _finalize_session(
         await _schedule_utterance_transcription(
             flushed,
             call_sid=call_sid,
+            stream_sid=stream_sid,
+            websocket=websocket,
+            response_lock=response_lock,
             stt_tasks=stt_tasks,
         )
 
     pending = [t for t in stt_tasks if not t.done()]
     if pending:
         logger.info(
-            "Voice stream teardown callSid=%s with %s pending STT task(s)",
+            "Voice stream teardown callSid=%s with %s pending turn task(s)",
             call_sid or "?",
             len(pending),
         )
@@ -187,7 +365,8 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
 
     Fase A: log + intro beep + optional echo.
     Fase B: inbound μ-law → VAD utterance detection.
-    Fase C: utterance → STT (background) → diagnostic log.
+    Fase C: utterance → STT (background).
+    Fase D1: STT → agent → TTS 8 kHz → μ-law outbound (serialized per call).
     """
     await websocket.accept()
     logger.info("Voice Media Stream WebSocket accepted")
@@ -199,6 +378,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
     media_in_count = 0
     media_out_count = 0
     stt_tasks: set[asyncio.Task[None]] = set()
+    response_lock = asyncio.Lock()
 
     try:
         while True:
@@ -268,8 +448,6 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     label="intro",
                 )
                 await _send_mark(websocket, stream_sid=stream_sid, name="intro_done")
-                # Anti-echo gate: enable VAD after outbound intro is queued.
-                # Twilio may echo intro_done mark when playback completes (handled below).
                 if session is not None:
                     session.listening = True
                     logger.info(
@@ -307,6 +485,9 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                             await _schedule_utterance_transcription(
                                 closed,
                                 call_sid=call_sid,
+                                stream_sid=stream_sid,
+                                websocket=websocket,
+                                response_lock=response_lock,
                                 stt_tasks=stt_tasks,
                             )
 
@@ -353,6 +534,9 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                 await _finalize_session(
                     session,
                     call_sid=call_sid,
+                    stream_sid=stream_sid,
+                    websocket=websocket,
+                    response_lock=response_lock,
                     stt_tasks=stt_tasks,
                 )
                 break
@@ -373,12 +557,26 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
             media_in_count,
             media_out_count,
         )
-        await _finalize_session(session, call_sid=call_sid, stt_tasks=stt_tasks)
+        await _finalize_session(
+            session,
+            call_sid=call_sid,
+            stream_sid=stream_sid,
+            websocket=websocket,
+            response_lock=response_lock,
+            stt_tasks=stt_tasks,
+        )
     except Exception:
         logger.exception(
             "Voice stream handler error callSid=%s streamSid=%s",
             call_sid or "?",
             stream_sid or "?",
         )
-        await _finalize_session(session, call_sid=call_sid, stt_tasks=stt_tasks)
+        await _finalize_session(
+            session,
+            call_sid=call_sid,
+            stream_sid=stream_sid,
+            websocket=websocket,
+            response_lock=response_lock,
+            stt_tasks=stt_tasks,
+        )
         raise

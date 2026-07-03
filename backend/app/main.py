@@ -13,6 +13,7 @@ from sqlalchemy import text
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, engine
+from app.core.logging_setup import _configure_logging
 from app.core.telegram_setup import configure_telegram_on_startup
 from app.core.tunnel_log import log_resolved_public_urls
 from app.core.seed import (
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI):
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
 
     await asyncio.to_thread(_run_migrations)
+    _configure_logging()
 
     async with AsyncSessionLocal() as db:
         await seed_default_admin(db)

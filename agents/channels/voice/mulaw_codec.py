@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import math
 import struct
+import wave
 
 # Twilio Media Streams: ~20 ms @ 8 kHz mono μ-law
 MULAW_FRAME_BYTES = 160
@@ -53,6 +55,19 @@ def mulaw_to_pcm16(data: bytes) -> bytes:
     for i, byte in enumerate(data):
         struct.pack_into("<h", out, i * 2, _mulaw_to_linear(byte))
     return bytes(out)
+
+
+def wav_bytes_to_pcm16_mono(wav_bytes: bytes, *, expected_rate: int = 8000) -> bytes:
+    """Extract mono PCM16 LE payload from a WAV container."""
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+        if wf.getnchannels() != 1:
+            raise ValueError(f"expected mono WAV, got {wf.getnchannels()} channels")
+        if wf.getsampwidth() != 2:
+            raise ValueError(f"expected 16-bit PCM, got sampwidth={wf.getsampwidth()}")
+        rate = wf.getframerate()
+        if rate != expected_rate:
+            raise ValueError(f"expected {expected_rate} Hz WAV, got {rate} Hz")
+        return wf.readframes(wf.getnframes())
 
 
 def pcm16_to_mulaw(pcm: bytes) -> bytes:

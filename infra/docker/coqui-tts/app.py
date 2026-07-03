@@ -218,6 +218,34 @@ def _torch_cuda_available() -> bool:
         return False
 
 
+def _wav_to_pcm_wav(wav_path: str, sample_rate: int) -> bytes:
+    """WAV XTTS → WAV mono PCM16 no sample rate pedido (ex.: 8 kHz para Media Streams)."""
+    proc = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            wav_path,
+            "-ac",
+            "1",
+            "-ar",
+            str(sample_rate),
+            "-f",
+            "wav",
+            "pipe:1",
+        ],
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"ffmpeg failed to resample audio: {proc.stderr.decode(errors='ignore')[:500]}",
+        )
+    if not proc.stdout:
+        raise HTTPException(status_code=500, detail="ffmpeg returned empty WAV")
+    return proc.stdout
+
+
 def _wav_to_telephony_mp3(wav_path: str) -> bytes:
     """WAV XTTS → MP3 mono 16 kHz (formato final para Twilio; evita 2º ffmpeg no backend)."""
     proc = subprocess.run(
@@ -252,6 +280,8 @@ class TTSRequest(BaseModel):
     text: str
     language: str = Field(default="pt")
     speaker_wav: str = ""
+    # None → MP3 mono 16 kHz (record/Twilio Play). 8000 → WAV mono PCM16 @ 8 kHz (stream μ-law).
+    sample_rate: int | None = Field(default=None)
 
 
 @app.get("/health")
@@ -333,20 +363,27 @@ async def synthesize(request: TTSRequest) -> Response:
             )
 
         t0 = time.perf_counter()
-        audio_bytes = _wav_to_telephony_mp3(out_path)
+        target_rate = request.sample_rate
+        if target_rate is not None and int(target_rate) == 8000:
+            audio_bytes = _wav_to_pcm_wav(out_path, 8000)
+            media_type = "audio/wav"
+        else:
+            audio_bytes = _wav_to_telephony_mp3(out_path)
+            media_type = "audio/mpeg"
         ffmpeg_ms = (time.perf_counter() - t0) * 1000
 
         logger.info(
             "TTS timing speaker_ms=%.0f synth_ms=%.0f ffmpeg_ms=%.0f "
-            "chars=%s cached=%s fallback=%s",
+            "chars=%s cached=%s fallback=%s sample_rate=%s",
             speaker_ms,
             synth_ms,
             ffmpeg_ms,
             chars,
             str(cached).lower(),
             str(used_fallback).lower(),
+            target_rate if target_rate is not None else "16000_mp3",
         )
-        return Response(content=audio_bytes, media_type="audio/mpeg")
+        return Response(content=audio_bytes, media_type=media_type)
     finally:
         if os.path.exists(out_path):
             os.unlink(out_path)
