@@ -9,6 +9,8 @@ import pytest
 
 from agents.channels.voice.audio_pipeline import (
     create_voice_stream_session,
+    create_voice_stream_session_from_settings,
+    pcm16_16k_to_wav,
     resample_8k_to_16k,
 )
 from agents.channels.voice.mulaw_codec import (
@@ -60,6 +62,43 @@ def test_resample_8k_to_16k_doubles_samples() -> None:
     pcm_16k = resample_8k_to_16k(pcm_8k)
     assert len(pcm_16k) == len(pcm_8k) * 2
     assert len(pcm_16k) // 2 == 320
+
+
+def test_pcm16_16k_to_wav_valid_container() -> None:
+    import io
+    import wave
+
+    pcm_16k = resample_8k_to_16k(_pcm16_frame_8k(1000, 160))
+    wav = pcm16_16k_to_wav(pcm_16k)
+
+    assert wav[:4] == b"RIFF"
+    assert wav[8:12] == b"WAVE"
+
+    with wave.open(io.BytesIO(wav), "rb") as wf:
+        assert wf.getnchannels() == 1
+        assert wf.getframerate() == 16000
+        assert wf.getsampwidth() == 2
+        assert wf.readframes(wf.getnframes()) == pcm_16k
+
+
+def test_create_voice_stream_session_from_settings_with_real_settings() -> None:
+    from app.core.config import settings
+
+    mock_vad = MagicMock()
+    with patch(
+        "agents.channels.voice.audio_pipeline._create_webrtc_vad",
+        return_value=mock_vad,
+    ):
+        session = create_voice_stream_session_from_settings(
+            call_sid="CAfactory",
+            stream_sid="MZfactory",
+            settings=settings,
+        )
+
+    assert session.call_sid == "CAfactory"
+    assert session.stream_sid == "MZfactory"
+    assert session.frame_ms == int(settings.voice_stream_vad_frame_ms)
+    assert session.silence_hangover_ms == int(settings.voice_stream_silence_hangover_ms)
 
 
 def test_vad_state_machine_one_utterance() -> None:

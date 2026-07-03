@@ -1,15 +1,25 @@
-"""Tests — Fase A/B voice stream transport (WebSocket + inbound TwiML + VAD)."""
+"""Tests — Fase A/B/C voice stream transport (WebSocket + inbound TwiML + VAD + STT)."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import io
 import json
+import struct
+import wave
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 
-from agents.channels.voice.audio_pipeline import create_voice_stream_session
+from agents.channels.voice.audio_pipeline import (
+    UtteranceClosed,
+    create_voice_stream_session,
+    create_voice_stream_session_from_settings,
+    pcm16_16k_to_wav,
+    resample_8k_to_16k,
+)
 from agents.channels.voice.mulaw_codec import (
     INTRO_FRAMES,
     MULAW_FRAME_BYTES,
@@ -68,6 +78,7 @@ def _mock_stream_vad_factory(request):
     """WS tests avoid requiring webrtcvad unless testing utterance detection."""
     if request.node.name in (
         "test_media_stream_ws_detects_utterance_after_intro",
+        "test_media_stream_ws_transcribes_utterance_after_intro",
         "test_media_stream_ws_closes_gracefully_when_vad_missing",
     ):
         yield
@@ -407,6 +418,142 @@ async def test_media_stream_ws_detects_utterance_after_intro(
                 ws.send_text(json.dumps({"event": "stop", "streamSid": "MZutt"}))
 
     assert any("utterance closed" in r.message for r in caplog.records)
+
+
+@pytest.mark.unit
+async def test_transcribe_utterance_calls_speech_to_text_with_wav() -> None:
+    from agents.channels.voice.stream_session import _transcribe_utterance
+
+    pcm_16k = resample_8k_to_16k(struct.pack("<160h", *([1000] * 160)))
+    result = UtteranceClosed(pcm16_16k=pcm_16k, duration_ms=20, index=1)
+    stt_mock = AsyncMock(return_value="ola mundo")
+
+    with patch("agents.channels.voice.stream_session.speech_to_text", stt_mock):
+        await _transcribe_utterance(result, call_sid="CAstt")
+
+    stt_mock.assert_awaited_once()
+    wav_bytes = stt_mock.await_args.args[0]
+    assert stt_mock.await_args.kwargs["language"] == "pt"
+    assert stt_mock.await_args.kwargs["filename"] == "utterance.wav"
+    assert stt_mock.await_args.kwargs["content_type"] == "audio/wav"
+    assert wav_bytes[:4] == b"RIFF"
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+        assert wf.getframerate() == 16000
+        assert wf.readframes(wf.getnframes()) == pcm_16k
+
+
+@pytest.mark.unit
+async def test_schedule_utterance_transcription_runs_stt_in_background() -> None:
+    from agents.channels.voice.stream_session import _schedule_utterance_transcription
+
+    result = UtteranceClosed(pcm16_16k=b"\x00\x00" * 320, duration_ms=20, index=2)
+    stt_tasks: set[asyncio.Task[None]] = set()
+    invoked: list[str] = []
+
+    async def _fake_transcribe(_result, *, call_sid):
+        invoked.append(call_sid or "")
+
+    with patch(
+        "agents.channels.voice.stream_session._transcribe_utterance",
+        new=_fake_transcribe,
+    ):
+        await _schedule_utterance_transcription(
+            result,
+            call_sid="CAbg",
+            stt_tasks=stt_tasks,
+        )
+        await asyncio.sleep(0)
+
+    assert invoked == ["CAbg"]
+    assert not stt_tasks
+
+
+async def test_media_stream_ws_transcribes_utterance_after_intro(
+    test_app, monkeypatch, caplog
+) -> None:
+    import logging
+    from starlette.testclient import TestClient
+
+    from agents.channels.voice.stream_session import _transcribe_utterance
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(settings, "voice_stream_echo_debug", False)
+    stt_mock = AsyncMock(return_value="ola mundo")
+
+    async def _inline_schedule(result, *, call_sid, stt_tasks):
+        await _transcribe_utterance(result, call_sid=call_sid)
+
+    with (
+        patch(
+            "agents.channels.voice.stream_session.create_voice_stream_session_from_settings",
+            side_effect=_session_factory_with_vad,
+        ),
+        patch(
+            "agents.channels.voice.stream_session.speech_to_text",
+            stt_mock,
+        ),
+        patch(
+            "agents.channels.voice.stream_session._schedule_utterance_transcription",
+            side_effect=_inline_schedule,
+        ),
+        patch(
+            "app.services.voice_call_state.get_voice_call_state",
+            return_value={"from_number": "+5511", "silence_stage": 0},
+        ),
+    ):
+        with TestClient(test_app) as tc:
+            with tc.websocket_connect(MEDIA_STREAM_WS) as ws:
+                ws.send_text(json.dumps({"event": "connected"}))
+                ws.send_text(
+                    json.dumps(
+                        {
+                            "event": "start",
+                            "streamSid": "MZstt",
+                            "start": {
+                                "streamSid": "MZstt",
+                                "callSid": "CAstt001",
+                                "tracks": ["inbound"],
+                            },
+                        }
+                    )
+                )
+
+                for _ in range(len(INTRO_FRAMES) + 3):
+                    msg = json.loads(ws.receive_text())
+                    if msg.get("event") == "mark":
+                        break
+
+                tone_frames = chunk_mulaw(generate_intro_beep_mulaw(duration_sec=0.5))
+                frames_to_send = [MULAW_SILENCE_FRAME] * 3
+                for f in tone_frames:
+                    frames_to_send.append(f[:MULAW_FRAME_BYTES])
+                frames_to_send.extend([MULAW_SILENCE_FRAME] * 40)
+
+                for frame in frames_to_send:
+                    ws.send_text(
+                        json.dumps(
+                            {
+                                "event": "media",
+                                "streamSid": "MZstt",
+                                "media": {
+                                    "payload": base64.b64encode(frame).decode("ascii"),
+                                    "track": "inbound",
+                                },
+                            }
+                        )
+                    )
+
+                ws.send_text(json.dumps({"event": "stop", "streamSid": "MZstt"}))
+
+    stt_mock.assert_awaited_once()
+    wav_bytes = stt_mock.await_args.args[0]
+    assert stt_mock.await_args.kwargs["content_type"] == "audio/wav"
+    assert wav_bytes[:4] == b"RIFF"
+    assert any(
+        "Voice stream STT utterance" in r.message and "ola mundo" in r.message
+        for r in caplog.records
+    )
+    assert any("stt_ms=" in r.message for r in caplog.records)
 
 
 async def test_media_stream_ws_closes_gracefully_when_vad_missing(

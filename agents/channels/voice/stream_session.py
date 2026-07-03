@@ -1,10 +1,12 @@
-"""Twilio Media Streams WebSocket session handler (Fase A transport + Fase B VAD)."""
+"""Twilio Media Streams WebSocket session handler (Fase A transport + Fase B VAD + Fase C STT)."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
+import time
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -13,8 +15,10 @@ from agents.channels.voice.audio_pipeline import (
     UtteranceClosed,
     VoiceStreamSession,
     create_voice_stream_session_from_settings,
+    pcm16_16k_to_wav,
 )
 from agents.channels.voice.mulaw_codec import INTRO_FRAMES, MULAW_FRAME_BYTES
+from agents.channels.voice.tts_stt import speech_to_text
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -37,11 +41,58 @@ def _log_unknown_call_sid(call_sid: str) -> None:
         )
 
 
-def _on_utterance_closed(result: UtteranceClosed, *, call_sid: str | None) -> None:
-    """
-    Fase B: log/metric utterance boundary. Fase C will hook STT here.
+async def _transcribe_utterance(
+    result: UtteranceClosed,
+    *,
+    call_sid: str | None,
+) -> None:
+    """Fase C: PCM utterance → WAV → faster-whisper → diagnostic log (no agent yet)."""
+    wav_bytes = pcm16_16k_to_wav(result.pcm16_16k)
+    started = time.perf_counter()
+    try:
+        transcript = (
+            await speech_to_text(
+                wav_bytes,
+                language="pt",
+                filename="utterance.wav",
+                content_type="audio/wav",
+            )
+        ).strip()
+        stt_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "Voice stream STT utterance #%s callSid=%s duration_ms=%s wav_bytes=%s "
+            "stt_ms=%s transcript_len=%s transcript=%r",
+            result.index,
+            call_sid or "?",
+            result.duration_ms,
+            len(wav_bytes),
+            stt_ms,
+            len(transcript),
+            transcript,
+        )
+    except Exception as exc:
+        stt_ms = (time.perf_counter() - started) * 1000
+        logger.error(
+            "Voice stream STT failed utterance #%s callSid=%s duration_ms=%s stt_ms=%s: %s",
+            result.index,
+            call_sid or "?",
+            result.duration_ms,
+            stt_ms,
+            exc,
+        )
 
-    PSTN VAD tuning requires real calls — synthetic tests mock webrtcvad.
+
+async def _schedule_utterance_transcription(
+    result: UtteranceClosed,
+    *,
+    call_sid: str | None,
+    stt_tasks: set[asyncio.Task[None]],
+) -> None:
+    """
+    Log utterance boundary and run STT in a background task (non-blocking receive loop).
+
+    Fase D extension point: add per-call_sid asyncio.Queue or Lock here to serialize
+    agent turn processing after STT completes (parallel STT + log is OK for Fase C).
     """
     logger.info(
         "Voice stream utterance closed #%s duration_ms=%s bytes=%s callSid=%s",
@@ -51,8 +102,24 @@ def _on_utterance_closed(result: UtteranceClosed, *, call_sid: str | None) -> No
         call_sid or "?",
     )
 
+    async def _run_stt() -> None:
+        try:
+            await _transcribe_utterance(result, call_sid=call_sid)
+        finally:
+            current = asyncio.current_task()
+            if current is not None:
+                stt_tasks.discard(current)
 
-def _finalize_session(session: VoiceStreamSession | None, *, call_sid: str | None) -> None:
+    task = asyncio.create_task(_run_stt())
+    stt_tasks.add(task)
+
+
+async def _finalize_session(
+    session: VoiceStreamSession | None,
+    *,
+    call_sid: str | None,
+    stt_tasks: set[asyncio.Task[None]],
+) -> None:
     if session is None:
         return
     flushed = session.flush()
@@ -63,7 +130,19 @@ def _finalize_session(session: VoiceStreamSession | None, *, call_sid: str | Non
             flushed.duration_ms,
             call_sid or "?",
         )
-        _on_utterance_closed(flushed, call_sid=call_sid)
+        await _schedule_utterance_transcription(
+            flushed,
+            call_sid=call_sid,
+            stt_tasks=stt_tasks,
+        )
+
+    pending = [t for t in stt_tasks if not t.done()]
+    if pending:
+        logger.info(
+            "Voice stream teardown callSid=%s with %s pending STT task(s)",
+            call_sid or "?",
+            len(pending),
+        )
 
 
 async def _send_mulaw_frames(
@@ -107,7 +186,8 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
     Handle bidirectional Twilio Media Stream.
 
     Fase A: log + intro beep + optional echo.
-    Fase B: inbound μ-law → VAD utterance detection (no STT yet).
+    Fase B: inbound μ-law → VAD utterance detection.
+    Fase C: utterance → STT (background) → diagnostic log.
     """
     await websocket.accept()
     logger.info("Voice Media Stream WebSocket accepted")
@@ -118,6 +198,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
     echo_enabled = bool(settings.voice_stream_echo_debug)
     media_in_count = 0
     media_out_count = 0
+    stt_tasks: set[asyncio.Task[None]] = set()
 
     try:
         while True:
@@ -151,6 +232,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     session = create_voice_stream_session_from_settings(
                         call_sid=call_sid,
                         stream_sid=stream_sid,
+                        settings=settings,
                     )
                 except (ImportError, ModuleNotFoundError) as exc:
                     logger.error(
@@ -222,7 +304,11 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     if frame_mulaw:
                         closed = session.feed_mulaw_frame(frame_mulaw)
                         if closed is not None:
-                            _on_utterance_closed(closed, call_sid=call_sid)
+                            await _schedule_utterance_transcription(
+                                closed,
+                                call_sid=call_sid,
+                                stt_tasks=stt_tasks,
+                            )
 
                 if echo_enabled and stream_sid and payload_b64:
                     outbound = {
@@ -264,7 +350,11 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     media_in_count,
                     media_out_count,
                 )
-                _finalize_session(session, call_sid=call_sid)
+                await _finalize_session(
+                    session,
+                    call_sid=call_sid,
+                    stt_tasks=stt_tasks,
+                )
                 break
 
             logger.info(
@@ -283,12 +373,12 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
             media_in_count,
             media_out_count,
         )
-        _finalize_session(session, call_sid=call_sid)
+        await _finalize_session(session, call_sid=call_sid, stt_tasks=stt_tasks)
     except Exception:
         logger.exception(
             "Voice stream handler error callSid=%s streamSid=%s",
             call_sid or "?",
             stream_sid or "?",
         )
-        _finalize_session(session, call_sid=call_sid)
+        await _finalize_session(session, call_sid=call_sid, stt_tasks=stt_tasks)
         raise

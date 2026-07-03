@@ -8,8 +8,10 @@ to be validated in Fase C.
 
 from __future__ import annotations
 
+import io
 import logging
 import struct
+import wave
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
@@ -153,6 +155,17 @@ class VoiceStreamSession:
             self._reset_utterance_state()
             return None
         return self._close_utterance(forced=True)
+
+
+def pcm16_16k_to_wav(pcm: bytes) -> bytes:
+    """Pack mono PCM int16 LE @ 16 kHz into a WAV container (stdlib only)."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE_16K)
+        wf.writeframes(pcm)
+    return buf.getvalue()
 
 
 def resample_8k_to_16k(pcm16_8k: bytes) -> bytes:
