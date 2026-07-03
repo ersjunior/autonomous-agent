@@ -41,6 +41,10 @@ WhatsAppTemplatePurpose = Literal[
     "appointment_due",
 ]
 
+VoiceInboundMode = Literal["record", "gather", "stream"]
+
+VOICE_MEDIA_STREAM_WS_PATH = "/api/v1/channels/webhooks/voice/media-stream"
+
 
 class Settings(BaseSettings):
     # App
@@ -135,8 +139,10 @@ class Settings(BaseSettings):
     voice_audio_root: str = "/workspace/voice_audio"
 
     # Inbound de voz PSTN (Twilio) — VOICE_INBOUND_MODE: record | gather | stream
-    voice_inbound_mode: str = "record"
+    voice_inbound_mode: VoiceInboundMode = "record"
     voice_inbound_greeting: str = DEFAULT_VOICE_INBOUND_GREETING
+    # Fase A stream: eco bidirecional (debug); desligado em produção
+    voice_stream_echo_debug: bool = False
     voice_silence_warning_seconds: int = 30
     voice_silence_close_seconds: int = 15
     # Twilio <Record>: segundos de silêncio após a fala para encerrar a gravação (responsivo).
@@ -297,6 +303,21 @@ class Settings(BaseSettings):
             "PUBLIC_BASE_URL não configurada — necessária para Twilio "
             "(defina no .env em TUNNEL_MODE=named ou manual)."
         )
+
+    def voice_media_stream_wss_url(self) -> str:
+        """WSS URL for Twilio <Connect><Stream> (Media Streams inbound)."""
+        base = self.require_public_base_url().strip().rstrip("/")
+        if base.startswith("https://"):
+            wss_base = "wss://" + base[len("https://") :]
+        elif base.startswith("http://"):
+            wss_base = "wss://" + base[len("http://") :]
+        elif base.startswith("wss://"):
+            wss_base = base
+        elif base.startswith("ws://"):
+            wss_base = "wss://" + base[len("ws://") :]
+        else:
+            wss_base = "wss://" + base.lstrip("/")
+        return f"{wss_base.rstrip('/')}{VOICE_MEDIA_STREAM_WS_PATH}"
 
     def whatsapp_webhook_url(self) -> str | None:
         """URL para cadastrar no console Twilio (Messaging webhook)."""

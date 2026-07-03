@@ -11,11 +11,12 @@ from urllib.parse import quote
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, WebSocket, status
 from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.channels.voice.stream_session import handle_voice_media_stream
 from agents.channels.whatsapp.handler import WhatsAppHandler
 from app.core.authorization import raise_if_cannot_delete, raise_if_cannot_edit, raise_if_cannot_view
 from app.core.config import DEFAULT_VOICE_INBOUND_GREETING, settings
@@ -158,6 +159,19 @@ def _build_voice_say_only_twiml(text: str) -> str:
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<Response>\n"
         f'  <Say language="pt-BR" voice="Polly.Camila">{spoken}</Say>\n'
+        "</Response>"
+    )
+
+
+def _build_voice_connect_stream_twiml(wss_url: str) -> str:
+    """TwiML inbound stream: <Connect><Stream> (Media Streams, sem Record)."""
+    safe_url = xml.sax.saxutils.escape((wss_url or "").strip())
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Response>\n"
+        "  <Connect>\n"
+        f'    <Stream url="{safe_url}" />\n'
+        "  </Connect>\n"
         "</Response>"
     )
 
@@ -641,15 +655,46 @@ async def voice_inbound_webhook(
     From: str = Form(""),
     To: str = Form(""),
 ):
-    """TwiML inbound: saudação (Coqui ou Polly) + <Record> para capturar fala do cliente."""
+    """TwiML inbound: record (saudação + Record) ou stream (<Connect><Stream>)."""
     from app.services.settings_sync import ensure_settings_fresh_async
 
     await ensure_settings_fresh_async()
 
-    mode = (settings.voice_inbound_mode or "record").strip().lower()
+    mode = settings.voice_inbound_mode
+    call_sid = (CallSid or "").strip()
+    from_number = (From or "").strip()
+
+    if mode == "stream":
+        logger.info(
+            "Voice inbound stream call CallSid=%s From=%s To=%s",
+            call_sid or "?",
+            from_number or "?",
+            (To or "").strip() or "?",
+        )
+        if call_sid and from_number:
+            from app.services.voice_call_state import remember_call_from_number
+
+            remember_call_from_number(call_sid, from_number)
+        if call_sid:
+            _register_voice_call_status_callback(call_sid)
+        try:
+            wss_url = settings.voice_media_stream_wss_url()
+        except ValueError as exc:
+            logger.error(
+                "Voice inbound stream CallSid=%s: public WSS URL unavailable: %s",
+                call_sid or "?",
+                exc,
+            )
+            twiml = _build_voice_say_only_twiml(
+                "Desculpe, o atendimento por voz não está disponível no momento."
+            )
+            return Response(content=twiml, media_type="application/xml")
+        twiml = _build_voice_connect_stream_twiml(wss_url)
+        return Response(content=twiml, media_type="application/xml")
+
     if mode != "record":
         logger.warning(
-            "Voice inbound mode %r not implemented; only record is supported",
+            "Voice inbound mode %r not implemented; only record and stream are supported",
             mode,
         )
         twiml = _build_voice_say_only_twiml(
@@ -661,13 +706,11 @@ async def voice_inbound_webhook(
 
     logger.info(
         "Voice inbound call CallSid=%s From=%s To=%s",
-        CallSid or "?",
-        From or "?",
-        To or "?",
+        call_sid or "?",
+        from_number or "?",
+        (To or "").strip() or "?",
     )
 
-    call_sid = (CallSid or "").strip()
-    from_number = (From or "").strip()
     if call_sid and from_number:
         from app.services.voice_call_state import remember_call_from_number
 
@@ -681,12 +724,18 @@ async def voice_inbound_webhook(
     except Exception as exc:
         logger.warning(
             "Coqui greeting failed for inbound CallSid=%s, fallback <Say>: %s",
-            CallSid or "?",
+            call_sid or "?",
             exc,
         )
         twiml = _build_voice_inbound_twiml(greeting, is_fallback=True)
 
     return Response(content=twiml, media_type="application/xml")
+
+
+@router.websocket("/webhooks/voice/media-stream")
+async def voice_media_stream_ws(websocket: WebSocket) -> None:
+    """Twilio Media Streams — transport only (Fase A)."""
+    await handle_voice_media_stream(websocket)
 
 
 @router.get("/webhooks/voice/inbound/record-callback")

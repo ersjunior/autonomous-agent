@@ -770,7 +770,7 @@ Mais detalhe: [`docs/canais.md`](canais.md) e [`docs/infra.md`](infra.md).
 
 ### 10.8 Evolução da voz: roadmap para streaming
 
-Esta subseção consolida o **estado atual** do canal de voz, a **motivação** para migrar de turnos com gravação para **Twilio Media Streams** (WebSocket bidirecional), o **roadmap conceitual** (fases 0–4) com o que já foi validado em ambiente real, e o **plano de execução detalhado** (fases A–F) — o *como* concreto mapeado ao código. **Nenhuma fase A–F foi implementada ainda**; apenas a Fase 0 conceitual (PoC de transporte) está ✅ validada.
+Esta subseção consolida o **estado atual** do canal de voz, a **motivação** para migrar de turnos com gravação para **Twilio Media Streams** (WebSocket bidirecional), o **roadmap conceitual** (fases 0–4) com o que já foi validado em ambiente real, e o **plano de execução detalhado** (fases A–F). A **Fase A** (transporte WS integrado) está **implementada**; Fases B–F permanecem plano. A Fase 0 conceitual (PoC de transporte) está ✅ validada.
 
 #### Pipeline atual (turnos com gravação)
 
@@ -851,7 +851,7 @@ O roadmap **0–4** descreve **o quê** evoluir (capacidades de produto e arquit
 | **Fase F** (opcional) | Fase 3/4 estendida | APIs plugáveis com streaming nativo; barge-in / full-duplex verdadeiro. |
 | *(transversal)* | Fase 1 — LLM token stream | **Opcional** em qualquer fase após D: `stream: true` no Ollama/OpenAI; ganho modesto; **independe** do WebSocket. |
 
-**Status do plano de execução:** as Fases **A–F não foram iniciadas** no código de produção — apenas registradas nesta documentação. A Fase **0 conceitual** (PoC) está **✅ VALIDADA**.
+**Status do plano de execução:** a **Fase A** (transporte integrado — WebSocket + `<Connect><Stream>`, beep inicial, eco opcional em debug) está **✅ IMPLEMENTADA** no backend; **sem STT/TTS/agente** (Fases C/D). Fases **B–F** permanecem plano. A Fase **0 conceitual** (PoC) está **✅ VALIDADA**.
 
 #### Plano de execução detalhado (Fases A–F)
 
@@ -869,9 +869,9 @@ Cada fase abaixo é **commitável isoladamente**, **reversível por env** (`VOIC
 | **Incerteza** | Baixa. |
 | **Modo record** | Intacto: ramo `record` permanece o default; nenhum webhook record/turn-ready é tocado. |
 
-Pontos de implementação:
+**Status:** ✅ **Implementada** — `VOICE_INBOUND_MODE=stream` ativa `<Connect><Stream>` + WS `/webhooks/voice/media-stream`; beep de saída sempre; eco só com `VOICE_STREAM_ECHO_DEBUG=true`.
 
-- WebSocket no **backend FastAPI** (processo ASGI), **não** no worker Celery — conexões long-lived não cabem no modelo batch de `voice_inbound_turn.py`.
+Pontos de implementação: (processo ASGI), **não** no worker Celery — conexões long-lived não cabem no modelo batch de `voice_inbound_turn.py`.
 - URL WSS pública via `settings.require_public_base_url()` (cloudflared já repassa WSS — validado na PoC).
 - `gather` permanece reservado (mesmo guarda que hoje: não implementado).
 
@@ -963,7 +963,7 @@ Se o stack local travar em TTS frase-a-frase ou VAD, o fallback natural é **Fas
 | **Arquivos novos** | ~10–15 |
 | **Arquivos modificados** | ~15–20 |
 | **Testes de voz (~81 no total)** | ~**40%** fortemente acoplados ao modo `record` (TwiML, polling, record-callback); ~**50%** de negócio **reutilizáveis** (booking, farewell, intent heuristic, response trim, RAG voice, finalize) |
-| **Implementação iniciada** | **Nenhuma** (Fases A–F = plano documentado apenas) |
+| **Implementação iniciada** | **Fase A** (transporte WS) implementada; Fases B–F = plano |
 
 #### Garantia transversal: modo `record` em produção
 
