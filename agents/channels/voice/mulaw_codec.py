@@ -34,6 +34,27 @@ def _linear_to_mulaw(sample: int) -> int:
     return ~(sign | (exponent << 4) | mantissa) & 0xFF
 
 
+def _mulaw_to_linear(mulaw_byte: int) -> int:
+    """Decode one G.711 μ-law byte to PCM 16-bit signed (ITU-T inverse of encode)."""
+    mu = (~mulaw_byte) & 0xFF
+    sign = mu & 0x80
+    exponent = (mu >> 4) & 0x07
+    mantissa = mu & 0x0F
+    sample = ((mantissa << 3) + _MULAW_BIAS) << exponent
+    sample -= _MULAW_BIAS
+    if sign:
+        sample = -sample
+    return max(-32768, min(32767, sample))
+
+
+def mulaw_to_pcm16(data: bytes) -> bytes:
+    """Convert raw μ-law bytes to little-endian PCM 16-bit mono."""
+    out = bytearray(len(data) * 2)
+    for i, byte in enumerate(data):
+        struct.pack_into("<h", out, i * 2, _mulaw_to_linear(byte))
+    return bytes(out)
+
+
 def pcm16_to_mulaw(pcm: bytes) -> bytes:
     """Convert little-endian PCM 16-bit mono buffer to raw μ-law bytes."""
     out = bytearray(len(pcm) // 2)

@@ -34,6 +34,9 @@ twilio>=9.3.0
 python-telegram-bot>=21.0.0
 elevenlabs>=1.9.0
 
+# Voice stream VAD (Fase B — wheels for Python 3.12)
+webrtcvad-wheels>=2.0.14
+
 # Utils
 httpx>=0.27.0
 psutil>=6.0.0

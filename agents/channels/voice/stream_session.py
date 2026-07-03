@@ -1,4 +1,4 @@
-"""Twilio Media Streams WebSocket session handler (transport-only, Fase A)."""
+"""Twilio Media Streams WebSocket session handler (Fase A transport + Fase B VAD)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from agents.channels.voice.audio_pipeline import (
+    UtteranceClosed,
+    VoiceStreamSession,
+    create_voice_stream_session_from_settings,
+)
 from agents.channels.voice.mulaw_codec import INTRO_FRAMES, MULAW_FRAME_BYTES
 from app.core.config import settings
 
@@ -30,6 +35,35 @@ def _log_unknown_call_sid(call_sid: str) -> None:
             "Voice stream start with unregistered callSid=%s (no voice_call_state)",
             sid,
         )
+
+
+def _on_utterance_closed(result: UtteranceClosed, *, call_sid: str | None) -> None:
+    """
+    Fase B: log/metric utterance boundary. Fase C will hook STT here.
+
+    PSTN VAD tuning requires real calls — synthetic tests mock webrtcvad.
+    """
+    logger.info(
+        "Voice stream utterance closed #%s duration_ms=%s bytes=%s callSid=%s",
+        result.index,
+        result.duration_ms,
+        len(result.pcm16_16k),
+        call_sid or "?",
+    )
+
+
+def _finalize_session(session: VoiceStreamSession | None, *, call_sid: str | None) -> None:
+    if session is None:
+        return
+    flushed = session.flush()
+    if flushed is not None:
+        logger.info(
+            "Voice stream utterance flushed on teardown #%s duration_ms=%s callSid=%s",
+            flushed.index,
+            flushed.duration_ms,
+            call_sid or "?",
+        )
+        _on_utterance_closed(flushed, call_sid=call_sid)
 
 
 async def _send_mulaw_frames(
@@ -70,15 +104,17 @@ async def _send_mark(websocket: WebSocket, *, stream_sid: str, name: str) -> Non
 
 async def handle_voice_media_stream(websocket: WebSocket) -> None:
     """
-    Handle bidirectional Twilio Media Stream (Fase A: log + intro beep + optional echo).
+    Handle bidirectional Twilio Media Stream.
 
-    Protocol: connected → start → media* → mark* → stop
+    Fase A: log + intro beep + optional echo.
+    Fase B: inbound μ-law → VAD utterance detection (no STT yet).
     """
     await websocket.accept()
     logger.info("Voice Media Stream WebSocket accepted")
 
     stream_sid: str | None = None
     call_sid: str | None = None
+    session: VoiceStreamSession | None = None
     echo_enabled = bool(settings.voice_stream_echo_debug)
     media_in_count = 0
     media_out_count = 0
@@ -111,6 +147,20 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     or None
                 )
                 call_sid = (start_block.get("callSid") or "").strip() or None
+                try:
+                    session = create_voice_stream_session_from_settings(
+                        call_sid=call_sid,
+                        stream_sid=stream_sid,
+                    )
+                except (ImportError, ModuleNotFoundError) as exc:
+                    logger.error(
+                        "Voice stream webrtcvad ausente; sessão de stream não pode iniciar "
+                        "callSid=%s streamSid=%s: %s",
+                        call_sid or "?",
+                        stream_sid or "?",
+                        exc,
+                    )
+                    break
                 logger.info(
                     "Voice stream start streamSid=%s callSid=%s tracks=%s echo_debug=%s",
                     stream_sid,
@@ -136,13 +186,21 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     label="intro",
                 )
                 await _send_mark(websocket, stream_sid=stream_sid, name="intro_done")
+                # Anti-echo gate: enable VAD after outbound intro is queued.
+                # Twilio may echo intro_done mark when playback completes (handled below).
+                if session is not None:
+                    session.listening = True
+                    logger.info(
+                        "Voice stream listening enabled (post-intro) callSid=%s",
+                        call_sid or "?",
+                    )
                 continue
 
             if event == "media":
                 media_in_count += 1
                 media_block = message.get("media") or {}
                 payload_b64 = (media_block.get("payload") or "").strip()
-                track = media_block.get("track", "?")
+                track = (media_block.get("track") or "inbound").strip().lower()
                 if media_in_count <= 3 or media_in_count % MEDIA_LOG_EVERY_N == 0:
                     logger.info(
                         "Voice stream media IN #%s track=%s payload_len=%s callSid=%s",
@@ -151,6 +209,20 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                         len(payload_b64),
                         call_sid or "?",
                     )
+
+                if track == "inbound" and payload_b64 and session is not None:
+                    try:
+                        frame_mulaw = base64.b64decode(payload_b64)
+                    except Exception:
+                        logger.warning(
+                            "Voice stream invalid media payload callSid=%s",
+                            call_sid or "?",
+                        )
+                        frame_mulaw = b""
+                    if frame_mulaw:
+                        closed = session.feed_mulaw_frame(frame_mulaw)
+                        if closed is not None:
+                            _on_utterance_closed(closed, call_sid=call_sid)
 
                 if echo_enabled and stream_sid and payload_b64:
                     outbound = {
@@ -176,6 +248,12 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     sid_in_msg or stream_sid,
                     call_sid or "?",
                 )
+                if mark_name == "intro_done" and session is not None and not session.listening:
+                    session.listening = True
+                    logger.info(
+                        "Voice stream listening enabled (intro_done mark) callSid=%s",
+                        call_sid or "?",
+                    )
                 continue
 
             if event == "stop":
@@ -186,6 +264,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     media_in_count,
                     media_out_count,
                 )
+                _finalize_session(session, call_sid=call_sid)
                 break
 
             logger.info(
@@ -204,10 +283,12 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
             media_in_count,
             media_out_count,
         )
+        _finalize_session(session, call_sid=call_sid)
     except Exception:
         logger.exception(
             "Voice stream handler error callSid=%s streamSid=%s",
             call_sid or "?",
             stream_sid or "?",
         )
+        _finalize_session(session, call_sid=call_sid)
         raise

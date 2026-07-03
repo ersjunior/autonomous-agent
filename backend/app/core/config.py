@@ -143,6 +143,12 @@ class Settings(BaseSettings):
     voice_inbound_greeting: str = DEFAULT_VOICE_INBOUND_GREETING
     # Fase A stream: eco bidirecional (debug); desligado em produção
     voice_stream_echo_debug: bool = False
+    # Fase B stream: VAD / fim de utterance (~600 ms) — NÃO confundir com silêncio de encerramento (30s/15s)
+    voice_stream_vad_aggressiveness: int = 2
+    voice_stream_vad_frame_ms: int = 20
+    voice_stream_silence_hangover_ms: int = 600
+    voice_stream_min_utterance_ms: int = 400
+    voice_stream_max_utterance_ms: int = 30000
     voice_silence_warning_seconds: int = 30
     voice_silence_close_seconds: int = 15
     # Twilio <Record>: segundos de silêncio após a fala para encerrar a gravação (responsivo).

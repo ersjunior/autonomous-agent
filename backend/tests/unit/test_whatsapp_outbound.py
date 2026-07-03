@@ -178,18 +178,22 @@ def test_resolve_send_mode_cold_lead_returns_template(
     settings_mock.resolved_whatsapp_template.assert_called_once_with("inicial")
 
 
+_FOLLOWUP_TEMPLATE_SID = "HX6afa2ef98be8d7f1e67ef203bb751c95"
+
+
 def test_resolved_whatsapp_template_followup_sid() -> None:
     from app.core.config import Settings
 
-    s = Settings()
-    assert s.resolved_whatsapp_template("followup") == (
-        "HX6afa2ef98be8d7f1e67ef203bb751c95"
-    )
+    s = Settings(whatsapp_template_followup=_FOLLOWUP_TEMPLATE_SID)
+    assert s.resolved_whatsapp_template("followup") == _FOLLOWUP_TEMPLATE_SID
 
 
 def test_resolved_whatsapp_template_appointment_empty_by_default() -> None:
     from app.core.config import Settings
 
-    s = Settings()
+    s = Settings(
+        whatsapp_template_appointment_reminder="",
+        whatsapp_template_appointment_due="",
+    )
     assert s.resolved_whatsapp_template("appointment_reminder") is None
     assert s.resolved_whatsapp_template("appointment_due") is None

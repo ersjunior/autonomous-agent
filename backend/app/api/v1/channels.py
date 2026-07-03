@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.channels.voice.audio_pipeline import is_voice_stream_available
 from agents.channels.voice.stream_session import handle_voice_media_stream
 from agents.channels.whatsapp.handler import WhatsAppHandler
 from app.core.authorization import raise_if_cannot_delete, raise_if_cannot_edit, raise_if_cannot_view
@@ -648,6 +649,43 @@ async def voice_outbound_audio_webhook(
     return Response(content=twiml, media_type="application/xml")
 
 
+async def _voice_inbound_record_response(
+    *,
+    call_sid: str,
+    from_number: str,
+    to: str,
+) -> Response:
+    """TwiML inbound record: greeting + <Record> (shared by record mode and stream fallback)."""
+    greeting = (settings.voice_inbound_greeting or "").strip() or DEFAULT_VOICE_INBOUND_GREETING
+
+    logger.info(
+        "Voice inbound call CallSid=%s From=%s To=%s",
+        call_sid or "?",
+        from_number or "?",
+        to or "?",
+    )
+
+    if call_sid and from_number:
+        from app.services.voice_call_state import remember_call_from_number
+
+        remember_call_from_number(call_sid, from_number)
+    if call_sid:
+        _register_voice_call_status_callback(call_sid)
+
+    try:
+        filename = await ensure_greeting_audio_filename(greeting)
+        twiml = _build_voice_inbound_twiml(filename, is_fallback=False)
+    except Exception as exc:
+        logger.warning(
+            "Coqui greeting failed for inbound CallSid=%s, fallback <Say>: %s",
+            call_sid or "?",
+            exc,
+        )
+        twiml = _build_voice_inbound_twiml(greeting, is_fallback=True)
+
+    return Response(content=twiml, media_type="application/xml")
+
+
 @router.get("/webhooks/voice/inbound")
 @router.post("/webhooks/voice/inbound")
 async def voice_inbound_webhook(
@@ -665,6 +703,18 @@ async def voice_inbound_webhook(
     from_number = (From or "").strip()
 
     if mode == "stream":
+        if not is_voice_stream_available():
+            logger.warning(
+                "Voice stream mode indisponível (webrtcvad ausente); degradando para record. "
+                "CallSid=%s",
+                call_sid or "?",
+            )
+            return await _voice_inbound_record_response(
+                call_sid=call_sid,
+                from_number=from_number,
+                to=(To or "").strip(),
+            )
+
         logger.info(
             "Voice inbound stream call CallSid=%s From=%s To=%s",
             call_sid or "?",
@@ -702,34 +752,11 @@ async def voice_inbound_webhook(
         )
         return Response(content=twiml, media_type="application/xml")
 
-    greeting = (settings.voice_inbound_greeting or "").strip() or DEFAULT_VOICE_INBOUND_GREETING
-
-    logger.info(
-        "Voice inbound call CallSid=%s From=%s To=%s",
-        call_sid or "?",
-        from_number or "?",
-        (To or "").strip() or "?",
+    return await _voice_inbound_record_response(
+        call_sid=call_sid,
+        from_number=from_number,
+        to=(To or "").strip(),
     )
-
-    if call_sid and from_number:
-        from app.services.voice_call_state import remember_call_from_number
-
-        remember_call_from_number(call_sid, from_number)
-    if call_sid:
-        _register_voice_call_status_callback(call_sid)
-
-    try:
-        filename = await ensure_greeting_audio_filename(greeting)
-        twiml = _build_voice_inbound_twiml(filename, is_fallback=False)
-    except Exception as exc:
-        logger.warning(
-            "Coqui greeting failed for inbound CallSid=%s, fallback <Say>: %s",
-            call_sid or "?",
-            exc,
-        )
-        twiml = _build_voice_inbound_twiml(greeting, is_fallback=True)
-
-    return Response(content=twiml, media_type="application/xml")
 
 
 @router.websocket("/webhooks/voice/media-stream")
