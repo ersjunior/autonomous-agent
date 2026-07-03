@@ -28,6 +28,7 @@ x-app-environment: &app-environment
   TTS_PROVIDER: ${TTS_PROVIDER:-coqui}
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
   OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
+  # STT: worker (record) e backend (stream) usam WHISPER_BASE_URL → settings.whisper_base_url
   WHISPER_BASE_URL: ${WHISPER_BASE_URL:-http://faster-whisper:8001}
   WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
   COQUI_BASE_URL: ${COQUI_BASE_URL:-http://coqui-tts:8002}
@@ -100,7 +101,7 @@ services:
       ollama:
         condition: service_started
       faster-whisper:
-        condition: service_started
+        condition: service_healthy
       coqui-tts:
         condition: service_healthy
     volumes:
