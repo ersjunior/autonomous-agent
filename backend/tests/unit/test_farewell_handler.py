@@ -20,6 +20,19 @@ from agents.orchestrator.graph import finalize_hangup, generate_response, handle
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture
+def farewell_redis_isolated():
+    """Isola farewell de Redis (get_wrap_up_pending / clear_wrap_up_pending)."""
+    with (
+        patch(
+            "agents.orchestrator.farewell_handler.get_wrap_up_pending",
+            return_value=False,
+        ),
+        patch("agents.orchestrator.farewell_handler.clear_wrap_up_pending"),
+    ):
+        yield
+
+
 def _voice_state(**overrides) -> dict:
     state = {
         "message": "tchau",
@@ -81,14 +94,15 @@ class TestUserFarewellSignal:
 
         assert result == {}
 
-    def test_non_farewell_user_message_no_signal(self) -> None:
+    def test_non_farewell_user_message_no_signal(self, farewell_redis_isolated) -> None:
+        state = _voice_state(message="estou procurando um curso", intent="question")
+        assert not user_signals_farewell(state)
+
         with patch(
             "agents.orchestrator.farewell_handler.get_booking_state",
             return_value=None,
         ):
-            result = detect_user_farewell_signal(
-                _voice_state(message="estou procurando um curso", intent="question")
-            )
+            result = detect_user_farewell_signal(state)
 
         assert result == {}
 
