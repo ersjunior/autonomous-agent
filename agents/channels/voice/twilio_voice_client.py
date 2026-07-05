@@ -43,6 +43,52 @@ def build_outbound_audio_twiml_url(filename: str) -> str:
     return f"{base}{VOICE_OUTBOUND_AUDIO_TWIML_PATH}?audio={safe_name}"
 
 
+def get_twilio_client() -> Client:
+    """Twilio REST client (sync) — credenciais de ``settings``."""
+    if not settings.twilio_account_sid or not settings.twilio_auth_token:
+        raise ValueError(
+            "TWILIO_ACCOUNT_SID e TWILIO_AUTH_TOKEN são obrigatórios para API Twilio"
+        )
+    return Client(settings.twilio_account_sid, settings.twilio_auth_token)
+
+
+def _end_twilio_call_sync(call_sid: str) -> None:
+    """Encerra chamada PSTN ativa (Media Streams bidirecional)."""
+    sid = (call_sid or "").strip()
+    if not sid:
+        return
+    client = get_twilio_client()
+    client.calls(sid).update(status="completed")
+
+
+async def end_twilio_call(call_sid: str) -> None:
+    """
+    Encerra chamada via REST ``status=completed`` (não TwiML / não fechar WS).
+
+    Cliente sync roda em ``asyncio.to_thread``; falhas são logadas (call já encerrada, etc.).
+    """
+    sid = (call_sid or "").strip()
+    if not sid:
+        logger.warning("end_twilio_call skipped: empty call_sid")
+        return
+    if not settings.twilio_account_sid or not settings.twilio_auth_token:
+        logger.warning(
+            "Twilio não configurado; end_twilio_call omitido call_sid=%s",
+            sid,
+        )
+        return
+    try:
+        await asyncio.to_thread(_end_twilio_call_sync, sid)
+        logger.info("Twilio call ended via REST call_sid=%s", sid)
+    except Exception as exc:
+        logger.warning(
+            "end_twilio_call failed call_sid=%s: %s",
+            sid,
+            exc,
+            exc_info=True,
+        )
+
+
 def make_outbound_call(to: str, twiml_path: str) -> str:
     """Inicia chamada outbound. ``twiml_path`` é relativo (com query) ou URL absoluta.
 
@@ -62,7 +108,7 @@ def make_outbound_call(to: str, twiml_path: str) -> str:
         full_url = f"{base}{path}"
 
     from_number = settings.resolve_twilio_pstn_number()
-    client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
+    client = get_twilio_client()
     call = client.calls.create(to=to, from_=from_number, url=full_url)
     return call.sid
 

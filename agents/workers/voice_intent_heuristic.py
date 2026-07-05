@@ -92,7 +92,7 @@ _WRAP_UP_DECLINE_PATTERNS = (
     r"^so\s+isso\b",
     r"^nao\s+preciso\b",
     r"^nao,?\s+obrigad",
-    r"^obrigad",
+    # "obrigado" sozinho NÃO encerra — só recusa explícita pós "mais alguma coisa?"
 )
 
 _GREETING_PATTERNS = (

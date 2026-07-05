@@ -8,7 +8,9 @@ from pydantic_settings import BaseSettings
 
 DEFAULT_AGENT_SYSTEM_PROMPT = textwrap.dedent(
     """
-    Você é um atendente profissional de telemarketing e atendimento ao cliente, empático, direto e objetivo.
+    Você é um assistente de atendimento amigável e conversacional — alguém que conhece bem o assunto e gosta de ajudar.
+    Converse de forma natural, acessível e simpática, sem ser robótico nem telegráfico.
+
     Regras obrigatórias de identidade e conhecimento:
     - Use SOMENTE informações explicitamente presentes na base de conhecimento, na configuração do agente ou no contexto fornecido nesta conversa (incluindo histórico recente).
     - Se a informação solicitada não estiver no contexto, diga claramente que você não possui essa informação. Não preencha lacunas com suposições, exemplos ou conhecimento geral sobre empresas ou produtos.
@@ -16,16 +18,17 @@ DEFAULT_AGENT_SYSTEM_PROMPT = textwrap.dedent(
     - Trechos ilustrativos, exemplos de código, narrativas de TCC ou casos fictícios na base de conhecimento NÃO definem quem você é nem o que a organização oferece — ignore-os para fins de identidade e oferta comercial.
     - Se não houver bloco de identidade institucional abaixo no contexto, apresente-se de forma neutra como atendente virtual, sem adotar persona, marca ou empresa de terceiros.
     - Não mencione que você é uma IA, a menos que o cliente pergunte diretamente.
+
     Conduta de atendimento:
     - Seu foco é o atendimento comercial e de suporte: produtos, serviços, dúvidas, solicitações e necessidades do cliente relacionadas ao negócio.
-    - Saudações, cordialidades e o fluxo normal de conversa são bem-vindos — responda com naturalidade antes de conduzir o atendimento.
-    - Você NÃO conta piadas, não faz humor, não entretém com curiosidades gerais, não dá opiniões pessoais e não discute política ou assuntos pessoais alheios ao atendimento. Diante de pedidos desse tipo (piadas, humor, entretenimento, opiniões pessoais, política, curiosidades gerais, assuntos pessoais não relacionados ao negócio), recuse educadamente e redirecione para o atendimento. Exemplo: "Entendo, mas aqui meu foco é te ajudar com [assunto do atendimento]. Posso te ajudar com isso?"
-    - Seja direto e objetivo; mantenha linguagem cordial e profissional.
+    - Saudações, cordialidades e o fluxo natural da conversa são bem-vindos — responda com naturalidade antes de conduzir o atendimento.
+    - Você NÃO conta piadas, não faz humor, não entretém com curiosidades gerais, não dá opiniões pessoais e não discute política ou assuntos pessoais alheios ao atendimento. Diante de pedidos desse tipo, recuse educadamente e redirecione para o atendimento.
+    - Desenvolva as respostas o quanto ajudar à clareza; o tamanho ideal depende do canal (voz vs texto) — siga as instruções específicas do canal quando presentes.
+
     Comunicação:
-    - Responda de forma clara, útil e concisa, adaptando o tom ao canal de atendimento.
+    - Responda de forma clara e útil, com tom amigável e profissional.
     - Use a intenção e as entidades extraídas apenas para personalizar dentro dos limites do contexto disponível.
     - Não prometa fatos operacionais (valores, prazos, cobertura, disponibilidade) sem respaldo explícito no contexto.
-    Lembre-se: seu papel é exclusivamente o atendimento; recuse com cordialidade qualquer pedido fora desse escopo (piadas, humor, opiniões, assuntos gerais) e conduza o cliente de volta ao que você pode resolver.
     """
 ).strip()
 
@@ -124,6 +127,11 @@ class Settings(BaseSettings):
     # Ollama (LLM_PROVIDER=ollama)
     ollama_base_url: str = "http://ollama:11434"
     ollama_model: str = "llama3.1"
+    # -1 = manter modelo carregado indefinidamente (evita reload entre chamadas).
+    ollama_keep_alive: float = -1
+    # Contexto único para chat/classificação/geração — num_ctx divergente força reprocessamento.
+    ollama_num_ctx: int = 4096
+    ollama_embed_model: str = "nomic-embed-text"
 
     # faster-whisper (STT_PROVIDER=faster_whisper)
     whisper_base_url: str = "http://faster-whisper:8001"
@@ -149,6 +157,8 @@ class Settings(BaseSettings):
     voice_stream_silence_hangover_ms: int = 600
     voice_stream_min_utterance_ms: int = 400
     voice_stream_max_utterance_ms: int = 30000
+    # D2 stream: aguardar mark de playback antes de REST hangup (farewell)
+    voice_stream_farewell_mark_timeout_seconds: int = 10
     voice_silence_warning_seconds: int = 30
     voice_silence_close_seconds: int = 15
     # Twilio <Record>: segundos de silêncio após a fala para encerrar a gravação (responsivo).
@@ -257,11 +267,13 @@ class Settings(BaseSettings):
     kb_similarity_threshold: float = 0.62
     # KB na voz: STT curto reduz similaridade; threshold menor que o global (WhatsApp/Telegram).
     voice_kb_similarity_threshold: float = 0.50
-    response_max_tokens: int = 0
-    # Limite rígido só para respostas no canal voice (Ollama num_predict). 0 = sem limite.
-    voice_response_max_tokens: int = 35
-    # Cap pós-LLM de caracteres na telefonia (TTS XTTS ~linear com tamanho). 0 = default 70.
-    voice_max_response_chars: int = 70
+    # Rede de segurança do LLM (Ollama num_predict / OpenAI max_tokens). 0 = sem limite.
+    # Voz: teto generoso (~256) — guiado pelo VOICE_BEHAVIOR_PROMPT; impede monólogos extremos.
+    # Texto: cap maior/livre; o tamanho é guiado pelo TEXT_BEHAVIOR_PROMPT.
+    response_max_tokens: int = 1024
+    voice_response_max_tokens: int = 256
+    # Deprecated — truncamento pós-LLM removido; mantido só para compatibilidade de env.
+    voice_max_response_chars: int = 0
 
     def resolved_kb_top_k(self) -> int:
         return self.rag_top_k if self.kb_top_k <= 0 else self.kb_top_k

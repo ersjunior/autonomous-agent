@@ -218,31 +218,79 @@ def _torch_cuda_available() -> bool:
         return False
 
 
-def _wav_to_pcm_wav(wav_path: str, sample_rate: int) -> bytes:
-    """WAV XTTS → WAV mono PCM16 no sample rate pedido (ex.: 8 kHz para Media Streams)."""
-    proc = subprocess.run(
+def _telephony_pcm_filter(sample_rate: int, *, use_soxr: bool = True) -> str:
+    """
+    Audio filter chain for PSTN/stream μ-law: band-limit voice band, then downsample.
+
+    XTTS outputs ~24 kHz; naive ``-ar 8000`` (swr default) causes aliasing / metallic
+    timbre.  soxr + lowpass @ 3.4 kHz matches G.711 voice bandwidth.
+    """
+    lp_hz = min(3400, int(sample_rate * 0.85))
+    if use_soxr:
+        return (
+            f"lowpass=f={lp_hz}:poles=2,"
+            f"aresample={sample_rate}:resampler=soxr:precision=28:cutoff=0.933"
+        )
+    return f"lowpass=f={lp_hz}:poles=2,aresample={sample_rate}"
+
+
+def _run_ffmpeg_to_wav_pipe(
+    wav_path: str,
+    *,
+    extra_args: list[str],
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
         [
             "ffmpeg",
             "-y",
             "-i",
             wav_path,
+            *extra_args,
             "-ac",
             "1",
-            "-ar",
-            str(sample_rate),
             "-f",
             "wav",
             "pipe:1",
         ],
         capture_output=True,
     )
+
+
+def _wav_to_pcm_wav(wav_path: str, sample_rate: int) -> bytes:
+    """WAV XTTS (~24 kHz) → WAV mono PCM16 @ sample_rate (8 kHz for Media Streams)."""
+    rate = int(sample_rate)
+    proc = _run_ffmpeg_to_wav_pipe(
+        wav_path,
+        extra_args=["-af", _telephony_pcm_filter(rate, use_soxr=True)],
+    )
+    resampler = "soxr"
+    if proc.returncode != 0:
+        logger.warning(
+            "ffmpeg soxr resample failed (rate=%s): %s — retrying with swr",
+            rate,
+            proc.stderr.decode(errors="ignore")[:300],
+        )
+        proc = _run_ffmpeg_to_wav_pipe(
+            wav_path,
+            extra_args=["-af", _telephony_pcm_filter(rate, use_soxr=False)],
+        )
+        resampler = "swr"
     if proc.returncode != 0:
         raise HTTPException(
             status_code=500,
-            detail=f"ffmpeg failed to resample audio: {proc.stderr.decode(errors='ignore')[:500]}",
+            detail=(
+                "ffmpeg failed to resample audio: "
+                f"{proc.stderr.decode(errors='ignore')[:500]}"
+            ),
         )
     if not proc.stdout:
         raise HTTPException(status_code=500, detail="ffmpeg returned empty WAV")
+    logger.info(
+        "TTS telephony resample target_hz=%s resampler=%s bytes=%s",
+        rate,
+        resampler,
+        len(proc.stdout),
+    )
     return proc.stdout
 
 

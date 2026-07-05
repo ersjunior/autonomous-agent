@@ -28,7 +28,12 @@ from agents.channels.voice.mulaw_codec import (
     pcm16_to_mulaw,
     wav_bytes_to_pcm16_mono,
 )
-from agents.channels.voice.stream_session import AGENT_RESPONSE_MARK
+from agents.channels.voice.stream_session import (
+    AGENT_RESPONSE_MARK,
+    FAREWELL_DONE_MARK,
+    StreamCallControl,
+    StreamUtteranceWorker,
+)
 from app.core.config import Settings, VOICE_MEDIA_STREAM_WS_PATH, settings
 
 pytestmark = pytest.mark.api
@@ -41,6 +46,10 @@ MULAW_SILENCE_FRAME = bytes([0xFF] * MULAW_FRAME_BYTES)
 
 RUN_VOICE_AGENT_TURN = "app.services.voice_turn_processor.run_voice_agent_turn"
 ASYNC_SESSION_LOCAL = "app.core.database.AsyncSessionLocal"
+
+
+def _stream_control() -> StreamCallControl:
+    return StreamCallControl()
 
 
 def _mock_async_session_local() -> tuple[MagicMock, AsyncMock]:
@@ -467,7 +476,7 @@ async def test_transcribe_utterance_calls_speech_to_text_with_wav() -> None:
             call_sid="CAstt",
             stream_sid="MZstt",
             websocket=ws,
-            response_lock=asyncio.Lock(),
+            control=_stream_control(),
         )
 
     stt_mock.assert_awaited_once()
@@ -483,32 +492,32 @@ async def test_transcribe_utterance_calls_speech_to_text_with_wav() -> None:
 
 
 @pytest.mark.unit
-async def test_schedule_utterance_transcription_runs_stt_in_background() -> None:
-    from agents.channels.voice.stream_session import _schedule_utterance_transcription
-
+async def test_utterance_worker_enqueues_and_processes_in_background() -> None:
     result = UtteranceClosed(pcm16_16k=b"\x00\x00" * 320, duration_ms=20, index=2)
-    stt_tasks: set[asyncio.Task[None]] = set()
     invoked: list[str] = []
 
-    async def _fake_process(_result, *, call_sid, stream_sid, websocket, response_lock):
+    async def _fake_process(_result, *, call_sid, stream_sid, websocket, control):
         invoked.append(call_sid or "")
+
+    ws = AsyncMock()
+    control = _stream_control()
+    worker = StreamUtteranceWorker(
+        call_sid="CAbg",
+        stream_sid="MZbg",
+        websocket=ws,
+        control=control,
+    )
 
     with patch(
         "agents.channels.voice.stream_session._process_utterance_turn",
         new=_fake_process,
     ):
-        await _schedule_utterance_transcription(
-            result,
-            call_sid="CAbg",
-            stream_sid="MZbg",
-            websocket=AsyncMock(),
-            response_lock=asyncio.Lock(),
-            stt_tasks=stt_tasks,
-        )
-        await asyncio.sleep(0)
+        worker.start()
+        worker.enqueue(result)
+        await worker._queue.join()
+        await worker.shutdown()
 
     assert invoked == ["CAbg"]
-    assert not stt_tasks
 
 
 async def test_media_stream_ws_transcribes_utterance_after_intro(
@@ -517,22 +526,9 @@ async def test_media_stream_ws_transcribes_utterance_after_intro(
     import logging
     from starlette.testclient import TestClient
 
-    from agents.channels.voice.stream_session import _process_utterance_turn
-
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(settings, "voice_stream_echo_debug", False)
     stt_mock = AsyncMock(return_value="ola mundo")
-
-    async def _inline_schedule(
-        result, *, call_sid, stream_sid, websocket, response_lock, stt_tasks
-    ):
-        await _process_utterance_turn(
-            result,
-            call_sid=call_sid,
-            stream_sid=stream_sid,
-            websocket=websocket,
-            response_lock=response_lock,
-        )
 
     with (
         patch(
@@ -542,10 +538,6 @@ async def test_media_stream_ws_transcribes_utterance_after_intro(
         patch(
             "agents.channels.voice.stream_session.speech_to_text",
             stt_mock,
-        ),
-        patch(
-            "agents.channels.voice.stream_session._schedule_utterance_transcription",
-            side_effect=_inline_schedule,
         ),
         patch(
             "app.services.voice_call_state.get_voice_call_state",
@@ -653,26 +645,148 @@ def test_wav_bytes_to_pcm16_mono_8k() -> None:
 
 
 @pytest.mark.unit
-async def test_response_lock_serializes_pipeline() -> None:
-    lock = asyncio.Lock()
-    order: list[str] = []
+async def test_utterance_worker_fifo_order_three_utterances() -> None:
+    """Three enqueued utterances must produce agent/TTS responses Ra, Rb, Rc in order."""
+    ws = AsyncMock()
+    control = _stream_control()
+    pcm = resample_8k_to_16k(struct.pack("<320h", *([100] * 320)))
+    tts_wav = _make_wav_8k_mono_pcm16(160)
+    mock_cm, _mock_session = _mock_async_session_local()
+    agent_order: list[str] = []
+    tts_order: list[str] = []
+    responses = {"A": "Ra", "B": "Rb", "C": "Rc"}
 
-    async def first() -> None:
-        async with lock:
-            order.append("start1")
-            await asyncio.sleep(0.05)
-            order.append("end1")
+    stt_queue = ["A", "B", "C"]
 
-    async def second() -> None:
-        async with lock:
-            order.append("start2")
-            order.append("end2")
+    async def stt_side_effect(*args, **kwargs):
+        return stt_queue.pop(0)
 
-    t1 = asyncio.create_task(first())
-    await asyncio.sleep(0.01)
-    t2 = asyncio.create_task(second())
-    await asyncio.gather(t1, t2)
-    assert order == ["start1", "end1", "start2", "end2"]
+    async def agent_side_effect(
+        session,
+        *,
+        from_number,
+        transcript,
+        call_sid=None,
+        agent_timings=None,
+        voice_turn_out=None,
+    ):
+        agent_order.append(transcript)
+        await asyncio.sleep(0.01)
+        return responses[transcript]
+
+    async def tts_side_effect(text, sample_rate=8000):
+        tts_order.append(text)
+        return tts_wav
+
+    worker = StreamUtteranceWorker(
+        call_sid="CAfifo",
+        stream_sid="MZfifo",
+        websocket=ws,
+        control=control,
+    )
+
+    with (
+        patch(
+            "agents.channels.voice.stream_session.speech_to_text",
+            side_effect=stt_side_effect,
+        ),
+        patch(
+            "app.services.voice_call_state.get_call_customer_number",
+            return_value="+5511",
+        ),
+        patch("app.services.voice_call_state.reset_silence_stage"),
+        patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
+        patch(
+            RUN_VOICE_AGENT_TURN,
+            new=AsyncMock(side_effect=agent_side_effect),
+        ),
+        patch(
+            "agents.channels.voice.stream_session.text_to_speech",
+            side_effect=tts_side_effect,
+        ),
+    ):
+        worker.start()
+        for idx in (1, 2, 3):
+            worker.enqueue(
+                UtteranceClosed(pcm16_16k=pcm, duration_ms=40, index=idx),
+            )
+        await worker._queue.join()
+        await worker.shutdown()
+
+    assert agent_order == ["A", "B", "C"]
+    assert tts_order == ["Ra", "Rb", "Rc"]
+
+
+@pytest.mark.unit
+async def test_utterance_worker_fifo_despite_slow_first_stt() -> None:
+    """
+    Regression: with create_task+lock, a slow STT on utterance #1 let #2 respond first.
+    FIFO worker keeps agent order 1 then 2 even when #2 would finish STT faster in parallel.
+    """
+    ws = AsyncMock()
+    control = _stream_control()
+    pcm = resample_8k_to_16k(struct.pack("<320h", *([100] * 320)))
+    tts_wav = _make_wav_8k_mono_pcm16(160)
+    mock_cm, _mock_session = _mock_async_session_local()
+    agent_order: list[int] = []
+
+    async def stt_side_effect(*args, **kwargs):
+        stt_side_effect._n += 1  # type: ignore[attr-defined]
+        n = stt_side_effect._n  # type: ignore[attr-defined]
+        await asyncio.sleep(0.05 if n == 1 else 0.001)
+        return f"utt#{n}"
+
+    stt_side_effect._n = 0  # type: ignore[attr-defined]
+
+    async def agent_side_effect(
+        session,
+        *,
+        from_number,
+        transcript,
+        call_sid=None,
+        agent_timings=None,
+        voice_turn_out=None,
+    ):
+        agent_order.append(int(transcript.split("#")[1]))
+        return f"resp-{transcript}"
+
+    worker = StreamUtteranceWorker(
+        call_sid="CAser",
+        stream_sid="MZser",
+        websocket=ws,
+        control=control,
+    )
+
+    with (
+        patch(
+            "agents.channels.voice.stream_session.speech_to_text",
+            side_effect=stt_side_effect,
+        ),
+        patch(
+            "app.services.voice_call_state.get_call_customer_number",
+            return_value="+5511",
+        ),
+        patch("app.services.voice_call_state.reset_silence_stage"),
+        patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
+        patch(
+            RUN_VOICE_AGENT_TURN,
+            new=AsyncMock(side_effect=agent_side_effect),
+        ),
+        patch(
+            "agents.channels.voice.stream_session.text_to_speech",
+            autospec=True,
+            return_value=tts_wav,
+        ),
+    ):
+        worker.start()
+        for idx in (1, 2):
+            worker.enqueue(
+                UtteranceClosed(pcm16_16k=pcm, duration_ms=40, index=idx),
+            )
+        await worker._queue.join()
+        await worker.shutdown()
+
+    assert agent_order == [1, 2]
 
 
 @pytest.mark.unit
@@ -687,19 +801,18 @@ async def test_run_voice_agent_for_stream_matches_record_call_signature() -> Non
         patch(RUN_VOICE_AGENT_TURN, autospec=True) as agent_mock,
     ):
         agent_mock.return_value = "  resposta  "
-        out = await _run_voice_agent_for_stream(
+        text, should_hangup = await _run_voice_agent_for_stream(
             from_number="+5511999999999",
             transcript="olá",
             call_sid="CAtest",
         )
 
-    agent_mock.assert_awaited_once_with(
-        mock_session,
-        from_number="+5511999999999",
-        transcript="olá",
-        call_sid="CAtest",
-    )
-    assert out == "  resposta  "
+    agent_mock.assert_awaited_once()
+    agent_kwargs = agent_mock.await_args.kwargs
+    assert "voice_turn_out" in agent_kwargs
+    assert isinstance(agent_kwargs["voice_turn_out"], dict)
+    assert text == "resposta"
+    assert should_hangup is False
 
 
 @pytest.mark.unit
@@ -756,15 +869,15 @@ async def test_process_utterance_turn_agent_tts_sends_mulaw_and_mark() -> None:
             call_sid="CAd1",
             stream_sid="MZd1",
             websocket=ws,
-            response_lock=asyncio.Lock(),
+            control=_stream_control(),
         )
 
-    agent_mock.assert_awaited_once_with(
-        mock_session,
-        from_number="+5511999999999",
-        transcript="quero agendar",
-        call_sid="CAd1",
-    )
+    agent_mock.assert_awaited_once()
+    agent_kwargs = agent_mock.await_args.kwargs
+    assert "voice_turn_out" in agent_kwargs
+    assert agent_kwargs["from_number"] == "+5511999999999"
+    assert agent_kwargs["transcript"] == "quero agendar"
+    assert agent_kwargs["call_sid"] == "CAd1"
 
     tts_mock.assert_awaited_once_with(
         "Claro, para quando?",
@@ -780,11 +893,85 @@ async def test_process_utterance_turn_agent_tts_sends_mulaw_and_mark() -> None:
 
 
 @pytest.mark.unit
+async def test_utterance_worker_stops_after_hangup() -> None:
+    """After farewell hangup, remaining queued utterances must not run agent."""
+    ws = AsyncMock()
+    control = _stream_control()
+    pcm = resample_8k_to_16k(struct.pack("<320h", *([500] * 320)))
+    tts_wav = _make_wav_8k_mono_pcm16(800)
+    mock_cm, _mock_session = _mock_async_session_local()
+    agent_calls: list[str] = []
+    stt_queue = iter(["tchau", "nao deveria rodar"])
+
+    async def stt_side_effect(*args, **kwargs):
+        return next(stt_queue)
+
+    async def agent_side_effect(
+        session,
+        *,
+        from_number,
+        transcript,
+        call_sid=None,
+        agent_timings=None,
+        voice_turn_out=None,
+    ):
+        agent_calls.append(transcript)
+        if voice_turn_out is not None:
+            voice_turn_out["should_hangup"] = True
+        return "Até logo!"
+
+    worker = StreamUtteranceWorker(
+        call_sid="CAhangq",
+        stream_sid="MZhangq",
+        websocket=ws,
+        control=control,
+    )
+
+    with (
+        patch(
+            "agents.channels.voice.stream_session.speech_to_text",
+            side_effect=stt_side_effect,
+        ),
+        patch(
+            "app.services.voice_call_state.get_call_customer_number",
+            return_value="+5511",
+        ),
+        patch("app.services.voice_call_state.reset_silence_stage"),
+        patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
+        patch(
+            RUN_VOICE_AGENT_TURN,
+            new=AsyncMock(side_effect=agent_side_effect),
+        ),
+        patch(
+            "agents.channels.voice.stream_session.text_to_speech",
+            autospec=True,
+            return_value=tts_wav,
+        ),
+        patch(
+            "agents.channels.voice.stream_session.end_twilio_call",
+            autospec=True,
+        ),
+        patch(
+            "agents.channels.voice.stream_session._finalize_stream_farewell_call",
+            new=AsyncMock(),
+        ),
+    ):
+        worker.start()
+        worker.enqueue(UtteranceClosed(pcm16_16k=pcm, duration_ms=40, index=1))
+        worker.enqueue(UtteranceClosed(pcm16_16k=pcm, duration_ms=40, index=2))
+        await asyncio.sleep(0.3)
+        await worker.shutdown()
+
+    assert agent_calls == ["tchau"]
+    assert control.call_ended is True
+
+
+@pytest.mark.unit
 async def test_process_utterance_turn_serializes_two_utterances() -> None:
+    """Direct sequential calls (same as FIFO worker) preserve order."""
     from agents.channels.voice.stream_session import _process_utterance_turn
     from app.services.voice_turn_processor import run_voice_agent_turn
 
-    lock = asyncio.Lock()
     ws = AsyncMock()
     order: list[int] = []
     tts_wav = _make_wav_8k_mono_pcm16(160)
@@ -834,27 +1021,15 @@ async def test_process_utterance_turn_serializes_two_utterances() -> None:
         ) as tts_mock,
     ):
         tts_mock.return_value = tts_wav
-        r1 = UtteranceClosed(pcm16_16k=pcm, duration_ms=40, index=1)
-        r2 = UtteranceClosed(pcm16_16k=pcm, duration_ms=40, index=2)
-        t1 = asyncio.create_task(
-            _process_utterance_turn(
-                r1,
+        control = _stream_control()
+        for idx in (1, 2):
+            await _process_utterance_turn(
+                UtteranceClosed(pcm16_16k=pcm, duration_ms=40, index=idx),
                 call_sid="CAser",
                 stream_sid="MZser",
                 websocket=ws,
-                response_lock=lock,
+                control=control,
             )
-        )
-        t2 = asyncio.create_task(
-            _process_utterance_turn(
-                r2,
-                call_sid="CAser",
-                stream_sid="MZser",
-                websocket=ws,
-                response_lock=lock,
-            )
-        )
-        await asyncio.gather(t1, t2)
 
     assert order == [1, 2]
 
@@ -865,23 +1040,10 @@ async def test_media_stream_ws_agent_response_outbound(
     import logging
     from starlette.testclient import TestClient
 
-    from agents.channels.voice.stream_session import _process_utterance_turn
-
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(settings, "voice_stream_echo_debug", False)
     tts_wav = _make_wav_8k_mono_pcm16(800)
     mock_cm, mock_session = _mock_async_session_local()
-
-    async def _inline_schedule(
-        result, *, call_sid, stream_sid, websocket, response_lock, stt_tasks
-    ):
-        await _process_utterance_turn(
-            result,
-            call_sid=call_sid,
-            stream_sid=stream_sid,
-            websocket=websocket,
-            response_lock=response_lock,
-        )
 
     with (
         patch(
@@ -891,10 +1053,6 @@ async def test_media_stream_ws_agent_response_outbound(
         patch(
             "agents.channels.voice.stream_session.speech_to_text",
             AsyncMock(return_value="quero agendar"),
-        ),
-        patch(
-            "agents.channels.voice.stream_session._schedule_utterance_transcription",
-            side_effect=_inline_schedule,
         ),
         patch(
             "app.services.voice_call_state.get_voice_call_state",
@@ -962,3 +1120,343 @@ async def test_media_stream_ws_agent_response_outbound(
         "Voice stream agent response" in r.message and "Claro, para quando?" in r.message
         for r in caplog.records
     )
+
+
+def _agent_hangup_by_transcript_side_effect():
+    """Set should_hangup from transcript — each call gets its own voice_turn_out dict."""
+
+    async def _run(
+        session,
+        *,
+        from_number,
+        transcript,
+        call_sid=None,
+        agent_timings=None,
+        voice_turn_out=None,
+    ):
+        if voice_turn_out is not None:
+            voice_turn_out["should_hangup"] = "tchau" in (transcript or "").lower()
+        if voice_turn_out and voice_turn_out.get("should_hangup"):
+            return "Até logo, obrigado pelo contato!"
+        return f"resp-{transcript}"
+
+    return _run
+
+
+def _agent_farewell_side_effect(voice_turn_out_holder: dict):
+    async def _run(
+        session,
+        *,
+        from_number,
+        transcript,
+        call_sid=None,
+        agent_timings=None,
+        voice_turn_out=None,
+    ):
+        if voice_turn_out is not None:
+            voice_turn_out["should_hangup"] = True
+        return "Até logo, obrigado pelo contato!"
+
+    return _run
+
+
+@pytest.mark.unit
+async def test_process_utterance_turn_farewell_hangup_after_mark(monkeypatch) -> None:
+    from agents.channels.voice.stream_session import (
+        _notify_mark_received,
+        _process_utterance_turn,
+    )
+
+    monkeypatch.setattr(settings, "voice_stream_farewell_mark_timeout_seconds", 5)
+    pcm_16k = resample_8k_to_16k(struct.pack("<320h", *([500] * 320)))
+    result = UtteranceClosed(pcm16_16k=pcm_16k, duration_ms=40, index=7)
+    control = _stream_control()
+    ws = AsyncMock()
+    tts_wav = _make_wav_8k_mono_pcm16(800)
+    mock_cm, mock_session = _mock_async_session_local()
+    end_calls: list[str] = []
+
+    async def track_end(sid: str) -> None:
+        end_calls.append(sid)
+
+    async def send_side_effect(payload: str) -> None:
+        data = json.loads(payload)
+        if (
+            data.get("event") == "mark"
+            and (data.get("mark") or {}).get("name") == FAREWELL_DONE_MARK
+        ):
+            await asyncio.sleep(0.02)
+            _notify_mark_received(control, FAREWELL_DONE_MARK)
+
+    ws.send_text = AsyncMock(side_effect=send_side_effect)
+
+    with (
+        patch(
+            "agents.channels.voice.stream_session.speech_to_text",
+            AsyncMock(return_value="tchau"),
+        ),
+        patch(
+            "app.services.voice_call_state.get_call_customer_number",
+            return_value="+5511999999999",
+        ),
+        patch("app.services.voice_call_state.reset_silence_stage"),
+        patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
+        patch(
+            RUN_VOICE_AGENT_TURN,
+            new=AsyncMock(side_effect=_agent_farewell_side_effect({})),
+        ),
+        patch(
+            "agents.channels.voice.stream_session.text_to_speech",
+            autospec=True,
+            return_value=tts_wav,
+        ),
+        patch(
+            "agents.channels.voice.stream_session.end_twilio_call",
+            autospec=True,
+        ) as end_mock,
+        patch(
+            "agents.channels.voice.stream_session._finalize_stream_farewell_call",
+            new=AsyncMock(),
+        ) as finalize_mock,
+    ):
+        end_mock.side_effect = track_end
+        await _process_utterance_turn(
+            result,
+            call_sid="CAhang",
+            stream_sid="MZhang",
+            websocket=ws,
+            control=control,
+        )
+
+    sent = [json.loads(c.args[0]) for c in ws.send_text.await_args_list]
+    mark_events = [p for p in sent if p.get("event") == "mark"]
+    assert any(p["mark"]["name"] == FAREWELL_DONE_MARK for p in mark_events)
+    end_mock.assert_awaited_once_with("CAhang")
+    finalize_mock.assert_awaited_once()
+    assert control.call_ended is True
+
+
+@pytest.mark.unit
+async def test_process_utterance_turn_farewell_hangup_on_mark_timeout(monkeypatch) -> None:
+    from agents.channels.voice.stream_session import _process_utterance_turn
+
+    monkeypatch.setattr(settings, "voice_stream_farewell_mark_timeout_seconds", 0.05)
+    pcm_16k = resample_8k_to_16k(struct.pack("<320h", *([500] * 320)))
+    result = UtteranceClosed(pcm16_16k=pcm_16k, duration_ms=40, index=8)
+    control = _stream_control()
+    ws = AsyncMock()
+    tts_wav = _make_wav_8k_mono_pcm16(800)
+    mock_cm, _mock_session = _mock_async_session_local()
+
+    with (
+        patch(
+            "agents.channels.voice.stream_session.speech_to_text",
+            AsyncMock(return_value="tchau"),
+        ),
+        patch(
+            "app.services.voice_call_state.get_call_customer_number",
+            return_value="+5511999999999",
+        ),
+        patch("app.services.voice_call_state.reset_silence_stage"),
+        patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
+        patch(
+            RUN_VOICE_AGENT_TURN,
+            new=AsyncMock(side_effect=_agent_farewell_side_effect({})),
+        ),
+        patch(
+            "agents.channels.voice.stream_session.text_to_speech",
+            autospec=True,
+            return_value=tts_wav,
+        ),
+        patch(
+            "agents.channels.voice.stream_session.end_twilio_call",
+            autospec=True,
+        ) as end_mock,
+        patch(
+            "agents.channels.voice.stream_session._finalize_stream_farewell_call",
+            new=AsyncMock(),
+        ),
+    ):
+        await _process_utterance_turn(
+            result,
+            call_sid="CAtmo",
+            stream_sid="MZtmo",
+            websocket=ws,
+            control=control,
+        )
+
+    end_mock.assert_awaited_once_with("CAtmo")
+    assert control.call_ended is True
+
+
+@pytest.mark.unit
+async def test_process_utterance_turn_no_hangup_when_should_hangup_false() -> None:
+    from agents.channels.voice.stream_session import _process_utterance_turn
+
+    pcm_16k = resample_8k_to_16k(struct.pack("<320h", *([500] * 320)))
+    result = UtteranceClosed(pcm16_16k=pcm_16k, duration_ms=40, index=9)
+    ws = AsyncMock()
+    tts_wav = _make_wav_8k_mono_pcm16(800)
+    mock_cm, mock_session = _mock_async_session_local()
+
+    with (
+        patch(
+            "agents.channels.voice.stream_session.speech_to_text",
+            AsyncMock(return_value="quero agendar"),
+        ),
+        patch(
+            "app.services.voice_call_state.get_call_customer_number",
+            return_value="+5511999999999",
+        ),
+        patch("app.services.voice_call_state.reset_silence_stage"),
+        patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
+        patch(RUN_VOICE_AGENT_TURN, autospec=True) as agent_mock,
+        patch(
+            "agents.channels.voice.stream_session.text_to_speech",
+            autospec=True,
+            return_value=tts_wav,
+        ),
+        patch(
+            "agents.channels.voice.stream_session.end_twilio_call",
+            autospec=True,
+        ) as end_mock,
+    ):
+        agent_mock.return_value = "Claro!"
+        await _process_utterance_turn(
+            result,
+            call_sid="CAnohang",
+            stream_sid="MZnohang",
+            websocket=ws,
+            control=_stream_control(),
+        )
+
+    sent = [json.loads(c.args[0]) for c in ws.send_text.await_args_list]
+    mark_events = [p for p in sent if p.get("event") == "mark"]
+    assert mark_events[-1]["mark"]["name"] == AGENT_RESPONSE_MARK
+    end_mock.assert_not_awaited()
+
+
+@pytest.mark.unit
+async def test_run_voice_agent_for_stream_fresh_dict_each_call() -> None:
+    """Each invocation must pass a new voice_turn_out dict (no cross-utterance reuse)."""
+    from agents.channels.voice.stream_session import _run_voice_agent_for_stream
+
+    dict_ids: list[int] = []
+    mock_cm, _mock_session = _mock_async_session_local()
+
+    async def capture_dict(session, *, from_number, transcript, call_sid=None, voice_turn_out=None, **kw):
+        if voice_turn_out is not None:
+            dict_ids.append(id(voice_turn_out))
+        return "ok"
+
+    with (
+        patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
+        patch(RUN_VOICE_AGENT_TURN, new=AsyncMock(side_effect=capture_dict)),
+    ):
+        await _run_voice_agent_for_stream(
+            from_number="+5511", transcript="a", call_sid="CA1"
+        )
+        await _run_voice_agent_for_stream(
+            from_number="+5511", transcript="b", call_sid="CA1"
+        )
+
+    assert len(dict_ids) == 2
+    assert dict_ids[0] != dict_ids[1]
+
+
+@pytest.mark.unit
+async def test_process_utterance_turn_no_hangup_contamination_across_utterances() -> None:
+    """
+    Two normal utterances must not hang up; only a later farewell triggers end_twilio_call.
+    """
+    from agents.channels.voice.stream_session import (
+        FAREWELL_DONE_MARK,
+        _notify_mark_received,
+        _process_utterance_turn,
+    )
+
+    pcm = resample_8k_to_16k(struct.pack("<320h", *([500] * 320)))
+    control = _stream_control()
+    ws = AsyncMock()
+    tts_wav = _make_wav_8k_mono_pcm16(800)
+    mock_cm, _mock_session = _mock_async_session_local()
+    transcripts = iter(["quero agendar", "sim por favor", "tchau"])
+
+    async def stt_side_effect(*args, **kwargs):
+        return next(transcripts)
+
+    async def send_side_effect(payload: str) -> None:
+        data = json.loads(payload)
+        if (
+            data.get("event") == "mark"
+            and (data.get("mark") or {}).get("name") == FAREWELL_DONE_MARK
+        ):
+            _notify_mark_received(control, FAREWELL_DONE_MARK)
+
+    ws.send_text = AsyncMock(side_effect=send_side_effect)
+
+    with (
+        patch(
+            "agents.channels.voice.stream_session.speech_to_text",
+            side_effect=stt_side_effect,
+        ),
+        patch(
+            "app.services.voice_call_state.get_call_customer_number",
+            return_value="+5511999999999",
+        ),
+        patch("app.services.voice_call_state.reset_silence_stage"),
+        patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
+        patch(
+            RUN_VOICE_AGENT_TURN,
+            new=AsyncMock(side_effect=_agent_hangup_by_transcript_side_effect()),
+        ),
+        patch(
+            "agents.channels.voice.stream_session.text_to_speech",
+            autospec=True,
+            return_value=tts_wav,
+        ),
+        patch(
+            "agents.channels.voice.stream_session.end_twilio_call",
+            autospec=True,
+        ) as end_mock,
+        patch(
+            "agents.channels.voice.stream_session._finalize_stream_farewell_call",
+            new=AsyncMock(),
+        ),
+    ):
+        for idx in (1, 2, 3):
+            result = UtteranceClosed(pcm16_16k=pcm, duration_ms=40, index=idx)
+            await _process_utterance_turn(
+                result,
+                call_sid="CAcontam",
+                stream_sid="MZcontam",
+                websocket=ws,
+                control=control,
+            )
+
+    end_mock.assert_awaited_once_with("CAcontam")
+    assert control.call_ended is True
+
+
+@pytest.mark.unit
+async def test_end_twilio_call_uses_to_thread() -> None:
+    from agents.channels.voice.twilio_voice_client import end_twilio_call
+
+    with (
+        patch(
+            "agents.channels.voice.twilio_voice_client.settings.twilio_account_sid",
+            "ACtest",
+        ),
+        patch(
+            "agents.channels.voice.twilio_voice_client.settings.twilio_auth_token",
+            "token",
+        ),
+        patch(
+            "agents.channels.voice.twilio_voice_client.asyncio.to_thread",
+            new=AsyncMock(),
+        ) as to_thread_mock,
+    ):
+        await end_twilio_call("CArest")
+
+    to_thread_mock.assert_awaited_once()
+    assert to_thread_mock.await_args.args[1] == "CArest"

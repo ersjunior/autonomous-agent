@@ -1,13 +1,14 @@
-"""Unit tests — cap de tokens e corte por frase para respostas em voz."""
+"""Unit tests — sanitização de voz para TTS e limites de tokens do LLM."""
 
 from __future__ import annotations
 
 import pytest
 
 from agents.workers.response_agent import (
-    VOICE_MAX_RESPONSE_CHARS,
+    TEXT_BEHAVIOR_PROMPT,
+    VOICE_BEHAVIOR_PROMPT,
     _resolve_max_tokens,
-    cap_voice_response_for_telephony,
+    sanitize_voice_response_for_telephony,
     trim_voice_response_to_complete_sentence,
 )
 from app.core.config import settings
@@ -30,73 +31,69 @@ def test_trim_voice_response_no_punctuation_unchanged() -> None:
     assert trim_voice_response_to_complete_sentence(text) == text
 
 
-def test_cap_voice_response_keeps_one_short_sentence() -> None:
-    text = "Claro, posso ajudar com os custos."
-    assert cap_voice_response_for_telephony(text) == text
-
-
-def test_cap_voice_response_limits_to_one_sentence() -> None:
+def test_sanitize_keeps_full_multi_sentence_reply() -> None:
     text = (
         "Entendi sua pergunta sobre custos. "
         "Posso verificar na base e te retorno em seguida. "
         "Também posso enviar por e-mail se preferir."
     )
-    result = cap_voice_response_for_telephony(text)
-    assert result == "Entendi sua pergunta sobre custos."
-    assert "Posso verificar" not in result
+    assert sanitize_voice_response_for_telephony(text) == text
 
 
-def test_cap_voice_response_truncates_long_sentence_at_word_boundary() -> None:
+def test_sanitize_keeps_long_natural_reply() -> None:
     text = (
         "Entendi perfeitamente sua solicitação sobre os custos detalhados "
         "do plano premium para o seu projeto acadêmico completo."
     )
-    result = cap_voice_response_for_telephony(text)
-    assert len(result) <= VOICE_MAX_RESPONSE_CHARS
-    assert not result.endswith(" acad")
-    assert result.endswith(".")
+    assert sanitize_voice_response_for_telephony(text) == text
 
 
-def test_cap_voice_response_drops_to_one_sentence_when_over_char_limit() -> None:
-    first = "A" * (VOICE_MAX_RESPONSE_CHARS - 1) + "."
-    second = "Segunda frase curta."
-    text = f"{first} {second}"
-    result = cap_voice_response_for_telephony(text)
-    assert result == first
+def test_sanitize_strips_markdown() -> None:
+    text = "**Olá!** Temos o plano *Premium* disponível."
+    assert sanitize_voice_response_for_telephony(text) == "Olá! Temos o plano Premium disponível."
 
 
-def test_cap_voice_response_realistic_long_reply() -> None:
+def test_sanitize_trims_incomplete_tail_only() -> None:
+    text = "Primeira frase ok. Segunda incompleta cort"
+    assert sanitize_voice_response_for_telephony(text) == "Primeira frase ok."
+
+
+def test_sanitize_realistic_long_reply_not_truncated() -> None:
     text = (
         "Entendi! Você quer saber sobre os custos e também está procurando por informações "
         "sobre design patterns para o seu projeto do TCC. Posso verificar as informações "
         "disponíveis sobre os cursos da Campanha Ativa e fornecer mais detalhes sobre os custos."
     )
-    result = cap_voice_response_for_telephony(text)
-    assert result == "Entendi!"
-    assert len(result) <= VOICE_MAX_RESPONSE_CHARS
-
-
-def test_cap_voice_response_respects_settings_override(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "voice_max_response_chars", 50)
-    text = "Esta frase é propositalmente longa demais para caber no limite configurado."
-    result = cap_voice_response_for_telephony(text)
-    assert len(result) <= 50
-    assert result.endswith(".")
+    result = sanitize_voice_response_for_telephony(text)
+    assert result == text
+    assert "design patterns" in result
 
 
 def test_resolve_max_tokens_voice_uses_voice_cap(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "voice_response_max_tokens", 35)
-    monkeypatch.setattr(settings, "response_max_tokens", 0)
-    assert _resolve_max_tokens("voice") == 35
+    monkeypatch.setattr(settings, "voice_response_max_tokens", 256)
+    monkeypatch.setattr(settings, "response_max_tokens", 1024)
+    assert _resolve_max_tokens("voice") == 256
 
 
 def test_resolve_max_tokens_whatsapp_uses_global_cap(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "voice_response_max_tokens", 35)
-    monkeypatch.setattr(settings, "response_max_tokens", 512)
-    assert _resolve_max_tokens("whatsapp") == 512
+    monkeypatch.setattr(settings, "voice_response_max_tokens", 256)
+    monkeypatch.setattr(settings, "response_max_tokens", 1024)
+    assert _resolve_max_tokens("whatsapp") == 1024
 
 
 def test_resolve_max_tokens_whatsapp_unlimited_when_zero(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "voice_response_max_tokens", 35)
+    monkeypatch.setattr(settings, "voice_response_max_tokens", 256)
     monkeypatch.setattr(settings, "response_max_tokens", 0)
     assert _resolve_max_tokens("telegram") is None
+
+
+def test_voice_behavior_prompt_discourages_prolixity() -> None:
+    assert "prolix" in VOICE_BEHAVIOR_PROMPT.lower()
+    assert "telegráfico" in VOICE_BEHAVIOR_PROMPT.lower()
+    assert "RAG" in VOICE_BEHAVIOR_PROMPT
+    assert "detalhar" in VOICE_BEHAVIOR_PROMPT.lower()
+
+
+def test_text_behavior_prompt_allows_developed_replies() -> None:
+    assert "desenvolver" in TEXT_BEHAVIOR_PROMPT.lower()
+    assert "prolix" not in TEXT_BEHAVIOR_PROMPT.lower()

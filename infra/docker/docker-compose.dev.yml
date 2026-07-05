@@ -1,7 +1,21 @@
 # Overrides opcionais para desenvolvimento local.
 # O docker-compose.yml já inclui hot-reload e volumes montados.
 # Use: make up (equivale a este perfil)
+#
+# DEV — código ao vivo (bind mounts em docker-compose.yml):
+#   backend/  → /workspace/backend  (volume; --force-recreate ou save em backend/ recarrega)
+#   agents/   → /workspace/agents    (volume; recreate/restart; ver reload-dir abaixo)
+#   worker/   → /workspace/worker   (idem; Celery worker precisa restart próprio)
+# Imagem (Dockerfile): COPY de backend/, agents/, worker/ — usado em PROD (sem volumes).
+# PROD: mudanças em agents/ exigem --build; dev com volumes: recreate basta (sem rebuild).
+#
+# uvicorn --reload observa backend/ + agents/ (reload-dir) para hot-reload sem recreate.
 
 services:
+  backend:
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      --reload-dir /workspace/backend --reload-dir /workspace/agents
+
   worker:
     command: celery -A worker.celery_app worker --loglevel=debug

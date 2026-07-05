@@ -1,4 +1,4 @@
-"""Twilio Media Streams WebSocket session handler (Fase A–D1: transport + VAD + STT + agent + TTS)."""
+"""Twilio Media Streams WebSocket session handler (Fase A–D2a: transport + VAD + FIFO worker + hangup)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -25,6 +26,7 @@ from agents.channels.voice.mulaw_codec import (
     wav_bytes_to_pcm16_mono,
 )
 from agents.channels.voice.tts_stt import speech_to_text, text_to_speech
+from agents.channels.voice.twilio_voice_client import end_twilio_call
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -32,7 +34,151 @@ logger = logging.getLogger(__name__)
 MEDIA_LOG_EVERY_N = 50
 STREAM_TTS_SAMPLE_RATE = 8000
 AGENT_RESPONSE_MARK = "agent_response_done"
+FAREWELL_DONE_MARK = "farewell_done"
 VOICE_STREAM_AGENT_FALLBACK = "Desculpe, não consegui processar agora."
+UTTERANCE_QUEUE_MAXSIZE = 32
+_STREAM_QUEUE_SENTINEL = object()
+
+
+@dataclass
+class StreamCallControl:
+    """Shared WS session state (marks + hangup flag). Per-turn outputs stay local."""
+
+    mark_events: dict[str, asyncio.Event] = field(default_factory=dict)
+    call_ended: bool = False
+
+
+class StreamUtteranceWorker:
+    """
+    FIFO serial processor for one call: STT → agent → TTS → send (one utterance at a time).
+
+    The WebSocket receive loop only enqueues; this worker runs in a background task.
+    """
+
+    def __init__(
+        self,
+        *,
+        call_sid: str | None,
+        stream_sid: str | None,
+        websocket: WebSocket,
+        control: StreamCallControl,
+        maxsize: int = UTTERANCE_QUEUE_MAXSIZE,
+    ) -> None:
+        self._call_sid = call_sid
+        self._stream_sid = stream_sid
+        self._websocket = websocket
+        self._control = control
+        self._queue: asyncio.Queue[UtteranceClosed | object] = asyncio.Queue(
+            maxsize=maxsize,
+        )
+        self._task: asyncio.Task[None] | None = None
+
+    @property
+    def call_sid(self) -> str | None:
+        return self._call_sid
+
+    def start(self) -> None:
+        if self._task is not None:
+            return
+        self._task = asyncio.create_task(
+            self._run(),
+            name=f"voice-stream-utterance-worker-{self._call_sid or '?'}",
+        )
+
+    def enqueue(self, result: UtteranceClosed) -> None:
+        if self._control.call_ended:
+            logger.info(
+                "Voice stream utterance #%s not enqueued — call ended callSid=%s",
+                result.index,
+                self._call_sid or "?",
+            )
+            return
+        logger.info(
+            "Voice stream utterance closed #%s duration_ms=%s bytes=%s callSid=%s",
+            result.index,
+            result.duration_ms,
+            len(result.pcm16_16k),
+            self._call_sid or "?",
+        )
+        try:
+            self._queue.put_nowait(result)
+        except asyncio.QueueFull:
+            logger.warning(
+                "Voice stream utterance queue full (max=%s) — dropping #%s callSid=%s",
+                self._queue.maxsize,
+                result.index,
+                self._call_sid or "?",
+            )
+
+    async def shutdown(self) -> None:
+        """Stop after draining queued utterances (or cancel if call already ended)."""
+        if self._task is None:
+            return
+        if self._task.done():
+            self._task = None
+            return
+        if self._control.call_ended:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+            return
+        await self._queue.put(_STREAM_QUEUE_SENTINEL)
+        try:
+            await self._task
+        finally:
+            self._task = None
+
+    async def _run(self) -> None:
+        while True:
+            item = await self._queue.get()
+            try:
+                if item is _STREAM_QUEUE_SENTINEL:
+                    return
+                if self._control.call_ended:
+                    continue
+                await _process_utterance_turn(
+                    item,
+                    call_sid=self._call_sid,
+                    stream_sid=self._stream_sid,
+                    websocket=self._websocket,
+                    control=self._control,
+                )
+            finally:
+                self._queue.task_done()
+            if self._control.call_ended:
+                return
+
+
+def _register_mark_event(control: StreamCallControl, name: str) -> asyncio.Event:
+    event = asyncio.Event()
+    control.mark_events[name] = event
+    return event
+
+
+def _notify_mark_received(control: StreamCallControl, name: str) -> None:
+    event = control.mark_events.get(name)
+    if event is not None and not event.is_set():
+        event.set()
+
+
+async def _wait_for_stream_mark(
+    control: StreamCallControl,
+    name: str,
+    *,
+    timeout_sec: float,
+) -> bool:
+    """Wait until Twilio echoes ``name`` or timeout. Returns True if mark received."""
+    event = control.mark_events.get(name)
+    if event is None:
+        return False
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout_sec)
+        return True
+    except asyncio.TimeoutError:
+        return False
 
 
 def _log_unknown_call_sid(call_sid: str) -> None:
@@ -55,22 +201,106 @@ async def _run_voice_agent_for_stream(
     from_number: str,
     transcript: str,
     call_sid: str | None,
-) -> str:
+) -> tuple[str, bool]:
     """
     Same agent path as record mode (``process_voice_inbound_turn`` → ``run_voice_agent_turn``).
 
-    First argument is ``session`` (AsyncSession positional) — not ``db=``.
+    Uses a **fresh** ``voice_turn_out`` per call (never shared across utterances).
+    Returns ``(response_text, should_hangup)`` — same semantics as record
+    (``bool(voice_turn_out.get("should_hangup"))`` after ``attend_inbound_message``).
     """
     from app.core.database import AsyncSessionLocal
     from app.services.voice_turn_processor import run_voice_agent_turn
 
+    voice_turn_out: dict[str, object] = {}
     async with AsyncSessionLocal() as session:
-        return await run_voice_agent_turn(
+        response_text = await run_voice_agent_turn(
             session,
             from_number=from_number,
             transcript=transcript,
             call_sid=call_sid,
+            voice_turn_out=voice_turn_out,
         )
+    return (response_text or "").strip(), bool(voice_turn_out.get("should_hangup"))
+
+
+async def _finalize_stream_farewell_call(
+    *,
+    call_sid: str,
+    from_number: str,
+) -> None:
+    """Tabulação + LI terminal (espelha record turn-ready com ``should_hangup``)."""
+    from app.core.database import AsyncSessionLocal
+    from app.services.voice_call_finalize import (
+        VOICE_FAREWELL_ORIGEM,
+        finalize_voice_call_terminal,
+    )
+    from app.services.voice_call_state import clear_voice_call_state
+
+    async with AsyncSessionLocal() as session:
+        await finalize_voice_call_terminal(
+            session,
+            call_sid=call_sid,
+            from_number=from_number or None,
+            origem=VOICE_FAREWELL_ORIGEM,
+        )
+        await session.commit()
+    clear_voice_call_state(call_sid)
+
+
+async def _execute_agent_farewell_hangup(
+    *,
+    call_sid: str,
+    from_number: str,
+    stream_sid: str,
+    websocket: WebSocket,
+    control: StreamCallControl,
+) -> None:
+    """Audio already sent — mark → await playback → REST end call."""
+    waiting_mark = FAREWELL_DONE_MARK
+    _register_mark_event(control, waiting_mark)
+    await _send_mark(websocket, stream_sid=stream_sid, name=waiting_mark)
+
+    timeout_sec = float(settings.voice_stream_farewell_mark_timeout_seconds)
+    mark_received = await _wait_for_stream_mark(
+        control,
+        waiting_mark,
+        timeout_sec=timeout_sec,
+    )
+    if not mark_received:
+        logger.warning(
+            "Voice stream farewell mark timeout callSid=%s mark=%s timeout_sec=%s",
+            call_sid,
+            waiting_mark,
+            timeout_sec,
+        )
+
+    end_started = time.perf_counter()
+    await end_twilio_call(call_sid)
+    end_call_ms = (time.perf_counter() - end_started) * 1000
+
+    try:
+        await _finalize_stream_farewell_call(
+            call_sid=call_sid,
+            from_number=from_number,
+        )
+    except Exception as exc:
+        logger.error(
+            "Voice stream farewell finalize failed callSid=%s: %s",
+            call_sid,
+            exc,
+            exc_info=True,
+        )
+
+    control.call_ended = True
+    logger.info(
+        "Voice stream hangup callSid=%s reason=agent_farewell waiting_mark=%s "
+        "mark_received=%s end_call_ms=%s",
+        call_sid,
+        waiting_mark,
+        mark_received,
+        f"{end_call_ms:.0f}",
+    )
 
 
 async def _synthesize_stream_mulaw_frames(response_text: str) -> list[bytes]:
@@ -93,11 +323,20 @@ async def _process_utterance_turn(
     call_sid: str | None,
     stream_sid: str | None,
     websocket: WebSocket,
-    response_lock: asyncio.Lock,
+    control: StreamCallControl,
 ) -> None:
     """
-    Fase C+D1: STT (parallel-safe) → agent → TTS → μ-law outbound (serialized per call).
+    Fase C+D1+D2a: STT → agent → TTS → μ-law outbound; farewell → mark → REST hangup.
+
+    Invoked serially by ``StreamUtteranceWorker`` (FIFO per call).
     """
+    if control.call_ended:
+        logger.info(
+            "Voice stream utterance #%s skipped — call already ended callSid=%s",
+            result.index,
+            call_sid or "?",
+        )
+        return
     wav_bytes = pcm16_16k_to_wav(result.pcm16_16k)
     stt_started = time.perf_counter()
     try:
@@ -171,156 +410,111 @@ async def _process_utterance_turn(
         )
         return
 
-    async with response_lock:
-        agent_started = time.perf_counter()
-        response_text = ""
-        try:
-            response_text = (
-                await _run_voice_agent_for_stream(
-                    from_number=from_number,
-                    transcript=transcript,
-                    call_sid=sid or None,
-                )
-            ).strip()
-        except Exception as exc:
-            agent_ms = (time.perf_counter() - agent_started) * 1000
-            logger.error(
-                "Voice stream agent failed utterance #%s callSid=%s agent_ms=%s: %s",
-                result.index,
-                sid,
-                agent_ms,
-                exc,
-            )
-            response_text = VOICE_STREAM_AGENT_FALLBACK
+    if control.call_ended:
+        return
 
+    agent_started = time.perf_counter()
+    response_text = ""
+    should_hangup = False
+    try:
+        response_text, should_hangup = await _run_voice_agent_for_stream(
+            from_number=from_number,
+            transcript=transcript,
+            call_sid=sid or None,
+        )
+    except Exception as exc:
         agent_ms = (time.perf_counter() - agent_started) * 1000
-        if not response_text:
-            response_text = VOICE_STREAM_AGENT_FALLBACK
+        logger.error(
+            "Voice stream agent failed utterance #%s callSid=%s agent_ms=%s: %s",
+            result.index,
+            sid,
+            agent_ms,
+            exc,
+        )
+        response_text = VOICE_STREAM_AGENT_FALLBACK
+        should_hangup = False
 
-        tts_started = time.perf_counter()
-        try:
-            frames = await _synthesize_stream_mulaw_frames(response_text)
-        except Exception as exc:
-            tts_ms = (time.perf_counter() - tts_started) * 1000
-            logger.error(
-                "Voice stream TTS failed utterance #%s callSid=%s agent_ms=%s tts_ms=%s: %s",
-                result.index,
-                sid,
-                agent_ms,
-                tts_ms,
-                exc,
-            )
-            return
+    agent_ms = (time.perf_counter() - agent_started) * 1000
+    if not response_text:
+        response_text = VOICE_STREAM_AGENT_FALLBACK
 
+    tts_started = time.perf_counter()
+    try:
+        frames = await _synthesize_stream_mulaw_frames(response_text)
+    except Exception as exc:
         tts_ms = (time.perf_counter() - tts_started) * 1000
-        try:
-            await _send_mulaw_frames(
-                websocket,
+        logger.error(
+            "Voice stream TTS failed utterance #%s callSid=%s agent_ms=%s tts_ms=%s: %s",
+            result.index,
+            sid,
+            agent_ms,
+            tts_ms,
+            exc,
+        )
+        return
+
+    tts_ms = (time.perf_counter() - tts_started) * 1000
+    try:
+        await _send_mulaw_frames(
+            websocket,
+            stream_sid=stream_sid,
+            frames=frames,
+            label="agent",
+        )
+        if should_hangup:
+            await _execute_agent_farewell_hangup(
+                call_sid=sid,
+                from_number=from_number,
                 stream_sid=stream_sid,
-                frames=frames,
-                label="agent",
+                websocket=websocket,
+                control=control,
             )
+        else:
             await _send_mark(
                 websocket,
                 stream_sid=stream_sid,
                 name=AGENT_RESPONSE_MARK,
             )
-        except Exception as exc:
-            logger.error(
-                "Voice stream outbound audio failed utterance #%s callSid=%s: %s",
-                result.index,
-                sid,
-                exc,
-            )
-            return
-
-        logger.info(
-            "Voice stream agent response callSid=%s utterance#%s agent_ms=%s tts_ms=%s "
-            "audio_frames=%s response=%r",
-            sid,
+    except Exception as exc:
+        logger.error(
+            "Voice stream outbound audio failed utterance #%s callSid=%s: %s",
             result.index,
-            agent_ms,
-            tts_ms,
-            len(frames),
-            response_text,
+            sid,
+            exc,
         )
+        return
 
-
-async def _schedule_utterance_transcription(
-    result: UtteranceClosed,
-    *,
-    call_sid: str | None,
-    stream_sid: str | None,
-    websocket: WebSocket,
-    response_lock: asyncio.Lock,
-    stt_tasks: set[asyncio.Task[None]],
-) -> None:
-    """
-    Log utterance boundary and run STT → agent → TTS in a background task.
-
-    ``response_lock`` serializes agent/TTS/send per call; receive loop stays free.
-    """
     logger.info(
-        "Voice stream utterance closed #%s duration_ms=%s bytes=%s callSid=%s",
+        "Voice stream agent response callSid=%s utterance#%s agent_ms=%s tts_ms=%s "
+        "audio_frames=%s hangup=%s response=%r",
+        sid,
         result.index,
-        result.duration_ms,
-        len(result.pcm16_16k),
-        call_sid or "?",
+        agent_ms,
+        tts_ms,
+        len(frames),
+        should_hangup,
+        response_text,
     )
-
-    async def _run_turn() -> None:
-        try:
-            await _process_utterance_turn(
-                result,
-                call_sid=call_sid,
-                stream_sid=stream_sid,
-                websocket=websocket,
-                response_lock=response_lock,
-            )
-        finally:
-            current = asyncio.current_task()
-            if current is not None:
-                stt_tasks.discard(current)
-
-    task = asyncio.create_task(_run_turn())
-    stt_tasks.add(task)
 
 
 async def _finalize_session(
     session: VoiceStreamSession | None,
     *,
-    call_sid: str | None,
-    stream_sid: str | None,
-    websocket: WebSocket,
-    response_lock: asyncio.Lock,
-    stt_tasks: set[asyncio.Task[None]],
+    utterance_worker: StreamUtteranceWorker | None,
 ) -> None:
-    if session is None:
-        return
-    flushed = session.flush()
-    if flushed is not None:
-        logger.info(
-            "Voice stream utterance flushed on teardown #%s duration_ms=%s callSid=%s",
-            flushed.index,
-            flushed.duration_ms,
-            call_sid or "?",
-        )
-        await _schedule_utterance_transcription(
-            flushed,
-            call_sid=call_sid,
-            stream_sid=stream_sid,
-            websocket=websocket,
-            response_lock=response_lock,
-            stt_tasks=stt_tasks,
-        )
+    if session is not None:
+        flushed = session.flush()
+        if flushed is not None and utterance_worker is not None:
+            logger.info(
+                "Voice stream utterance flushed on teardown #%s duration_ms=%s callSid=%s",
+                flushed.index,
+                flushed.duration_ms,
+                utterance_worker.call_sid or "?",
+            )
+            utterance_worker.enqueue(flushed)
 
-    pending = [t for t in stt_tasks if not t.done()]
-    if pending:
-        logger.info(
-            "Voice stream teardown callSid=%s with %s pending turn task(s)",
-            call_sid or "?",
-            len(pending),
-        )
+    if utterance_worker is not None:
+        await utterance_worker.shutdown()
 
 
 async def _send_mulaw_frames(
@@ -365,8 +559,9 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
 
     Fase A: log + intro beep + optional echo.
     Fase B: inbound μ-law → VAD utterance detection.
-    Fase C: utterance → STT (background).
-    Fase D1: STT → agent → TTS 8 kHz → μ-law outbound (serialized per call).
+    Fase C: utterance → FIFO worker (STT → agent → TTS, serial per call).
+    Fase D1: STT → agent → TTS 8 kHz → μ-law outbound (FIFO worker per call).
+    Fase D2a: farewell → mark → REST hangup.
     """
     await websocket.accept()
     logger.info("Voice Media Stream WebSocket accepted")
@@ -374,11 +569,11 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
     stream_sid: str | None = None
     call_sid: str | None = None
     session: VoiceStreamSession | None = None
+    utterance_worker: StreamUtteranceWorker | None = None
     echo_enabled = bool(settings.voice_stream_echo_debug)
     media_in_count = 0
     media_out_count = 0
-    stt_tasks: set[asyncio.Task[None]] = set()
-    response_lock = asyncio.Lock()
+    control = StreamCallControl()
 
     try:
         while True:
@@ -436,6 +631,14 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     logger.error("Voice stream start without streamSid — cannot send audio")
                     continue
 
+                utterance_worker = StreamUtteranceWorker(
+                    call_sid=call_sid,
+                    stream_sid=stream_sid,
+                    websocket=websocket,
+                    control=control,
+                )
+                utterance_worker.start()
+
                 logger.info(
                     "Voice stream sending intro beep (%s frames, %s bytes/frame)",
                     len(INTRO_FRAMES),
@@ -471,6 +674,8 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     )
 
                 if track == "inbound" and payload_b64 and session is not None:
+                    if control.call_ended:
+                        continue
                     try:
                         frame_mulaw = base64.b64decode(payload_b64)
                     except Exception:
@@ -481,15 +686,8 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                         frame_mulaw = b""
                     if frame_mulaw:
                         closed = session.feed_mulaw_frame(frame_mulaw)
-                        if closed is not None:
-                            await _schedule_utterance_transcription(
-                                closed,
-                                call_sid=call_sid,
-                                stream_sid=stream_sid,
-                                websocket=websocket,
-                                response_lock=response_lock,
-                                stt_tasks=stt_tasks,
-                            )
+                        if closed is not None and utterance_worker is not None:
+                            utterance_worker.enqueue(closed)
 
                 if echo_enabled and stream_sid and payload_b64:
                     outbound = {
@@ -515,6 +713,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     sid_in_msg or stream_sid,
                     call_sid or "?",
                 )
+                _notify_mark_received(control, str(mark_name))
                 if mark_name == "intro_done" and session is not None and not session.listening:
                     session.listening = True
                     logger.info(
@@ -533,11 +732,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                 )
                 await _finalize_session(
                     session,
-                    call_sid=call_sid,
-                    stream_sid=stream_sid,
-                    websocket=websocket,
-                    response_lock=response_lock,
-                    stt_tasks=stt_tasks,
+                    utterance_worker=utterance_worker,
                 )
                 break
 
@@ -559,11 +754,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
         )
         await _finalize_session(
             session,
-            call_sid=call_sid,
-            stream_sid=stream_sid,
-            websocket=websocket,
-            response_lock=response_lock,
-            stt_tasks=stt_tasks,
+            utterance_worker=utterance_worker,
         )
     except Exception:
         logger.exception(
@@ -573,10 +764,6 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
         )
         await _finalize_session(
             session,
-            call_sid=call_sid,
-            stream_sid=stream_sid,
-            websocket=websocket,
-            response_lock=response_lock,
-            stt_tasks=stt_tasks,
+            utterance_worker=utterance_worker,
         )
         raise

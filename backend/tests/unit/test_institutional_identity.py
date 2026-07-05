@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from agents.identity import format_institutional_identity_block, non_identity_config
 from agents.workers.response_agent import build_response_messages
-from app.core.config import DEFAULT_AGENT_SYSTEM_PROMPT
+from app.core.config import DEFAULT_AGENT_SYSTEM_PROMPT, settings
 
 FULL_IDENTITY_CONFIG = {
     "tipo": "inbound",
@@ -74,6 +76,11 @@ class TestNonIdentityConfig:
 
 
 class TestBuildResponseMessagesIdentityOrder:
+    @pytest.fixture(autouse=True)
+    def _use_default_system_prompt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Isola ordem de blocos do prompt global (evita override stale em app_settings)."""
+        monkeypatch.setattr(settings, "agent_system_prompt", DEFAULT_AGENT_SYSTEM_PROMPT)
+
     def _system_contents(self, **kwargs) -> list[str]:
         messages = build_response_messages(
             "Olá",
@@ -107,7 +114,7 @@ class TestBuildResponseMessagesIdentityOrder:
             agent_mode="RECEPTIVE",
         )
         assert not any("Identidade institucional" in c for c in contents)
-        assert contents[0].startswith("Você é um atendente profissional")
+        assert contents[0].startswith("Você é um assistente de atendimento")
         assert contents[1].startswith("Agente: Seed")
 
     def test_without_agent_config_same_as_empty(self) -> None:

@@ -1,6 +1,7 @@
 """Response generation worker."""
 
 import logging
+import re
 
 from agents.identity import format_institutional_identity_block
 from agents.provider_factory import ProviderFactory
@@ -12,34 +13,32 @@ DEFAULT_SYSTEM_PROMPT = DEFAULT_AGENT_SYSTEM_PROMPT
 
 # B-1: instruções operacionais do modo RECEPTIVE (complementa agent_personality/description).
 RECEPTIVE_BEHAVIOR_PROMPT = """Modo RECEPTIVO — como conduzir o atendimento:
-- Responda dúvidas com clareza, usando o histórico imediato e as memórias de longo prazo (RAG)
+- Converse de forma natural e simpática, como alguém que conhece bem o assunto e gosta de ajudar.
+- Responda dúvidas com clareza, usando o histórico imediato, a base de conhecimento e as memórias de longo prazo (RAG)
   quando disponíveis. Não invente fatos, preços ou políticas que não estejam no contexto.
 - Qualifique quando fizer sentido: entenda a necessidade do lead com perguntas naturais e
-  pertinentes, uma de cada vez, sem interrogatório. Se o lead demonstra interesse mas não
-  detalha, faça uma pergunta por vez para entender melhor (ex.: o que busca, para quando, qual canal prefere).
-- Mantenha tom acolhedor e profissional; conversa fluida, não roteiro rígido de script.
+  pertinentes, uma de cada vez, sem interrogatório.
+- Mantenha tom acolhedor e acessível; conversa fluida, não roteiro rígido de script.
 - Desvio leve fora do escopo (piada, humor, curiosidade, opinião, política, assunto pessoal
   sem relação com o negócio): NÃO escale para humano — recuse educadamente e redirecione
   para produtos, serviços ou dúvidas do atendimento.
 - Escale para atendente humano apenas quando necessário: reclamação grave, pedido explícito
   de atendente humano ou sinal claro de escalonamento — reconheça e indique a transferência."""
 
-# Inbound/outbound de voz (telefonia): respostas curtas para TTS e latência.
 VOICE_BEHAVIOR_PROMPT = """Modo VOZ (telefone) — como falar com o cliente:
-- Você está numa LIGAÇÃO TELEFÔNICA. Responda em 1 frase curta (máximo ~70 caracteres). Vá direto ao ponto.
-- Não liste, não explique demais, não repita a pergunta do cliente.
-- Use linguagem falada natural; evite markdown, emojis e parágrafos longos.
-- Se precisar de mais informação, faça UMA pergunta curta no final.
-- O encerramento da ligação é controlado pelo sistema; responda ao cliente e não invente despedidas longas."""
+- Você está numa LIGAÇÃO TELEFÔNICA. Responda de forma natural, amigável e completa — como alguém simpático numa conversa telefônica real. Nem telegráfico, nem monólogos longos.
+- Em ligações de voz, vá direto ao ponto: o suficiente para ser claro e simpático, sem enrolar. Evite respostas muito longas ou prolixas. Se precisar dar muita informação, resuma e ofereça detalhar se o cliente quiser.
+- Use o histórico, a base de conhecimento e as memórias (RAG) quando disponíveis — não invente o que não estiver no contexto.
+- Use linguagem falada; evite markdown, emojis, listas longas ou parágrafos densos.
+- Se precisar de mais informação, faça perguntas claras e naturais (preferencialmente uma de cada vez).
+- O encerramento da ligação é controlado pelo sistema; responda ao cliente e não invente despedidas longas.
+- Só se despeça quando o cliente indicar claramente que não precisa de mais nada. Se você estiver fazendo uma pergunta, a conversa continua — não encerre nesse turno."""
 
-# Cap pós-LLM só para telefonia (TTS XTTS escala ~linearmente com o tamanho).
-VOICE_MAX_RESPONSE_SENTENCES = 1
-VOICE_MAX_RESPONSE_CHARS = 70
-
-
-def _resolved_voice_max_chars() -> int:
-    cap = settings.voice_max_response_chars
-    return cap if cap > 0 else VOICE_MAX_RESPONSE_CHARS
+TEXT_BEHAVIOR_PROMPT = """Modo TEXTO (WhatsApp/Telegram) — como escrever para o cliente:
+- Por mensagem, pode desenvolver mais quando ajudar à clareza — organize em parágrafos curtos se facilitar a leitura.
+- Mantenha tom amigável e conversacional; evite respostas secas ou telegráficas quando o assunto pede contexto.
+- Emojis só se combinar com o tom da marca; prefira clareza à quantidade de texto.
+- Se a resposta for longa, priorize o que o cliente perguntou primeiro."""
 
 
 def _resolve_system_prompt() -> str:
@@ -76,71 +75,27 @@ def trim_voice_response_to_complete_sentence(text: str) -> str:
     return cleaned[: last_idx + 1].strip()
 
 
-def _split_voice_sentences(text: str) -> list[str]:
-    """Divide em frases completas (terminadas em . ! ?)."""
+def _strip_markdown_for_tts(text: str) -> str:
+    """Remove marcações não faláveis (markdown) antes do TTS."""
     cleaned = (text or "").strip()
     if not cleaned:
-        return []
-
-    sentences: list[str] = []
-    start = 0
-    for idx, ch in enumerate(cleaned):
-        if ch in ".!?" and (idx + 1 >= len(cleaned) or cleaned[idx + 1].isspace()):
-            segment = cleaned[start : idx + 1].strip()
-            if segment:
-                sentences.append(segment)
-            start = idx + 1
-            while start < len(cleaned) and cleaned[start].isspace():
-                start += 1
-
-    tail = cleaned[start:].strip()
-    if tail:
-        sentences.append(tail)
-    return sentences
-
-
-def _truncate_at_word_boundary(text: str, max_chars: int) -> str:
-    """Corta em limite de chars sem partir palavra; garante fim com pontuação."""
-    cleaned = (text or "").strip()
-    if not cleaned or len(cleaned) <= max_chars:
         return cleaned
-
-    chunk = cleaned[:max_chars]
-    if (
-        max_chars < len(cleaned)
-        and chunk[-1].isalnum()
-        and cleaned[max_chars].isalnum()
-    ):
-        last_space = chunk.rfind(" ")
-        if last_space > 10:
-            chunk = chunk[:last_space]
-
-    chunk = chunk.rstrip(" ,;:–—")
-    if chunk and chunk[-1] not in ".!?":
-        chunk += "."
-    return chunk
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
+    cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+    cleaned = re.sub(r"^#+\s*", "", cleaned, flags=re.MULTILINE)
+    return cleaned.strip()
 
 
-def cap_voice_response_for_telephony(text: str) -> str:
+def sanitize_voice_response_for_telephony(text: str) -> str:
     """
-    Limita resposta de voz a 1 frase curta (~70 chars), sem partir palavra.
+    Sanitiza resposta de voz para TTS — sem cortar tamanho.
 
-    Só deve ser usado no canal voice — WhatsApp/Telegram permanecem sem este cap.
+    Preserva: remoção de markdown e fechamento de frase incompleta (quando o LLM
+    para no meio por limite de tokens). Não limita frases nem caracteres.
     """
-    max_chars = _resolved_voice_max_chars()
-    cleaned = trim_voice_response_to_complete_sentence(text)
-    if not cleaned:
-        return cleaned
-
-    sentences = _split_voice_sentences(cleaned)
-    if not sentences:
-        return _truncate_at_word_boundary(cleaned, max_chars)
-
-    result = sentences[:VOICE_MAX_RESPONSE_SENTENCES]
-    merged = " ".join(result).strip()
-    if len(merged) > max_chars:
-        merged = _truncate_at_word_boundary(merged, max_chars)
-    return merged.strip()
+    cleaned = _strip_markdown_for_tts(text)
+    return trim_voice_response_to_complete_sentence(cleaned)
 
 
 def _history_to_messages(history: list[dict]) -> list[dict]:
@@ -227,7 +182,7 @@ def build_response_messages(
 
     Ordem dos blocos de sistema:
       1. prompt global → 2. identidade institucional (se config.identity)
-      3. personality → 4. RECEPTIVE (se aplicável) → 5. VOZ (se canal voice)
+      3. personality → 4. RECEPTIVE (se aplicável) → 5. VOZ ou TEXTO (por canal)
       6. KB institucional → 7. agendamento (se houver) → 8. memória de contato
       9. canal/intent/entidades → 10. histórico → 11. mensagem atual
     """
@@ -262,8 +217,11 @@ def build_response_messages(
     if mode == "RECEPTIVE":
         messages.append({"role": "system", "content": RECEPTIVE_BEHAVIOR_PROMPT})
 
-    if (channel or "").lower() == "voice":
+    ch = (channel or "").lower()
+    if ch == "voice":
         messages.append({"role": "system", "content": VOICE_BEHAVIOR_PROMPT})
+    elif ch in ("whatsapp", "telegram"):
+        messages.append({"role": "system", "content": TEXT_BEHAVIOR_PROMPT})
 
     kb_block = format_kb_context_block(kb_chunks or [])
     if kb_block:
@@ -353,6 +311,6 @@ async def generate_response(
     text = result if isinstance(result, str) else str(result)
 
     if (channel or "").lower() == "voice":
-        text = cap_voice_response_for_telephony(text)
+        text = sanitize_voice_response_for_telephony(text)
 
     return text

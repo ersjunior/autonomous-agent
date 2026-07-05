@@ -13,9 +13,27 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_EMBED_MODEL = "nomic-embed-text"
-
 _RAW_LOG_MAX_CHARS = 500
+
+
+def _ollama_keep_alive() -> float:
+    """Keep-alive per request (-1 = forever); mirrors OLLAMA_KEEP_ALIVE on the server."""
+    return float(settings.ollama_keep_alive)
+
+
+def _chat_options(
+    *,
+    temperature: float,
+    max_tokens: int | None,
+) -> dict[str, float | int]:
+    """Options compartilhadas por intent, booking, tabulação e geração (mesmo modelo/ctx)."""
+    options: dict[str, float | int] = {
+        "temperature": temperature,
+        "num_ctx": int(settings.ollama_num_ctx),
+    }
+    if max_tokens is not None and max_tokens > 0:
+        options["num_predict"] = max_tokens
+    return options
 
 
 class OllamaLLMProvider(LLMProvider):
@@ -50,15 +68,12 @@ class OllamaLLMProvider(LLMProvider):
                 *payload_messages,
             ]
 
-        options: dict[str, float | int] = {"temperature": temperature}
-        if max_tokens is not None and max_tokens > 0:
-            options["num_predict"] = max_tokens
-
         request_body: dict[str, Any] = {
             "model": settings.ollama_model,
             "messages": payload_messages,
             "stream": False,
-            "options": options,
+            "keep_alive": _ollama_keep_alive(),
+            "options": _chat_options(temperature=temperature, max_tokens=max_tokens),
         }
         if structured_output_schema is not None:
             request_body["format"] = "json"
@@ -76,7 +91,11 @@ class OllamaLLMProvider(LLMProvider):
     async def embed(self, text: str) -> list[float]:
         response = await self._client.post(
             "/api/embeddings",
-            json={"model": OLLAMA_EMBED_MODEL, "prompt": text},
+            json={
+                "model": settings.ollama_embed_model,
+                "prompt": text,
+                "keep_alive": _ollama_keep_alive(),
+            },
         )
         response.raise_for_status()
         data = response.json()

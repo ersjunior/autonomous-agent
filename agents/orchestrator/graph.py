@@ -10,7 +10,10 @@ from agents.events import publish_event_async
 from agents.memory.long_term import LongTermMemory
 from agents.memory.short_term import ShortTermMemory
 from agents.orchestrator.booking_handler import process_booking_turn
-from agents.orchestrator.farewell_handler import process_farewell_turn
+from agents.orchestrator.farewell_handler import (
+    apply_hangup_decision,
+    detect_user_farewell_signal,
+)
 from agents.orchestrator.router import route_after_escalation_check
 from agents.orchestrator.state import AgentState
 from agents.services.embedding_service import embed_text
@@ -194,21 +197,24 @@ async def handle_booking(state: AgentState) -> AgentState:
 
 
 async def handle_farewell(state: AgentState) -> AgentState:
-    """Despedida determinística + hangup (voz), após booking ter prioridade."""
-    return process_farewell_turn(state)
+    """Detecta sinal de encerramento no transcript do usuário (pré-LLM)."""
+    return detect_user_farewell_signal(state)
+
+
+async def finalize_hangup(state: AgentState) -> AgentState:
+    """Dupla confirmação pós-LLM: usuário despediu + agente não pergunta + despedida clara."""
+    return apply_hangup_decision(state)
 
 
 async def generate_response(state: AgentState) -> AgentState:
     channel = (state.get("channel") or "").lower()
     prebuilt = (state.get("response") or "").strip()
-    voice_prebuilt = channel == "voice" and prebuilt and (
-        state.get("booking_phase") is not None or state.get("should_hangup")
-    )
+    voice_prebuilt = channel == "voice" and prebuilt and state.get("booking_phase") is not None
     if voice_prebuilt:
-        from agents.workers.response_agent import cap_voice_response_for_telephony
+        from agents.workers.response_agent import sanitize_voice_response_for_telephony
 
         return {
-            "response": cap_voice_response_for_telephony(prebuilt),
+            "response": sanitize_voice_response_for_telephony(prebuilt),
             "rag_memories": [],
             "kb_chunks": [],
             "rag_ms": 0.0,
@@ -297,6 +303,7 @@ def create_graph():
     builder.add_node("escalate", escalate)
     builder.add_node("handle_booking", handle_booking)
     builder.add_node("handle_farewell", handle_farewell)
+    builder.add_node("finalize_hangup", finalize_hangup)
     builder.add_node("generate_response", generate_response)
     builder.add_node("send_response", send_response)
 
@@ -313,7 +320,8 @@ def create_graph():
     builder.add_edge("escalate", "send_response")
     builder.add_edge("handle_booking", "handle_farewell")
     builder.add_edge("handle_farewell", "generate_response")
-    builder.add_edge("generate_response", "send_response")
+    builder.add_edge("generate_response", "finalize_hangup")
+    builder.add_edge("finalize_hangup", "send_response")
     builder.add_edge("send_response", END)
 
     return builder.compile()
