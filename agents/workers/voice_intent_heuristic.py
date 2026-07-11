@@ -100,6 +100,35 @@ _GREETING_PATTERNS = (
 )
 
 FAREWELL_CONFIDENCE = 0.92
+GREETING_CONFIDENCE = 0.9
+
+
+def apply_voice_first_turn_intent(
+    result: IntentResult,
+    *,
+    conversation_history: list[dict] | None,
+) -> tuple[IntentResult, bool]:
+    """
+    On the first turn of a voice call, farewell-like transcripts are often STT errors
+    (e.g. "Olá" → "tchau"). Reclassify farewell → greeting so downstream treats the turn
+    as conversation opening.
+
+    Returns (possibly adjusted result, voice_opening_turn flag).
+    """
+    history = conversation_history or []
+    if history:
+        return result, False
+    if result.intent != "farewell":
+        return result, False
+    return (
+        IntentResult(
+            intent="greeting",
+            confidence=GREETING_CONFIDENCE,
+            entities=result.entities,
+            complaint_severity=result.complaint_severity,
+        ),
+        True,
+    )
 
 
 def _normalize(text: str) -> str:

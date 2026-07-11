@@ -98,6 +98,9 @@ def detect_user_farewell_signal(state: AgentState) -> dict:
     if _booking_consumed_turn(state):
         return {}
 
+    if not _has_prior_dialogue(state):
+        return {}
+
     if not user_signals_farewell(state):
         return {}
 

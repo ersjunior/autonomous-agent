@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 
 from agents.escalation import resolve_should_escalate
-from agents.workers.voice_intent_heuristic import identify_intent_voice_heuristic
+from agents.workers.voice_intent_heuristic import (
+    apply_voice_first_turn_intent,
+    identify_intent_voice_heuristic,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -101,6 +104,21 @@ class TestVoiceIntentHeuristic:
         result = identify_intent_voice_heuristic(message)
         assert result.intent == "farewell"
         assert result.confidence >= 0.9
+
+    def test_first_turn_reclassifies_farewell_to_greeting(self) -> None:
+        raw = identify_intent_voice_heuristic("Tchau, tchau.")
+        adjusted, opening = apply_voice_first_turn_intent(raw, conversation_history=[])
+        assert opening is True
+        assert adjusted.intent == "greeting"
+
+    def test_first_turn_keeps_farewell_when_history_exists(self) -> None:
+        raw = identify_intent_voice_heuristic("tchau")
+        adjusted, opening = apply_voice_first_turn_intent(
+            raw,
+            conversation_history=[{"role": "user", "content": "oi"}],
+        )
+        assert opening is False
+        assert adjusted.intent == "farewell"
 
     def test_bare_nao_is_not_farewell(self) -> None:
         result = identify_intent_voice_heuristic("não")

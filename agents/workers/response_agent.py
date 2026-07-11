@@ -35,6 +35,10 @@ VOICE_BEHAVIOR_PROMPT = """Modo VOZ (telefone) — como falar com o cliente:
 - O encerramento da ligação é controlado pelo sistema; responda ao cliente e não invente despedidas longas.
 - Só se despeça quando o cliente indicar claramente que não precisa de mais nada. Se você estiver fazendo uma pergunta, a conversa continua — não encerre nesse turno."""
 
+VOICE_OPENING_MISHEARD_PROMPT = """Primeiro turno desta ligação (ainda não houve conversa).
+O transcript pode parecer despedida por erro de reconhecimento de voz — trate como ABERTURA:
+cumprimente e ofereça ajuda. Não se despeça neste turno."""
+
 TEXT_BEHAVIOR_PROMPT = """Modo TEXTO (WhatsApp/Telegram) — como escrever para o cliente:
 - Por mensagem, pode desenvolver mais quando ajudar à clareza — organize em parágrafos curtos se facilitar a leitura.
 - Mantenha tom amigável e conversacional; evite respostas secas ou telegráficas quando o assunto pede contexto.
@@ -198,6 +202,7 @@ def build_response_messages(
     agent_personality: str | None = None,
     agent_mode: str | None = None,
     agent_config: dict | None = None,
+    voice_opening_turn: bool = False,
 ) -> list[dict]:
     """
     Monta mensagens para o LLM de resposta (exposto para testes e generate_response).
@@ -242,6 +247,8 @@ def build_response_messages(
     ch = (channel or "").lower()
     if ch == "voice":
         messages.append({"role": "system", "content": VOICE_BEHAVIOR_PROMPT})
+        if voice_opening_turn:
+            messages.append({"role": "system", "content": VOICE_OPENING_MISHEARD_PROMPT})
     elif ch in ("whatsapp", "telegram"):
         messages.append({"role": "system", "content": TEXT_BEHAVIOR_PROMPT})
 
@@ -276,6 +283,7 @@ async def generate_response(
     agent_personality: str | None = None,
     agent_mode: str | None = None,
     agent_config: dict | None = None,
+    voice_opening_turn: bool = False,
 ) -> str:
     llm = ProviderFactory.get_llm()
 
@@ -291,6 +299,7 @@ async def generate_response(
         agent_personality=agent_personality,
         agent_mode=agent_mode,
         agent_config=agent_config,
+        voice_opening_turn=voice_opening_turn,
     )
 
     if format_institutional_identity_block(agent_config):

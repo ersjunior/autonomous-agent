@@ -77,7 +77,15 @@ class TestUserFarewellSignal:
             ),
             patch("agents.orchestrator.farewell_handler.clear_wrap_up_pending") as clear_wrap,
         ):
-            result = detect_user_farewell_signal(_voice_state(message="tchau"))
+            result = detect_user_farewell_signal(
+                _voice_state(
+                    message="tchau",
+                    conversation_history=[
+                        {"role": "user", "content": "oi"},
+                        {"role": "assistant", "content": "Olá!"},
+                    ],
+                )
+            )
 
         clear_wrap.assert_called_once_with("CA-farewell-test")
         assert result == {"user_farewell_signal": True}
@@ -119,7 +127,15 @@ class TestUserFarewellSignal:
             patch("agents.orchestrator.farewell_handler.clear_wrap_up_pending") as clear_wrap,
         ):
             result = detect_user_farewell_signal(
-                _voice_state(message="não", intent="question", confidence=0.85)
+                _voice_state(
+                    message="não",
+                    intent="question",
+                    confidence=0.85,
+                    conversation_history=[
+                        {"role": "user", "content": "quero um curso"},
+                        {"role": "assistant", "content": "Posso ajudar!"},
+                    ],
+                )
             )
 
         assert result == {"user_farewell_signal": True}

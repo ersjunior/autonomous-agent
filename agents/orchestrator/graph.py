@@ -21,7 +21,10 @@ from agents.tools.knowledge_base import _retriever as _kb_retriever
 from agents.escalation import resolve_should_escalate
 from agents.workers.intent_agent import identify_intent as run_identify_intent
 from agents.workers.response_agent import generate_response as run_generate_response
-from agents.workers.voice_intent_heuristic import identify_intent_voice_heuristic
+from agents.workers.voice_intent_heuristic import (
+    apply_voice_first_turn_intent,
+    identify_intent_voice_heuristic,
+)
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -83,8 +86,19 @@ async def identify_intent(state: AgentState) -> AgentState:
     channel = (state.get("channel") or "").lower()
     t0 = time.perf_counter()
 
+    voice_opening_turn = False
+
     if channel == "voice":
         result = identify_intent_voice_heuristic(state["message"])
+        result, voice_opening_turn = apply_voice_first_turn_intent(
+            result,
+            conversation_history=history,
+        )
+        if voice_opening_turn:
+            logger.info(
+                "Voice first turn: reclassified farewell intent to greeting message=%r",
+                state["message"],
+            )
         intent_ms = (time.perf_counter() - t0) * 1000
         logger.debug(
             "Voice intent heuristic intent=%s confidence=%s intent_ms=%.0f",
@@ -118,6 +132,7 @@ async def identify_intent(state: AgentState) -> AgentState:
         "complaint_severity": result.complaint_severity,
         "conversation_history": history,
         "intent_ms": intent_ms,
+        "voice_opening_turn": voice_opening_turn,
     }
 
 
@@ -264,6 +279,7 @@ async def generate_response(state: AgentState) -> AgentState:
         agent_mode=state.get("agent_mode"),
         agent_config=state.get("agent_config"),
         booking_context=state.get("booking_context"),
+        voice_opening_turn=bool(state.get("voice_opening_turn")),
     )
     response_ms = (time.perf_counter() - t0) * 1000
     if rag_ms > 0:
