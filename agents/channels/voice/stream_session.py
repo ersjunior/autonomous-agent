@@ -23,8 +23,10 @@ from agents.channels.voice.mulaw_codec import (
     MULAW_FRAME_BYTES,
     chunk_mulaw,
     pcm16_to_mulaw,
+    MULAW_SILENCE_BYTE,
     wav_bytes_to_pcm16_mono,
 )
+from agents.channels.voice.echo_capture import PlaybackEchoCapture
 from agents.channels.voice.tts_stt import speech_to_text, text_to_speech
 from agents.channels.voice.twilio_voice_client import end_twilio_call
 from app.core.config import settings
@@ -42,10 +44,34 @@ _STREAM_QUEUE_SENTINEL = object()
 
 @dataclass
 class StreamCallControl:
-    """Shared WS session state (marks + hangup flag). Per-turn outputs stay local."""
+    """Shared WS session state (marks, hangup, barge-in). Per-turn outputs stay local."""
 
     mark_events: dict[str, asyncio.Event] = field(default_factory=dict)
     call_ended: bool = False
+    agent_speaking: bool = False
+    playback_interrupt: asyncio.Event = field(default_factory=asyncio.Event)
+    _barge_in_clear_sent: bool = False
+    echo_capture: PlaybackEchoCapture | None = None
+
+    def begin_agent_playback(self) -> None:
+        """Mark agent audio in-flight (send + Twilio buffer until mark echo)."""
+        self.playback_interrupt.clear()
+        self._barge_in_clear_sent = False
+        self.agent_speaking = True
+
+    def end_agent_playback(self) -> None:
+        self.agent_speaking = False
+
+    def request_playback_interrupt(self) -> bool:
+        """
+        Signal worker to abort playback. Returns True only on the first request
+        (caller should send Twilio ``clear`` once per interruption).
+        """
+        self.playback_interrupt.set()
+        if self._barge_in_clear_sent:
+            return False
+        self._barge_in_clear_sent = True
+        return True
 
 
 class StreamUtteranceWorker:
@@ -454,13 +480,54 @@ async def _process_utterance_turn(
         return
 
     tts_ms = (time.perf_counter() - tts_started) * 1000
+
+    barge_on = bool(settings.voice_stream_barge_in_enabled)
+    capture_on = bool(
+        settings.voice_stream_echo_debug_capture and control.echo_capture is not None
+    )
+    if barge_on:
+        control.playback_interrupt.clear()
+
+    if barge_on and control.playback_interrupt.is_set():
+        logger.info(
+            "Voice stream TTS discarded — playback interrupted utterance #%s callSid=%s",
+            result.index,
+            sid,
+        )
+        control.end_agent_playback()
+        control.playback_interrupt.clear()
+        return
+
     try:
-        await _send_mulaw_frames(
+        if capture_on:
+            control.echo_capture.begin_segment(
+                call_sid=sid,
+                label=f"utterance_{result.index}",
+            )
+        control.begin_agent_playback()
+        completed = await _send_mulaw_frames(
             websocket,
             stream_sid=stream_sid,
             frames=frames,
             label="agent",
+            control=control if (barge_on or capture_on) else None,
+            barge_in_enabled=barge_on,
         )
+        if barge_on and (not completed or control.playback_interrupt.is_set()):
+            if capture_on and control.echo_capture is not None:
+                control.echo_capture.finalize_segment(reason="barge_in_interrupt")
+            logger.info(
+                "Voice stream response interrupted utterance #%s callSid=%s "
+                "agent_ms=%s tts_ms=%s response=%r",
+                result.index,
+                sid,
+                agent_ms,
+                tts_ms,
+                response_text,
+            )
+            control.end_agent_playback()
+            control.playback_interrupt.clear()
+            return
         if should_hangup:
             await _execute_agent_farewell_hangup(
                 call_sid=sid,
@@ -476,6 +543,7 @@ async def _process_utterance_turn(
                 name=AGENT_RESPONSE_MARK,
             )
     except Exception as exc:
+        control.end_agent_playback()
         logger.error(
             "Voice stream outbound audio failed utterance #%s callSid=%s: %s",
             result.index,
@@ -501,7 +569,10 @@ async def _finalize_session(
     session: VoiceStreamSession | None,
     *,
     utterance_worker: StreamUtteranceWorker | None,
+    control: StreamCallControl | None = None,
 ) -> None:
+    if control is not None and control.echo_capture is not None:
+        control.echo_capture.finalize_call()
     if session is not None:
         flushed = session.flush()
         if flushed is not None and utterance_worker is not None:
@@ -523,15 +594,51 @@ async def _send_mulaw_frames(
     stream_sid: str,
     frames: list[bytes],
     label: str,
-) -> None:
-    """Send outbound μ-law frames to Twilio (base64 in JSON media events)."""
+    control: StreamCallControl | None = None,
+    barge_in_enabled: bool = False,
+) -> bool:
+    """
+    Send outbound μ-law frames to Twilio (base64 in JSON media events).
+
+    Returns True if all frames were sent, False if aborted via barge-in interrupt.
+    Interrupt checks apply only when ``barge_in_enabled`` (D1 parity when off).
+    """
     for index, frame in enumerate(frames, start=1):
+        if len(frame) != MULAW_FRAME_BYTES:
+            logger.error(
+                "Voice stream %s frame %s/%s invalid size=%s (expected %s)",
+                label,
+                index,
+                len(frames),
+                len(frame),
+                MULAW_FRAME_BYTES,
+            )
+            frame = frame + bytes([MULAW_SILENCE_BYTE]) * (MULAW_FRAME_BYTES - len(frame))
+        if (
+            barge_in_enabled
+            and control is not None
+            and control.playback_interrupt.is_set()
+        ):
+            logger.info(
+                "Voice stream %s aborted at frame %s/%s",
+                label,
+                index,
+                len(frames),
+            )
+            return False
         outbound: dict[str, Any] = {
             "event": "media",
             "streamSid": stream_sid,
             "media": {"payload": base64.b64encode(frame).decode("ascii")},
         }
         await websocket.send_text(json.dumps(outbound))
+        if (
+            control is not None
+            and control.echo_capture is not None
+            and control.echo_capture.segment_active
+            and label == "agent"
+        ):
+            control.echo_capture.record_outbound(frame, ts=time.perf_counter())
         if index == 1 or index == len(frames) or index % 10 == 0:
             logger.info(
                 "Voice stream %s: frame %s/%s (%s bytes μ-law)",
@@ -540,6 +647,17 @@ async def _send_mulaw_frames(
                 len(frames),
                 len(frame),
             )
+    return True
+
+
+async def _send_clear(websocket: WebSocket, *, stream_sid: str) -> None:
+    """Twilio ``clear`` — empties buffered outbound audio (barge-in)."""
+    payload = {
+        "event": "clear",
+        "streamSid": stream_sid,
+    }
+    await websocket.send_text(json.dumps(payload))
+    logger.info("Voice stream clear sent streamSid=%s", stream_sid)
 
 
 async def _send_mark(websocket: WebSocket, *, stream_sid: str, name: str) -> None:
@@ -553,6 +671,27 @@ async def _send_mark(websocket: WebSocket, *, stream_sid: str, name: str) -> Non
     logger.info("Voice stream mark sent name=%s streamSid=%s", name, stream_sid)
 
 
+async def _handle_barge_in(
+    websocket: WebSocket,
+    *,
+    stream_sid: str,
+    control: StreamCallControl,
+    session: VoiceStreamSession,
+    call_sid: str | None,
+) -> None:
+    """F1 barge-in: clear Twilio buffer + abort worker playback."""
+    if not control.request_playback_interrupt():
+        return
+    logger.info(
+        "Voice stream barge-in detected callSid=%s streamSid=%s",
+        call_sid or "?",
+        stream_sid,
+    )
+    await _send_clear(websocket, stream_sid=stream_sid)
+    control.end_agent_playback()
+    session.reset_barge_in_detection()
+
+
 async def handle_voice_media_stream(websocket: WebSocket) -> None:
     """
     Handle bidirectional Twilio Media Stream.
@@ -562,6 +701,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
     Fase C: utterance → FIFO worker (STT → agent → TTS, serial per call).
     Fase D1: STT → agent → TTS 8 kHz → μ-law outbound (FIFO worker per call).
     Fase D2a: farewell → mark → REST hangup.
+    Fase F1: barge-in (clear + abort playback on sustained lead speech).
     """
     await websocket.accept()
     logger.info("Voice Media Stream WebSocket accepted")
@@ -574,6 +714,13 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
     media_in_count = 0
     media_out_count = 0
     control = StreamCallControl()
+    if settings.voice_stream_echo_debug_capture:
+        control.echo_capture = PlaybackEchoCapture()
+        logger.info(
+            "Voice stream echo debug capture enabled callSid=%s (barge_in=%s)",
+            "pending",
+            settings.voice_stream_barge_in_enabled,
+        )
 
     try:
         while True:
@@ -631,6 +778,8 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     logger.error("Voice stream start without streamSid — cannot send audio")
                     continue
 
+                session.agent_speaking_check = lambda: control.agent_speaking
+
                 utterance_worker = StreamUtteranceWorker(
                     call_sid=call_sid,
                     stream_sid=stream_sid,
@@ -638,6 +787,9 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                     control=control,
                 )
                 utterance_worker.start()
+
+                if control.echo_capture is not None:
+                    control.echo_capture.call_sid = call_sid
 
                 logger.info(
                     "Voice stream sending intro beep (%s frames, %s bytes/frame)",
@@ -685,9 +837,32 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                         )
                         frame_mulaw = b""
                     if frame_mulaw:
-                        closed = session.feed_mulaw_frame(frame_mulaw)
-                        if closed is not None and utterance_worker is not None:
-                            utterance_worker.enqueue(closed)
+                        if (
+                            control.echo_capture is not None
+                            and control.echo_capture.segment_active
+                        ):
+                            control.echo_capture.record_inbound(
+                                frame_mulaw,
+                                ts=time.perf_counter(),
+                            )
+                        feed_result = session.feed_mulaw_frame(frame_mulaw)
+                        if (
+                            feed_result.barge_in
+                            and stream_sid
+                            and settings.voice_stream_barge_in_enabled
+                        ):
+                            await _handle_barge_in(
+                                websocket,
+                                stream_sid=stream_sid,
+                                control=control,
+                                session=session,
+                                call_sid=call_sid,
+                            )
+                        if (
+                            feed_result.utterance is not None
+                            and utterance_worker is not None
+                        ):
+                            utterance_worker.enqueue(feed_result.utterance)
 
                 if echo_enabled and stream_sid and payload_b64:
                     outbound = {
@@ -720,6 +895,13 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                         "Voice stream listening enabled (intro_done mark) callSid=%s",
                         call_sid or "?",
                     )
+                if mark_name in (AGENT_RESPONSE_MARK, FAREWELL_DONE_MARK):
+                    if control.echo_capture is not None:
+                        control.echo_capture.finalize_segment(
+                            reason=f"mark_{mark_name}",
+                        )
+                    control.end_agent_playback()
+                    control.playback_interrupt.clear()
                 continue
 
             if event == "stop":
@@ -733,6 +915,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
                 await _finalize_session(
                     session,
                     utterance_worker=utterance_worker,
+                    control=control,
                 )
                 break
 
@@ -755,6 +938,7 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
         await _finalize_session(
             session,
             utterance_worker=utterance_worker,
+            control=control,
         )
     except Exception:
         logger.exception(
@@ -765,5 +949,6 @@ async def handle_voice_media_stream(websocket: WebSocket) -> None:
         await _finalize_session(
             session,
             utterance_worker=utterance_worker,
+            control=control,
         )
         raise

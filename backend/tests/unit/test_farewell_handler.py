@@ -159,11 +159,33 @@ class TestApplyHangupDecision:
         state = _voice_state(
             user_farewell_signal=True,
             response=VOICE_FAREWELL_PHRASE,
+            conversation_history=[
+                {"role": "user", "content": "quero um curso"},
+                {"role": "assistant", "content": "Claro, posso ajudar."},
+            ],
         )
         assert apply_hangup_decision(state) == {
             "should_hangup": True,
             "response": VOICE_FAREWELL_PHRASE,
         }
+
+    def test_first_turn_farewell_never_hangs_up(self) -> None:
+        """STT may mis-transcribe 'Olá' as 'tchau' — never hang up on an empty call history."""
+        state = _voice_state(
+            user_farewell_signal=True,
+            response=VOICE_FAREWELL_PHRASE,
+            conversation_history=[],
+        )
+        assert apply_hangup_decision(state) == {"should_hangup": False}
+
+    def test_first_turn_farewell_misheard_tchau_no_hangup(self) -> None:
+        state = _voice_state(
+            message="Tchau, tchau.",
+            user_farewell_signal=True,
+            response="Tchau! Foi um prazer ajudá-lo hoje.",
+            conversation_history=[],
+        )
+        assert apply_hangup_decision(state) == {"should_hangup": False}
 
     def test_user_farewell_but_agent_courtesy_no_hangup(self) -> None:
         state = _voice_state(
@@ -198,6 +220,10 @@ async def test_finalize_hangup_after_llm_farewell() -> None:
     state = _voice_state(
         user_farewell_signal=True,
         response=VOICE_FAREWELL_PHRASE,
+        conversation_history=[
+            {"role": "user", "content": "obrigado pela ajuda"},
+            {"role": "assistant", "content": "De nada!"},
+        ],
     )
     result = await finalize_hangup(state)
     assert result["should_hangup"] is True

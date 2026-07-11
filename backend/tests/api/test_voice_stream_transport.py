@@ -273,8 +273,7 @@ def test_pcm16_to_mulaw_output_size() -> None:
 def test_intro_frames_are_160_bytes() -> None:
     assert len(INTRO_FRAMES) > 0
     for frame in INTRO_FRAMES:
-        assert len(frame) <= MULAW_FRAME_BYTES
-        assert len(frame) > 0
+        assert len(frame) == MULAW_FRAME_BYTES
 
 
 @pytest.mark.unit
@@ -282,7 +281,27 @@ def test_chunk_mulaw_splits_correctly() -> None:
     data = bytes(range(256)) * 2  # 512 bytes
     frames = chunk_mulaw(data, frame_size=160)
     assert len(frames) == 4
-    assert sum(len(f) for f in frames) == 512
+    assert all(len(f) == 160 for f in frames)
+    assert sum(len(f) for f in frames) == 640
+
+
+@pytest.mark.unit
+def test_chunk_mulaw_pads_partial_last_frame_with_silence() -> None:
+    data = b"\x55" * 400  # 2 full + 80 partial
+    frames = chunk_mulaw(data)
+    assert len(frames) == 3
+    assert all(len(f) == MULAW_FRAME_BYTES for f in frames)
+    assert frames[0] == b"\x55" * 160
+    assert frames[1] == b"\x55" * 160
+    assert frames[2][:80] == b"\x55" * 80
+    assert frames[2][80:] == bytes([0xFF]) * 80
+
+
+@pytest.mark.unit
+def test_pcm16_to_mulaw_ignores_trailing_odd_byte() -> None:
+    pcm = b"\x00\x01" * 10 + b"\x99"  # 21 bytes
+    mulaw = pcm16_to_mulaw(pcm)
+    assert len(mulaw) == 10
 
 
 async def test_media_stream_ws_protocol_beep_and_mark(test_app, monkeypatch) -> None:

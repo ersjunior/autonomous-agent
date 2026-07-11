@@ -14,6 +14,7 @@ from agents.channels.voice.audio_pipeline import (
     resample_8k_to_16k,
 )
 from agents.channels.voice.mulaw_codec import (
+    INTRO_FRAMES,
     MULAW_FRAME_BYTES,
     chunk_mulaw,
     generate_intro_beep_mulaw,
@@ -126,8 +127,8 @@ def test_vad_state_machine_one_utterance() -> None:
     closed = None
     for _ in range(silence_lead + speech_frames + silence_tail + 2):
         result = session.feed_mulaw_frame(MULAW_SILENCE_FRAME)
-        if result is not None:
-            closed = result
+        if result.utterance is not None:
+            closed = result.utterance
             break
 
     assert closed is not None
@@ -173,6 +174,61 @@ def test_flush_closes_pending_utterance() -> None:
     assert flushed is not None
     assert flushed.index == 1
     assert flushed.duration_ms >= 400
+
+
+def test_agent_playback_gate_ignores_echo_when_barge_off() -> None:
+    from agents.channels.voice.stream_session import StreamCallControl
+
+    control = StreamCallControl()
+    control.begin_agent_playback()
+    vad = MockVad([True] * 40)
+    session = create_voice_stream_session(
+        call_sid="CAecho",
+        stream_sid="MZecho",
+        barge_in_enabled=False,
+        vad=vad,
+    )
+    session.listening = True
+    session.agent_speaking_check = lambda: control.agent_speaking
+
+    for _ in range(40):
+        result = session.feed_mulaw_frame(MULAW_SILENCE_FRAME)
+        assert result.utterance is None
+
+    assert session.utterance_count == 0
+    assert vad._index == 0
+
+
+def test_agent_playback_gate_reopens_after_mark_semantics() -> None:
+    from agents.channels.voice.stream_session import StreamCallControl
+
+    control = StreamCallControl()
+    control.begin_agent_playback()
+    hangover = 600 // 20
+    vad = MockVad([True] * 25 + [False] * hangover)
+    session = create_voice_stream_session(
+        call_sid="CAreopen",
+        stream_sid="MZreopen",
+        barge_in_enabled=False,
+        silence_hangover_ms=600,
+        min_utterance_ms=400,
+        frame_ms=20,
+        vad=vad,
+    )
+    session.listening = True
+    session.agent_speaking_check = lambda: control.agent_speaking
+
+    control.end_agent_playback()
+
+    closed = None
+    for _ in range(60):
+        result = session.feed_mulaw_frame(MULAW_SILENCE_FRAME)
+        if result.utterance is not None:
+            closed = result.utterance
+            break
+
+    assert closed is not None
+    assert closed.index == 1
 
 
 def test_is_voice_stream_available_caches_result(monkeypatch) -> None:
@@ -227,3 +283,30 @@ def test_listening_gate_ignores_frames_before_enable() -> None:
     session.listening = True
     session.feed_mulaw_frame(tone)
     vad.is_speech.assert_called_once()
+
+
+def test_intro_frames_are_exactly_160_bytes() -> None:
+    assert len(INTRO_FRAMES) > 0
+    assert all(len(frame) == MULAW_FRAME_BYTES for frame in INTRO_FRAMES)
+
+
+def test_chunk_mulaw_exact_multiple_all_160() -> None:
+    data = bytes(range(256)) * 2
+    frames = chunk_mulaw(data, frame_size=160)
+    assert len(frames) == 4
+    assert all(len(f) == MULAW_FRAME_BYTES for f in frames)
+
+
+def test_chunk_mulaw_pads_partial_last_frame_with_silence() -> None:
+    data = b"\x55" * 400
+    frames = chunk_mulaw(data)
+    assert len(frames) == 3
+    assert all(len(f) == MULAW_FRAME_BYTES for f in frames)
+    assert frames[2][:80] == b"\x55" * 80
+    assert frames[2][80:] == bytes([0xFF]) * 80
+
+
+def test_pcm16_to_mulaw_ignores_trailing_odd_byte() -> None:
+    pcm = b"\x00\x01" * 10 + b"\x99"
+    mulaw = pcm16_to_mulaw(pcm)
+    assert len(mulaw) == 10

@@ -9,6 +9,7 @@ import wave
 
 # Twilio Media Streams: ~20 ms @ 8 kHz mono μ-law
 MULAW_FRAME_BYTES = 160
+MULAW_SILENCE_BYTE = 0xFF
 SAMPLE_RATE = 8000
 
 _MULAW_BIAS = 0x84
@@ -72,22 +73,34 @@ def wav_bytes_to_pcm16_mono(wav_bytes: bytes, *, expected_rate: int = 8000) -> b
 
 def pcm16_to_mulaw(pcm: bytes) -> bytes:
     """Convert little-endian PCM 16-bit mono buffer to raw μ-law bytes."""
-    out = bytearray(len(pcm) // 2)
-    for i in range(0, len(pcm), 2):
+    usable = len(pcm) - (len(pcm) % 2)
+    if usable <= 0:
+        return b""
+    out = bytearray(usable // 2)
+    for i in range(0, usable, 2):
         sample = struct.unpack("<h", pcm[i : i + 2])[0]
         out[i // 2] = _linear_to_mulaw(sample)
     return bytes(out)
 
 
+def _pad_mulaw_frame(frame: bytes, frame_size: int = MULAW_FRAME_BYTES) -> bytes:
+    """Pad a partial μ-law frame with G.711 silence (0xFF) for Twilio (exactly frame_size bytes)."""
+    if len(frame) >= frame_size:
+        return frame[:frame_size]
+    return frame + bytes([MULAW_SILENCE_BYTE]) * (frame_size - len(frame))
+
+
 def chunk_mulaw(data: bytes, frame_size: int = MULAW_FRAME_BYTES) -> list[bytes]:
-    """Split raw μ-law bytes into Twilio-sized frames (~20 ms each)."""
+    """Split raw μ-law bytes into Twilio-sized frames (~20 ms each, always frame_size bytes)."""
     if not data:
         return []
-    return [
-        data[offset : offset + frame_size]
-        for offset in range(0, len(data), frame_size)
-        if data[offset : offset + frame_size]
-    ]
+    frames: list[bytes] = []
+    for offset in range(0, len(data), frame_size):
+        chunk = data[offset : offset + frame_size]
+        if not chunk:
+            continue
+        frames.append(_pad_mulaw_frame(chunk, frame_size))
+    return frames
 
 
 def generate_intro_beep_mulaw(

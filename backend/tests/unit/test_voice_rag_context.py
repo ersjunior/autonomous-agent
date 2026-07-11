@@ -7,11 +7,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agents.orchestrator.graph import _fetch_rag_context
+from agents.workers.response_agent import build_response_messages, format_rag_context_block
 
 
 @pytest.mark.asyncio
-async def test_voice_rag_separates_memory_limit_from_kb_top_k_and_thresholds():
-    """Voice: memória limitada; KB usa top_k global e threshold de voz."""
+async def test_voice_rag_skips_conversation_history_but_keeps_kb():
+    """Voice: sem memória de conversas passadas; KB do projeto continua."""
     state = {
         "message": "horario de atendimento",
         "channel": "voice",
@@ -26,23 +27,15 @@ async def test_voice_rag_separates_memory_limit_from_kb_top_k_and_thresholds():
         patch("agents.orchestrator.graph._kb_retriever") as kb_mock,
         patch("agents.orchestrator.graph.settings") as settings_mock,
     ):
-        settings_mock.voice_rag_top_k = 3
-        settings_mock.voice_rag_similarity_threshold = 0.5
         settings_mock.voice_kb_similarity_threshold = 0.50
         embed_mock.return_value = fake_embedding
-        memory_mock.retrieve_similar_memories = AsyncMock(return_value=[])
+        memory_mock.retrieve_similar_memories = AsyncMock(return_value=[{"message": "old"}])
         kb_mock.retrieve_kb_chunks = AsyncMock(return_value=[{"content": "kb"}])
 
         memories, chunks, rag_ms = await _fetch_rag_context(state)
 
         embed_mock.assert_awaited_once_with("horario de atendimento")
-        memory_mock.retrieve_similar_memories.assert_awaited_once_with(
-            "+5511999999999",
-            "horario de atendimento",
-            limit=3,
-            threshold=0.5,
-            query_embedding=fake_embedding,
-        )
+        memory_mock.retrieve_similar_memories.assert_not_awaited()
         kb_mock.retrieve_kb_chunks.assert_awaited_once_with(
             "a3448f9b-4c81-4b11-b056-698f7c887c8e",
             "horario de atendimento",
@@ -57,7 +50,7 @@ async def test_voice_rag_separates_memory_limit_from_kb_top_k_and_thresholds():
 
 @pytest.mark.asyncio
 async def test_whatsapp_rag_uses_global_defaults_not_voice_overrides():
-    """WhatsApp: sem limit/threshold de voz."""
+    """WhatsApp: memória de conversas + KB (comportamento inalterado)."""
     state = {
         "message": "qual o preco do curso",
         "channel": "whatsapp",
@@ -90,3 +83,24 @@ async def test_whatsapp_rag_uses_global_defaults_not_voice_overrides():
             threshold=None,
             query_embedding=[0.2] * 8,
         )
+
+
+def test_voice_messages_exclude_past_conversation_rag_even_if_passed():
+    """Defesa em profundidade: bloco de conversas passadas não entra no prompt de voz."""
+    past = [{"message": "Olá", "response": "Olá novamente!", "similarity": 0.94}]
+    kb = [{"content": "Cursos de IA e tecnologia.", "document_title": "Catálogo"}]
+
+    messages = build_response_messages(
+        "quais cursos vocês têm?",
+        "question",
+        {},
+        [],
+        "voice",
+        rag_memories=past,
+        kb_chunks=kb,
+    )
+
+    system_text = "\n".join(m["content"] for m in messages if m["role"] == "system")
+    assert format_rag_context_block(past) is not None
+    assert "Conversas anteriores relevantes" not in system_text
+    assert "Cursos de IA e tecnologia" in system_text

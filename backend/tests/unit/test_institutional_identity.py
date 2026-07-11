@@ -30,6 +30,8 @@ class TestFormatInstitutionalIdentityBlock:
         assert "Plataforma de cursos online" in block
         assert "Cumprimente pelo nome da empresa" in block
         assert "NÃO invente preços" in block
+        assert "NUNCA revele" in block
+        assert "Meta" in block
 
     def test_display_name_fallback_to_company_name(self) -> None:
         block = format_institutional_identity_block(

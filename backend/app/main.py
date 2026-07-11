@@ -27,6 +27,8 @@ from app.core.seed import (
 )
 from app.services.settings_sync import bootstrap_settings
 
+_configure_logging()
+
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 

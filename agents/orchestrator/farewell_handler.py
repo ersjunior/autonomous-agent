@@ -108,6 +108,17 @@ def detect_user_farewell_signal(state: AgentState) -> dict:
     return {"user_farewell_signal": True}
 
 
+def _has_prior_dialogue(state: AgentState) -> bool:
+    """
+    True when at least one user/assistant turn completed before the current message.
+
+    ``conversation_history`` is loaded from Redis in ``identify_intent`` (chat:{call_sid}
+    for voice) and excludes the in-flight user message — empty means first turn of the call.
+    """
+    history = state.get("conversation_history") or []
+    return len(history) > 0
+
+
 def apply_hangup_decision(state: AgentState) -> dict:
     """
     Fase 2 (pós-LLM): hangup só com dupla confirmação:
@@ -118,6 +129,9 @@ def apply_hangup_decision(state: AgentState) -> dict:
         return {"should_hangup": False}
 
     if not state.get("user_farewell_signal"):
+        return {"should_hangup": False}
+
+    if not _has_prior_dialogue(state):
         return {"should_hangup": False}
 
     response = (state.get("response") or "").strip()

@@ -41,12 +41,23 @@ class UtteranceClosed:
     index: int
 
 
+@dataclass(frozen=True)
+class FeedFrameResult:
+    """Result of processing one inbound μ-law frame."""
+
+    utterance: UtteranceClosed | None = None
+    barge_in: bool = False
+
+
 @dataclass
 class VoiceStreamSession:
     """
     Per-call inbound audio state: decode, resample, VAD, utterance buffer.
 
     ``listening`` gates processing until the intro beep finishes (anti-echo).
+    During agent playback (``agent_speaking_check``), inbound frames are ignored
+    when ``barge_in_enabled`` is False (D1 parity). When barge-in is on, VAD runs
+    in barge-in detection mode instead of utterance capture.
     """
 
     vad: _VadLike = field(repr=False)
@@ -56,12 +67,17 @@ class VoiceStreamSession:
     silence_hangover_ms: int = 600
     min_utterance_ms: int = 400
     max_utterance_ms: int = 30000
+    barge_in_ms: int = 300
+    barge_in_enabled: bool = True
+    agent_speaking_check: Callable[[], bool] | None = field(default=None, repr=False)
     pcm_buffer: bytearray = field(default_factory=bytearray)
     in_speech: bool = False
     silence_frames: int = 0
     speech_frames: int = 0
     utterance_count: int = 0
     listening: bool = False
+    barge_in_speech_frames: int = 0
+    barge_in_pcm_prefix: bytearray = field(default_factory=bytearray)
 
     @property
     def _hangover_frames(self) -> int:
@@ -76,6 +92,10 @@ class VoiceStreamSession:
         return max(1, self.max_utterance_ms // self.frame_ms)
 
     @property
+    def _barge_in_threshold_frames(self) -> int:
+        return max(1, self.barge_in_ms // self.frame_ms)
+
+    @property
     def _pcm_frame_bytes_16k(self) -> int:
         samples = SAMPLE_RATE_16K * self.frame_ms // 1000
         return samples * 2
@@ -88,6 +108,11 @@ class VoiceStreamSession:
         self.in_speech = False
         self.silence_frames = 0
         self.speech_frames = 0
+
+    def reset_barge_in_detection(self) -> None:
+        """Clear barge-in counters after interrupt (playback abort)."""
+        self.barge_in_speech_frames = 0
+        self.barge_in_pcm_prefix.clear()
 
     def _close_utterance(self, *, forced: bool = False) -> UtteranceClosed | None:
         duration_ms = self._duration_ms()
@@ -113,10 +138,17 @@ class VoiceStreamSession:
         self._reset_utterance_state()
         return result
 
-    def feed_mulaw_frame(self, frame_mulaw_8k: bytes) -> UtteranceClosed | None:
+    def feed_mulaw_frame(self, frame_mulaw_8k: bytes) -> FeedFrameResult:
         """Process one Twilio μ-law frame (~20 ms @ 8 kHz). Runs inline (CPU-light)."""
         if not self.listening or not frame_mulaw_8k:
-            return None
+            return FeedFrameResult()
+
+        playback_active = (
+            self.agent_speaking_check is not None
+            and self.agent_speaking_check()
+        )
+        if playback_active and not self.barge_in_enabled:
+            return FeedFrameResult()
 
         pcm_8k = mulaw_to_pcm16(frame_mulaw_8k)
         pcm_16k = resample_8k_to_16k(pcm_8k)
@@ -128,26 +160,64 @@ class VoiceStreamSession:
                 frame_bytes,
                 self.call_sid or "?",
             )
-            return None
+            return FeedFrameResult()
 
         is_speech = self.vad.is_speech(pcm_16k, SAMPLE_RATE_16K)
 
+        if playback_active and self.barge_in_enabled:
+            return self._feed_barge_in_detection(pcm_16k, is_speech=is_speech)
+
+        return self._feed_utterance_detection(pcm_16k, is_speech=is_speech)
+
+    def _feed_barge_in_detection(
+        self,
+        pcm_16k: bytes,
+        *,
+        is_speech: bool,
+    ) -> FeedFrameResult:
+        """Count sustained speech during agent playback; trigger barge-in at threshold."""
+        if is_speech:
+            self.barge_in_speech_frames += 1
+            self.barge_in_pcm_prefix.extend(pcm_16k)
+            if self.barge_in_speech_frames >= self._barge_in_threshold_frames:
+                self.pcm_buffer.extend(self.barge_in_pcm_prefix)
+                self.barge_in_pcm_prefix.clear()
+                self.in_speech = True
+                self.silence_frames = 0
+                self.speech_frames = len(self.pcm_buffer) // self._pcm_frame_bytes_16k
+                self.barge_in_speech_frames = 0
+                return FeedFrameResult(barge_in=True)
+            return FeedFrameResult()
+
+        self.barge_in_speech_frames = 0
+        self.barge_in_pcm_prefix.clear()
+        return FeedFrameResult()
+
+    def _feed_utterance_detection(
+        self,
+        pcm_16k: bytes,
+        *,
+        is_speech: bool,
+    ) -> FeedFrameResult:
+        """Normal utterance boundary detection (Fase B)."""
         if is_speech:
             self.in_speech = True
             self.pcm_buffer.extend(pcm_16k)
             self.silence_frames = 0
             self.speech_frames += 1
             if self.speech_frames >= self._max_speech_frames:
-                return self._close_utterance(forced=True)
-            return None
+                closed = self._close_utterance(forced=True)
+                return FeedFrameResult(utterance=closed)
+            return FeedFrameResult()
 
         if self.in_speech:
             self.silence_frames += 1
             self.pcm_buffer.extend(pcm_16k)
             if self.silence_frames >= self._hangover_frames:
-                return self._close_utterance(forced=False)
+                closed = self._close_utterance(forced=False)
+                return FeedFrameResult(utterance=closed)
 
-        return None
+        return FeedFrameResult()
 
     def flush(self) -> UtteranceClosed | None:
         """Close a pending utterance on stop/disconnect (speech without trailing silence)."""
@@ -231,6 +301,8 @@ def create_voice_stream_session(
     silence_hangover_ms: int = 600,
     min_utterance_ms: int = 400,
     max_utterance_ms: int = 30000,
+    barge_in_ms: int = 300,
+    barge_in_enabled: bool = True,
     vad: _VadLike | None = None,
 ) -> VoiceStreamSession:
     """Build session with webrtcvad configured from settings/env."""
@@ -246,6 +318,8 @@ def create_voice_stream_session(
         silence_hangover_ms=silence_hangover_ms,
         min_utterance_ms=min_utterance_ms,
         max_utterance_ms=max_utterance_ms,
+        barge_in_ms=barge_in_ms,
+        barge_in_enabled=barge_in_enabled,
         listening=False,
     )
 
@@ -265,4 +339,6 @@ def create_voice_stream_session_from_settings(
         silence_hangover_ms=int(settings.voice_stream_silence_hangover_ms),
         min_utterance_ms=int(settings.voice_stream_min_utterance_ms),
         max_utterance_ms=int(settings.voice_stream_max_utterance_ms),
+        barge_in_ms=int(settings.voice_stream_barge_in_ms),
+        barge_in_enabled=bool(settings.voice_stream_barge_in_enabled),
     )

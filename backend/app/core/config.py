@@ -16,8 +16,10 @@ DEFAULT_AGENT_SYSTEM_PROMPT = textwrap.dedent(
     - Se a informação solicitada não estiver no contexto, diga claramente que você não possui essa informação. Não preencha lacunas com suposições, exemplos ou conhecimento geral sobre empresas ou produtos.
     - NUNCA invente, assuma ou deduza nome de empresa, marca, produto, serviço, preço, política, horário ou identidade institucional que não esteja explicitamente definida no contexto.
     - Trechos ilustrativos, exemplos de código, narrativas de TCC ou casos fictícios na base de conhecimento NÃO definem quem você é nem o que a organização oferece — ignore-os para fins de identidade e oferta comercial.
-    - Se não houver bloco de identidade institucional abaixo no contexto, apresente-se de forma neutra como atendente virtual, sem adotar persona, marca ou empresa de terceiros.
-    - Não mencione que você é uma IA, a menos que o cliente pergunte diretamente.
+    - Quando houver bloco de identidade institucional abaixo, você É o assistente virtual dessa empresa — mantenha essa persona em todo o atendimento (nome, tom e contexto definidos ali).
+    - NUNCA revele ser um modelo de linguagem de terceiros (Meta, llama, OpenAI ou similares), NUNCA discuta dados de treinamento, arquitetura ou tecnologia interna do modelo.
+    - Se perguntarem que IA você é, sobre seu treino ou que modelo usa, responda apenas que é o assistente virtual da empresa (conforme identidade abaixo) e redirecione gentilmente ao atendimento comercial — sem mencionar fornecedores de IA.
+    - Se não houver bloco de identidade institucional no contexto, apresente-se de forma neutra como atendente virtual, sem adotar persona, marca ou empresa de terceiros e sem revelar fornecedores ou arquitetura de IA.
 
     Conduta de atendimento:
     - Seu foco é o atendimento comercial e de suporte: produtos, serviços, dúvidas, solicitações e necessidades do cliente relacionadas ao negócio.
@@ -151,12 +153,18 @@ class Settings(BaseSettings):
     voice_inbound_greeting: str = DEFAULT_VOICE_INBOUND_GREETING
     # Fase A stream: eco bidirecional (debug); desligado em produção
     voice_stream_echo_debug: bool = False
+    # Diagnóstico temporário F1: medir eco inbound vs outbound durante playback (só logging)
+    voice_stream_echo_debug_capture: bool = False
     # Fase B stream: VAD / fim de utterance (~600 ms) — NÃO confundir com silêncio de encerramento (30s/15s)
     voice_stream_vad_aggressiveness: int = 2
     voice_stream_vad_frame_ms: int = 20
     voice_stream_silence_hangover_ms: int = 600
     voice_stream_min_utterance_ms: int = 400
     voice_stream_max_utterance_ms: int = 30000
+    # F1 stream: barge-in — lead interrompe playback do agente (clear + abort).
+    # Desligado por padrão: eco acústico PSTN causa falso barge-in (ver docs §10.8).
+    voice_stream_barge_in_enabled: bool = False
+    voice_stream_barge_in_ms: int = 300
     # D2 stream: aguardar mark de playback antes de REST hangup (farewell)
     voice_stream_farewell_mark_timeout_seconds: int = 10
     voice_silence_warning_seconds: int = 30
@@ -268,12 +276,12 @@ class Settings(BaseSettings):
     # KB na voz: STT curto reduz similaridade; threshold menor que o global (WhatsApp/Telegram).
     voice_kb_similarity_threshold: float = 0.50
     # Rede de segurança do LLM (Ollama num_predict / OpenAI max_tokens). 0 = sem limite.
-    # Voz: teto generoso (~256) — guiado pelo VOICE_BEHAVIOR_PROMPT; impede monólogos extremos.
+    # Voz: teto curto (~64 tokens, 1–3 frases) — guiado pelo VOICE_BEHAVIOR_PROMPT.
     # Texto: cap maior/livre; o tamanho é guiado pelo TEXT_BEHAVIOR_PROMPT.
     response_max_tokens: int = 1024
-    voice_response_max_tokens: int = 256
-    # Deprecated — truncamento pós-LLM removido; mantido só para compatibilidade de env.
-    voice_max_response_chars: int = 0
+    voice_response_max_tokens: int = 64
+    # Rede de segurança pós-LLM (voz): corta na última frase completa acima deste teto. 0 = desligado.
+    voice_max_response_chars: int = 300
 
     def resolved_kb_top_k(self) -> int:
         return self.rag_top_k if self.kb_top_k <= 0 else self.kb_top_k

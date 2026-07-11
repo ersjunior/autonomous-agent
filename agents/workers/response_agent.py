@@ -26,8 +26,9 @@ RECEPTIVE_BEHAVIOR_PROMPT = """Modo RECEPTIVO — como conduzir o atendimento:
   de atendente humano ou sinal claro de escalonamento — reconheça e indique a transferência."""
 
 VOICE_BEHAVIOR_PROMPT = """Modo VOZ (telefone) — como falar com o cliente:
-- Você está numa LIGAÇÃO TELEFÔNICA. Responda de forma natural, amigável e completa — como alguém simpático numa conversa telefônica real. Nem telegráfico, nem monólogos longos.
-- Em ligações de voz, vá direto ao ponto: o suficiente para ser claro e simpático, sem enrolar. Evite respostas muito longas ou prolixas. Se precisar dar muita informação, resuma e ofereça detalhar se o cliente quiser.
+- Você está numa LIGAÇÃO TELEFÔNICA. Tom natural e amigável — como alguém simpático numa conversa real. Nem telegráfico, nem monólogos.
+- Em ligações, seja BREVE: responda em 1 a 3 frases curtas. Vá direto ao ponto. Se o cliente quiser mais detalhes, ele vai perguntar.
+- NUNCA liste vários itens de uma vez numa ligação — resuma e ofereça detalhar se quiser saber mais.
 - Use o histórico, a base de conhecimento e as memórias (RAG) quando disponíveis — não invente o que não estiver no contexto.
 - Use linguagem falada; evite markdown, emojis, listas longas ou parágrafos densos.
 - Se precisar de mais informação, faça perguntas claras e naturais (preferencialmente uma de cada vez).
@@ -87,14 +88,35 @@ def _strip_markdown_for_tts(text: str) -> str:
     return cleaned.strip()
 
 
+def cap_voice_response_at_sentence_boundary(text: str, max_chars: int) -> str:
+    """
+    Rede de segurança pós-LLM: limita tamanho cortando na última frase completa.
+
+    Evita respostas extremas (500+ chars) se o LLM ignorar prompt e token cap.
+    """
+    cleaned = (text or "").strip()
+    if max_chars <= 0 or len(cleaned) <= max_chars:
+        return cleaned
+
+    window = cleaned[:max_chars]
+    last_idx = max(window.rfind("."), window.rfind("!"), window.rfind("?"))
+    if last_idx > 0:
+        return cleaned[: last_idx + 1].strip()
+
+    return trim_voice_response_to_complete_sentence(window)
+
+
 def sanitize_voice_response_for_telephony(text: str) -> str:
     """
-    Sanitiza resposta de voz para TTS — sem cortar tamanho.
+    Sanitiza resposta de voz para TTS.
 
-    Preserva: remoção de markdown e fechamento de frase incompleta (quando o LLM
-    para no meio por limite de tokens). Não limita frases nem caracteres.
+    Remove markdown, aplica cap generoso em fronteira de frase (se configurado)
+    e fecha frase incompleta quando o LLM para no meio por limite de tokens.
     """
     cleaned = _strip_markdown_for_tts(text)
+    max_chars = int(settings.voice_max_response_chars or 0)
+    if max_chars > 0:
+        cleaned = cap_voice_response_at_sentence_boundary(cleaned, max_chars)
     return trim_voice_response_to_complete_sentence(cleaned)
 
 
@@ -230,9 +252,11 @@ def build_response_messages(
     if booking_context:
         messages.append({"role": "system", "content": booking_context})
 
-    rag_block = format_rag_context_block(rag_memories or [])
-    if rag_block:
-        messages.append({"role": "system", "content": rag_block})
+    # Voice: each call is self-contained — past conversation RAG is omitted (KB only).
+    if ch != "voice":
+        rag_block = format_rag_context_block(rag_memories or [])
+        if rag_block:
+            messages.append({"role": "system", "content": rag_block})
 
     messages.append({"role": "system", "content": context})
     messages.extend(_history_to_messages(history))
@@ -293,9 +317,10 @@ async def generate_response(
     if booking_context:
         logger.debug("Booking context injected for channel=%s", channel)
 
-    rag_block = format_rag_context_block(rag_memories or [])
-    if rag_block:
-        logger.debug("RAG memory context injected (%s memories)", len(rag_memories or []))
+    if (channel or "").lower() != "voice":
+        rag_block = format_rag_context_block(rag_memories or [])
+        if rag_block:
+            logger.debug("RAG memory context injected (%s memories)", len(rag_memories or []))
 
     max_tokens = _resolve_max_tokens(channel)
     if (channel or "").lower() == "voice" and max_tokens:

@@ -8,7 +8,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.events import publish_event_async
 from agents.memory.long_term import LongTermMemory
-from agents.memory.short_term import ShortTermMemory
+from agents.memory.short_term import ShortTermMemory, conversation_memory_key
 from agents.orchestrator.booking_handler import process_booking_turn
 from agents.orchestrator.farewell_handler import (
     apply_hangup_decision,
@@ -47,6 +47,15 @@ _short_term_memory = ShortTermMemory()
 _long_term_memory = LongTermMemory()
 
 
+def _dialog_memory_key(state: AgentState) -> str:
+    """Short-term dialog Redis key — voice calls use CallSid; other channels use user_id."""
+    return conversation_memory_key(
+        state["channel"],
+        state["user_id"],
+        twilio_call_sid=state.get("twilio_call_sid"),
+    )
+
+
 async def reset_worker_async_clients() -> None:
     """
     Recria clientes async globais após ``asyncio.run`` em tasks Celery (prefork).
@@ -69,7 +78,8 @@ async def close_long_term_pgvector_pool() -> None:
 
 async def identify_intent(state: AgentState) -> AgentState:
     memory = _short_term_memory
-    history = await memory.get_history(state["user_id"])
+    memory_key = _dialog_memory_key(state)
+    history = await memory.get_history(memory_key, channel=state.get("channel"))
     channel = (state.get("channel") or "").lower()
     t0 = time.perf_counter()
 
@@ -134,9 +144,9 @@ async def _fetch_rag_context(state: AgentState) -> tuple[list[dict], list[dict],
     """
     Um embedding + buscas memória/KB em paralelo.
 
-    Voice: memória com voice_rag_top_k + voice_rag_similarity_threshold;
-    KB com resolved_kb_top_k() global e voice_kb_similarity_threshold.
-    Demais canais: defaults globais (rag_top_k / kb_similarity_threshold).
+    Voice: só base de conhecimento (KB); histórico de conversas passadas do lead é omitido
+    (cada ligação usa apenas chat:{call_sid} + KB). Demais canais: memória + KB.
+    KB: resolved_kb_top_k() global; voice usa voice_kb_similarity_threshold.
     """
     message = (state.get("message") or "").strip()
     if not message:
@@ -152,40 +162,59 @@ async def _fetch_rag_context(state: AgentState) -> tuple[list[dict], list[dict],
     t0 = time.perf_counter()
     try:
         query_embedding = await embed_text(message)
-        rag_memories, kb_chunks = await asyncio.gather(
-            _long_term_memory.retrieve_similar_memories(
-                state["user_id"],
-                message,
-                limit=memory_limit,
-                threshold=memory_threshold,
-                query_embedding=query_embedding,
-            ),
-            _kb_retriever.retrieve_kb_chunks(
+        if is_voice:
+            kb_chunks = await _kb_retriever.retrieve_kb_chunks(
                 state.get("owner_user_id"),
                 message,
                 top_k=kb_top_k,
                 threshold=kb_threshold,
                 query_embedding=query_embedding,
-            ),
-        )
+            )
+            rag_memories: list[dict] = []
+        else:
+            rag_memories, kb_chunks = await asyncio.gather(
+                _long_term_memory.retrieve_similar_memories(
+                    state["user_id"],
+                    message,
+                    limit=memory_limit,
+                    threshold=memory_threshold,
+                    query_embedding=query_embedding,
+                ),
+                _kb_retriever.retrieve_kb_chunks(
+                    state.get("owner_user_id"),
+                    message,
+                    top_k=kb_top_k,
+                    threshold=kb_threshold,
+                    query_embedding=query_embedding,
+                ),
+            )
     except Exception:
         logger.warning(
             "Parallel RAG failed user_id=%s; falling back to sequential",
             state.get("user_id"),
             exc_info=True,
         )
-        rag_memories = await _long_term_memory.retrieve_similar_memories(
-            state["user_id"],
-            message,
-            limit=memory_limit,
-            threshold=memory_threshold,
-        )
-        kb_chunks = await _kb_retriever.retrieve_kb_chunks(
-            state.get("owner_user_id"),
-            message,
-            top_k=kb_top_k,
-            threshold=kb_threshold,
-        )
+        if is_voice:
+            rag_memories = []
+            kb_chunks = await _kb_retriever.retrieve_kb_chunks(
+                state.get("owner_user_id"),
+                message,
+                top_k=kb_top_k,
+                threshold=kb_threshold,
+            )
+        else:
+            rag_memories = await _long_term_memory.retrieve_similar_memories(
+                state["user_id"],
+                message,
+                limit=memory_limit,
+                threshold=memory_threshold,
+            )
+            kb_chunks = await _kb_retriever.retrieve_kb_chunks(
+                state.get("owner_user_id"),
+                message,
+                top_k=kb_top_k,
+                threshold=kb_threshold,
+            )
     rag_ms = (time.perf_counter() - t0) * 1000
     return rag_memories, kb_chunks, rag_ms
 
@@ -271,7 +300,8 @@ async def send_response(state: AgentState) -> AgentState:
     history.append({"role": "user", "content": state["message"]})
     history.append({"role": "assistant", "content": response})
 
-    await memory.save_history(state["user_id"], history)
+    memory_key = _dialog_memory_key(state)
+    await memory.save_history(memory_key, history, channel=state.get("channel"))
     await _long_term_memory.save_interaction(
         state["user_id"],
         state["message"],
