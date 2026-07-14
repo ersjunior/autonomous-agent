@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from agents.orchestrator.farewell_handler import (
+    DEFAULT_VOICE_FAREWELL_RESPONSE,
     VOICE_FAREWELL_PHRASE,
     apply_hangup_decision,
     detect_user_farewell_signal,
@@ -150,7 +151,8 @@ def test_farewell_with_history_still_signals_and_hangs_up() -> None:
         {
             **state,
             **signal,
-            "response": VOICE_FAREWELL_PHRASE,
+            "response": DEFAULT_VOICE_FAREWELL_RESPONSE,
         }
     )
     assert hangup["should_hangup"] is True
+    assert hangup["response"] == DEFAULT_VOICE_FAREWELL_RESPONSE

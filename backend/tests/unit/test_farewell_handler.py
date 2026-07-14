@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from agents.orchestrator.farewell_handler import (
+    DEFAULT_VOICE_FAREWELL_RESPONSE,
     VOICE_FAREWELL_PHRASE,
     agent_response_is_farewell,
     agent_response_is_question,
@@ -164,12 +165,32 @@ class TestApplyHangupDecision:
         )
         assert apply_hangup_decision(state) == {"should_hangup": False}
 
-    def test_agent_question_never_hangs_up_even_if_user_farewell(self) -> None:
+    def test_user_farewell_hangs_up_deterministic(self) -> None:
         state = _voice_state(
             user_farewell_signal=True,
-            response="Me conta mais sobre o que você procura? Fico à disposição!",
+            response="Aula longa sobre tchau tchau que o LLM inventou.",
+            conversation_history=[
+                {"role": "user", "content": "quero um curso"},
+                {"role": "assistant", "content": "Claro, posso ajudar."},
+            ],
         )
-        assert apply_hangup_decision(state) == {"should_hangup": False}
+        assert apply_hangup_decision(state) == {
+            "should_hangup": True,
+            "response": DEFAULT_VOICE_FAREWELL_RESPONSE,
+        }
+
+    def test_user_farewell_ignores_agent_question(self) -> None:
+        state = _voice_state(
+            user_farewell_signal=True,
+            response="Me conta mais sobre o que você procura?",
+            conversation_history=[
+                {"role": "user", "content": "obrigado"},
+                {"role": "assistant", "content": "De nada."},
+            ],
+        )
+        result = apply_hangup_decision(state)
+        assert result["should_hangup"] is True
+        assert result["response"] == DEFAULT_VOICE_FAREWELL_RESPONSE
 
     def test_user_farewell_and_agent_farewell_hangs_up(self) -> None:
         state = _voice_state(
@@ -182,7 +203,7 @@ class TestApplyHangupDecision:
         )
         assert apply_hangup_decision(state) == {
             "should_hangup": True,
-            "response": VOICE_FAREWELL_PHRASE,
+            "response": DEFAULT_VOICE_FAREWELL_RESPONSE,
         }
 
     def test_first_turn_farewell_never_hangs_up(self) -> None:
@@ -203,39 +224,53 @@ class TestApplyHangupDecision:
         )
         assert apply_hangup_decision(state) == {"should_hangup": False}
 
-    def test_user_farewell_but_agent_courtesy_no_hangup(self) -> None:
+    def test_user_farewell_but_agent_courtesy_still_hangs_up(self) -> None:
         state = _voice_state(
             user_farewell_signal=True,
             response="De nada! Fico à disposição para ajudar.",
+            conversation_history=[
+                {"role": "user", "content": "obrigado"},
+                {"role": "assistant", "content": "Por nada."},
+            ],
         )
-        assert apply_hangup_decision(state) == {"should_hangup": False}
+        assert apply_hangup_decision(state) == {
+            "should_hangup": True,
+            "response": DEFAULT_VOICE_FAREWELL_RESPONSE,
+        }
 
 
 @pytest.mark.asyncio
-async def test_generate_response_runs_llm_when_user_farewell_signal(monkeypatch) -> None:
-    """Com o novo critério, farewell do usuário não pula o LLM antes da dupla confirmação."""
+async def test_generate_response_skips_llm_on_user_farewell_signal(monkeypatch) -> None:
+    """Despedida determinística: não chama LLM quando o usuário se despediu."""
 
     async def _fake_rag(state):
         return [], [], 0.0
 
     async def _fake_llm(*args, **kwargs):
-        return "Até logo, obrigado pelo contato!"
+        raise AssertionError("LLM must not run on user farewell")
 
     monkeypatch.setattr("agents.orchestrator.graph._fetch_rag_context", _fake_rag)
     monkeypatch.setattr("agents.orchestrator.graph.run_generate_response", _fake_llm)
 
-    state = _voice_state(user_farewell_signal=True, response="")
+    state = _voice_state(
+        user_farewell_signal=True,
+        response="",
+        conversation_history=[
+            {"role": "user", "content": "oi"},
+            {"role": "assistant", "content": "Olá!"},
+        ],
+    )
 
     result = await generate_response(state)
 
-    assert result["response"] == "Até logo, obrigado pelo contato!"
+    assert result["response"] == DEFAULT_VOICE_FAREWELL_RESPONSE
 
 
 @pytest.mark.asyncio
-async def test_finalize_hangup_after_llm_farewell() -> None:
+async def test_finalize_hangup_after_user_farewell() -> None:
     state = _voice_state(
         user_farewell_signal=True,
-        response=VOICE_FAREWELL_PHRASE,
+        response=DEFAULT_VOICE_FAREWELL_RESPONSE,
         conversation_history=[
             {"role": "user", "content": "obrigado pela ajuda"},
             {"role": "assistant", "content": "De nada!"},
@@ -243,6 +278,7 @@ async def test_finalize_hangup_after_llm_farewell() -> None:
     )
     result = await finalize_hangup(state)
     assert result["should_hangup"] is True
+    assert result["response"] == DEFAULT_VOICE_FAREWELL_RESPONSE
 
 
 @pytest.mark.asyncio

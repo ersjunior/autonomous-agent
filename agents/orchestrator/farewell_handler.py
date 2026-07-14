@@ -15,6 +15,9 @@ from app.services.voice_call_state import clear_wrap_up_pending, get_wrap_up_pen
 
 VOICE_FAREWELL_PHRASE = "Até logo, obrigado pelo contato!"
 
+# Resposta determinística quando o usuário se despede (não depende do LLM).
+DEFAULT_VOICE_FAREWELL_RESPONSE = "Foi um prazer falar com você. Até logo!"
+
 # Despedidas inequívocas na fala do agente (NÃO cortesia tipo "ajudar"/"disposição").
 _AGENT_FAREWELL_PATTERNS = (
     r"\bate\s+(?:logo|mais|breve)\b",
@@ -98,7 +101,7 @@ def detect_user_farewell_signal(state: AgentState) -> dict:
     if _booking_consumed_turn(state):
         return {}
 
-    if not _has_prior_dialogue(state):
+    if not has_prior_dialogue(state):
         return {}
 
     if not user_signals_farewell(state):
@@ -111,7 +114,7 @@ def detect_user_farewell_signal(state: AgentState) -> dict:
     return {"user_farewell_signal": True}
 
 
-def _has_prior_dialogue(state: AgentState) -> bool:
+def has_prior_dialogue(state: AgentState) -> bool:
     """
     True when at least one user/assistant turn completed before the current message.
 
@@ -122,11 +125,20 @@ def _has_prior_dialogue(state: AgentState) -> bool:
     return len(history) > 0
 
 
+def resolve_voice_farewell_response() -> str:
+    """Short predefined farewell for deterministic hangup (configurable)."""
+    from app.core.config import settings
+
+    custom = (settings.voice_farewell_response or "").strip()
+    return custom or DEFAULT_VOICE_FAREWELL_RESPONSE
+
+
 def apply_hangup_decision(state: AgentState) -> dict:
     """
-    Fase 2 (pós-LLM): hangup só com dupla confirmação:
-      (a) usuário sinalizou encerramento no transcript
-      (b) resposta do agente é despedida inequívoca (não pergunta, não cortesia solta)
+    Fase 2 (pós-resposta): hangup determinístico quando o usuário se despediu.
+
+    Não depende da resposta do LLM — basta ``user_farewell_signal`` + diálogo prévio
+    (guard de 1º turno preservado).
     """
     if not _is_voice_channel(state.get("channel", "")):
         return {"should_hangup": False}
@@ -134,17 +146,10 @@ def apply_hangup_decision(state: AgentState) -> dict:
     if not state.get("user_farewell_signal"):
         return {"should_hangup": False}
 
-    if not _has_prior_dialogue(state):
+    if not has_prior_dialogue(state):
         return {"should_hangup": False}
 
-    response = (state.get("response") or "").strip()
-
-    if agent_response_is_question(response):
-        return {"should_hangup": False}
-
-    if not agent_response_is_farewell(response):
-        return {"should_hangup": False}
-
+    response = resolve_voice_farewell_response()
     return {"should_hangup": True, "response": response}
 
 

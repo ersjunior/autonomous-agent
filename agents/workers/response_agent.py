@@ -26,14 +26,14 @@ RECEPTIVE_BEHAVIOR_PROMPT = """Modo RECEPTIVO — como conduzir o atendimento:
   de atendente humano ou sinal claro de escalonamento — reconheça e indique a transferência."""
 
 VOICE_BEHAVIOR_PROMPT = """Modo VOZ (telefone) — como falar com o cliente:
-- Você está numa LIGAÇÃO TELEFÔNICA. Tom natural e amigável — como alguém simpático numa conversa real. Nem telegráfico, nem monólogos.
-- Em ligações, seja BREVE: responda em 1 a 3 frases curtas. Vá direto ao ponto. Se o cliente quiser mais detalhes, ele vai perguntar.
-- NUNCA liste vários itens de uma vez numa ligação — resuma e ofereça detalhar se quiser saber mais.
-- Use o histórico, a base de conhecimento e as memórias (RAG) quando disponíveis — não invente o que não estiver no contexto.
-- Use linguagem falada; evite markdown, emojis, listas longas ou parágrafos densos.
-- Se precisar de mais informação, faça perguntas claras e naturais (preferencialmente uma de cada vez).
-- O encerramento da ligação é controlado pelo sistema; responda ao cliente e não invente despedidas longas.
-- Só se despeça quando o cliente indicar claramente que não precisa de mais nada. Se você estiver fazendo uma pergunta, a conversa continua — não encerre nesse turno."""
+- Você está numa LIGAÇÃO TELEFÔNICA. Tom natural e amigável — como um atendente real ao telefone.
+- Responda em NO MÁXIMO 2 frases curtas (até ~20 palavras no total). Vá direto ao ponto.
+- Não repita o que o cliente disse. Não se apresente mais de uma vez na mesma ligação.
+- NUNCA use listas, numeração, bullets ou vários tópicos — resuma em uma frase e ofereça detalhar se quiser.
+- NUNCA escreva parágrafos longos, aulas ou explicações extensas — o cliente está ao telefone.
+- Use linguagem falada; evite markdown, emojis e símbolos especiais.
+- Se precisar de mais informação, faça UMA pergunta curta por vez.
+- O encerramento da ligação é controlado pelo sistema; não invente despedidas longas."""
 
 VOICE_OPENING_MISHEARD_PROMPT = """Primeiro turno desta ligação (ainda não houve conversa).
 O transcript pode parecer despedida por erro de reconhecimento de voz — trate como ABERTURA:
@@ -63,11 +63,11 @@ def _resolve_max_tokens(channel: str) -> int | None:
 
 def trim_voice_response_to_complete_sentence(text: str) -> str:
     """
-    Garante fim de frase completo para TTS (evita truncamento no meio da palavra/frase).
+    Garante fim de frase completo para TTS (evita truncamento no meio pelo max_tokens).
 
-    Se não houver pontuação de fim de frase, mantém o texto original.
+    Corta de volta até o último '.', '!' ou '?'. Remove fragmentos de lista soltos no fim.
     """
-    cleaned = (text or "").strip()
+    cleaned = _strip_orphan_list_fragments((text or "").strip())
     if not cleaned:
         return cleaned
     if cleaned[-1] in ".!?":
@@ -77,7 +77,127 @@ def trim_voice_response_to_complete_sentence(text: str) -> str:
     if last_idx == -1:
         return cleaned
 
-    return cleaned[: last_idx + 1].strip()
+    return _strip_orphan_list_fragments(cleaned[: last_idx + 1].strip())
+
+
+_ORPHAN_LIST_TAIL_RE = re.compile(
+    r"(?:\n|\s)+(?:\d+[\.\)]|[-*•])\s*$",
+    re.MULTILINE,
+)
+_LIST_BULLET_LINE_RE = re.compile(r"^\s*(?:[-*•]|\d+[\.\)])\s+\S", re.MULTILINE)
+_ORPHAN_LIST_CONNECTOR_RES = (
+    re.compile(r",\s*incluindo\.?$", re.IGNORECASE),
+    re.compile(r",\s*como\.?$", re.IGNORECASE),
+    re.compile(r",\s*tais como\.?$", re.IGNORECASE),
+    re.compile(r",\s*entre eles\.?$", re.IGNORECASE),
+    re.compile(r",\s*entre elas\.?$", re.IGNORECASE),
+    re.compile(r",\s*como por exemplo\.?$", re.IGNORECASE),
+    re.compile(r":\s*$"),
+    re.compile(r",\s*$"),
+)
+
+
+def _resolve_list_detail_offer() -> str:
+    offer = (settings.voice_list_detail_offer or "").strip()
+    return offer or "Quer que eu detalhe alguma?"
+
+
+def _normalize_opening_sentence(text: str) -> str:
+    opening = (text or "").strip()
+    if not opening:
+        return opening
+    if opening[-1] not in ".!?":
+        opening = f"{opening}."
+    return opening
+
+
+def response_contains_spoken_list(text: str) -> bool:
+    """True when the reply looks like a multi-line or bulleted list (bad for TTS)."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    if _LIST_BULLET_LINE_RE.search(cleaned):
+        return True
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    if len(lines) >= 3:
+        return True
+    if ":" in cleaned:
+        _, tail = cleaned.split(":", 1)
+        tail_lines = [line.strip() for line in tail.splitlines() if line.strip()]
+        if len(tail_lines) >= 2:
+            return True
+        if _LIST_BULLET_LINE_RE.search(tail):
+            return True
+    return False
+
+
+def _clean_orphan_list_connectors(text: str) -> str:
+    """Remove conectores de lista órfãos no fim (ex: ', incluindo.' sem itens)."""
+    original = (text or "").strip()
+    cleaned = original
+    if not cleaned:
+        return cleaned
+    while True:
+        trimmed = cleaned
+        for pattern in _ORPHAN_LIST_CONNECTOR_RES:
+            trimmed = pattern.sub("", trimmed).strip()
+        if trimmed == cleaned:
+            break
+        cleaned = trimmed
+    if cleaned and cleaned != original:
+        cleaned = _normalize_opening_sentence(cleaned)
+    return cleaned
+
+
+def _append_list_detail_offer(base: str) -> str:
+    opening = (base or "").strip()
+    if not opening:
+        return _resolve_list_detail_offer()
+    return f"{opening} {_resolve_list_detail_offer()}".strip()
+
+
+def _collapse_list_base_for_telephony(text: str) -> str:
+    """Extrai a frase de abertura (sem lista) com conectores órfãos removidos."""
+    cleaned = (text or "").strip()
+    if not cleaned or not response_contains_spoken_list(cleaned):
+        return cleaned
+
+    if ":" in cleaned:
+        opening = cleaned.split(":", 1)[0].strip()
+    else:
+        lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+        opening = lines[0] if lines else cleaned
+
+    opening = _clean_orphan_list_connectors(opening)
+    return _normalize_opening_sentence(opening)
+
+
+def collapse_voice_list_for_telephony(text: str) -> str:
+    """
+    Replace list-style replies with a short opening line + detail offer.
+
+    Example: "Oferecemos cursos, incluindo:\\n Excel\\n BI" ->
+    "Oferecemos cursos em várias áreas. Quer que eu detalhe alguma?"
+    """
+    cleaned = (text or "").strip()
+    if not cleaned or not response_contains_spoken_list(cleaned):
+        return cleaned
+
+    base = _collapse_list_base_for_telephony(cleaned)
+    return _append_list_detail_offer(base)
+
+
+def _strip_orphan_list_fragments(text: str) -> str:
+    """Remove bullets/numeracao orfaos no fim (ex: '\\n2.' sozinho)."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return cleaned
+    while True:
+        trimmed = _ORPHAN_LIST_TAIL_RE.sub("", cleaned).strip()
+        trimmed = re.sub(r"\n\d+\.\s*$", "", trimmed).strip()
+        if trimmed == cleaned:
+            return cleaned
+        cleaned = trimmed
 
 
 def _strip_markdown_for_tts(text: str) -> str:
@@ -92,36 +212,93 @@ def _strip_markdown_for_tts(text: str) -> str:
     return cleaned.strip()
 
 
-def cap_voice_response_at_sentence_boundary(text: str, max_chars: int) -> str:
+def cap_voice_response_at_sentence_boundary(
+    text: str,
+    max_chars: int,
+    *,
+    hard_max_chars: int | None = None,
+) -> str:
     """
-    Rede de segurança pós-LLM: limita tamanho cortando na última frase completa.
+    Rede de segurança pós-LLM: limita tamanho sem cortar no meio de palavra.
 
-    Evita respostas extremas (500+ chars) se o LLM ignorar prompt e token cap.
+    1. Corta na última frase completa dentro do cap.
+    2. Se não houver, permite folga (hard_max) para completar a frase.
+    3. Senão, corta na última palavra completa e fecha com '.'.
     """
     cleaned = (text or "").strip()
     if max_chars <= 0 or len(cleaned) <= max_chars:
         return cleaned
 
-    window = cleaned[:max_chars]
-    last_idx = max(window.rfind("."), window.rfind("!"), window.rfind("?"))
-    if last_idx > 0:
-        return cleaned[: last_idx + 1].strip()
+    hard = hard_max_chars if hard_max_chars is not None else max_chars + 30
+    soft_window = cleaned[:max_chars]
 
-    return trim_voice_response_to_complete_sentence(window)
+    last_punct = max(
+        soft_window.rfind("."),
+        soft_window.rfind("!"),
+        soft_window.rfind("?"),
+    )
+    if last_punct > 0:
+        return cleaned[: last_punct + 1].strip()
+
+    if len(cleaned) > max_chars:
+        hard_window = cleaned[:hard]
+        last_punct = max(
+            hard_window.rfind("."),
+            hard_window.rfind("!"),
+            hard_window.rfind("?"),
+        )
+        if last_punct >= max_chars:
+            return cleaned[: last_punct + 1].strip()
+
+    last_space = soft_window.rfind(" ")
+    if last_space > 0:
+        chunk = cleaned[:last_space].strip()
+        if chunk and chunk[-1] not in ".!?":
+            chunk = f"{chunk}."
+        return chunk
+
+    chunk = cleaned[:max_chars].strip()
+    if chunk and chunk[-1] not in ".!?":
+        chunk = f"{chunk}."
+    return chunk
+
+
+def _voice_cap_hard_limit(max_chars: int) -> int:
+    overflow = int(getattr(settings, "voice_max_response_chars_overflow", 30) or 0)
+    return max_chars + max(0, overflow)
 
 
 def sanitize_voice_response_for_telephony(text: str) -> str:
     """
     Sanitiza resposta de voz para TTS.
 
-    Remove markdown, aplica cap generoso em fronteira de frase (se configurado)
-    e fecha frase incompleta quando o LLM para no meio por limite de tokens.
+    Remove markdown, colapsa listas (cap na base + oferta isenta), corta com segurança
+    e descarta cauda truncada pelo max_tokens (nunca envia texto malformado).
     """
     cleaned = _strip_markdown_for_tts(text)
+    cleaned = _strip_orphan_list_fragments(cleaned)
+    cleaned = _clean_orphan_list_connectors(cleaned)
     max_chars = int(settings.voice_max_response_chars or 0)
-    if max_chars > 0:
-        cleaned = cap_voice_response_at_sentence_boundary(cleaned, max_chars)
-    return trim_voice_response_to_complete_sentence(cleaned)
+    hard_max = _voice_cap_hard_limit(max_chars) if max_chars > 0 else 0
+
+    if response_contains_spoken_list(cleaned):
+        base = _collapse_list_base_for_telephony(cleaned)
+        if max_chars > 0:
+            base = cap_voice_response_at_sentence_boundary(
+                base,
+                max_chars,
+                hard_max_chars=hard_max,
+            )
+        cleaned = _append_list_detail_offer(base)
+    elif max_chars > 0:
+        cleaned = cap_voice_response_at_sentence_boundary(
+            cleaned,
+            max_chars,
+            hard_max_chars=hard_max,
+        )
+
+    cleaned = trim_voice_response_to_complete_sentence(cleaned)
+    return _strip_orphan_list_fragments(cleaned)
 
 
 def _history_to_messages(history: list[dict]) -> list[dict]:

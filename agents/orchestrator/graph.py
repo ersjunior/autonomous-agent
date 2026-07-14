@@ -13,6 +13,8 @@ from agents.orchestrator.booking_handler import process_booking_turn
 from agents.orchestrator.farewell_handler import (
     apply_hangup_decision,
     detect_user_farewell_signal,
+    has_prior_dialogue,
+    resolve_voice_farewell_response,
 )
 from agents.orchestrator.router import route_after_escalation_check
 from agents.orchestrator.state import AgentState
@@ -246,7 +248,7 @@ async def handle_farewell(state: AgentState) -> AgentState:
 
 
 async def finalize_hangup(state: AgentState) -> AgentState:
-    """Dupla confirmação pós-LLM: usuário despediu + agente não pergunta + despedida clara."""
+    """Pós-resposta: hangup determinístico se o usuário se despediu (voz)."""
     return apply_hangup_decision(state)
 
 
@@ -259,6 +261,27 @@ async def generate_response(state: AgentState) -> AgentState:
 
         return {
             "response": sanitize_voice_response_for_telephony(prebuilt),
+            "rag_memories": [],
+            "kb_chunks": [],
+            "rag_ms": 0.0,
+            "response_ms": 0.0,
+        }
+
+    if (
+        channel == "voice"
+        and state.get("user_farewell_signal")
+        and has_prior_dialogue(state)
+    ):
+        from agents.workers.response_agent import sanitize_voice_response_for_telephony
+
+        farewell = sanitize_voice_response_for_telephony(resolve_voice_farewell_response())
+        logger.info(
+            "Voice deterministic farewell (skip LLM) callSid=%s response=%r",
+            state.get("twilio_call_sid") or "?",
+            farewell,
+        )
+        return {
+            "response": farewell,
             "rag_memories": [],
             "kb_chunks": [],
             "rag_ms": 0.0,

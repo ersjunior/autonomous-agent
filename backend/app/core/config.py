@@ -155,6 +155,18 @@ class Settings(BaseSettings):
     voice_stream_echo_debug: bool = False
     # Diagnóstico temporário F1: medir eco inbound vs outbound durante playback (só logging)
     voice_stream_echo_debug_capture: bool = False
+    # P2 bissecção ruído: gravar WAV Coqui + μ-law enviado por turno (best-effort; default off)
+    voice_stream_debug_save_audio: bool = False
+    # Vazio = {voice_audio_root}/debug (volume Docker voice_audio)
+    voice_stream_debug_save_dir: str = ""
+    # P2/P3 stream TTS — frase-a-frase + corte de run-on XTTS
+    voice_stream_tts_phrase_enabled: bool = True
+    voice_stream_tts_phrase_max_chars: int = 45
+    voice_stream_tts_phrase_gap_ms: int = 150
+    # Pausa menor entre pedaços da mesma frase (virgula/conectivo); frases completas usam phrase_gap_ms.
+    voice_stream_tts_clause_gap_ms: int = 70
+    voice_stream_tts_ms_per_char: float = 75.0
+    voice_stream_tts_max_duration_factor: float = 1.5
     # Fase B stream: VAD / fim de utterance (~600 ms) — NÃO confundir com silêncio de encerramento (30s/15s)
     voice_stream_vad_aggressiveness: int = 2
     voice_stream_vad_frame_ms: int = 20
@@ -276,12 +288,18 @@ class Settings(BaseSettings):
     # KB na voz: STT curto reduz similaridade; threshold menor que o global (WhatsApp/Telegram).
     voice_kb_similarity_threshold: float = 0.50
     # Rede de segurança do LLM (Ollama num_predict / OpenAI max_tokens). 0 = sem limite.
-    # Voz: teto curto (~64 tokens, 1–3 frases) — guiado pelo VOICE_BEHAVIOR_PROMPT.
+    # Voz: teto curto (~80 tokens) — frases completas; tamanho final pelo cap de chars.
     # Texto: cap maior/livre; o tamanho é guiado pelo TEXT_BEHAVIOR_PROMPT.
     response_max_tokens: int = 1024
-    voice_response_max_tokens: int = 64
+    voice_response_max_tokens: int = 80
     # Rede de segurança pós-LLM (voz): corta na última frase completa acima deste teto. 0 = desligado.
-    voice_max_response_chars: int = 300
+    voice_max_response_chars: int = 100
+    # Folga acima do cap para completar a frase antes de cortar em palavra (rede de segurança).
+    voice_max_response_chars_overflow: int = 30
+    # Despedida determinística quando o usuário se despede (voz)
+    voice_farewell_response: str = "Foi um prazer falar com você. Até logo!"
+    # Oferta curta quando uma lista é removida da resposta de voz
+    voice_list_detail_offer: str = "Quer que eu detalhe alguma?"
 
     def resolved_kb_top_k(self) -> int:
         return self.rag_top_k if self.kb_top_k <= 0 else self.kb_top_k

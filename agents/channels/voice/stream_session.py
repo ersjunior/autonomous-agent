@@ -26,8 +26,14 @@ from agents.channels.voice.mulaw_codec import (
     MULAW_SILENCE_BYTE,
     wav_bytes_to_pcm16_mono,
 )
+from agents.channels.voice.audio_debug_capture import schedule_voice_stream_debug_capture
 from agents.channels.voice.echo_capture import PlaybackEchoCapture
-from agents.channels.voice.tts_stt import speech_to_text, text_to_speech
+from agents.channels.voice.tts_stream_synth import (
+    StreamTtsPlaybackResult,
+    stream_phrase_tts_playback,
+    synthesize_voice_stream_wav,
+)
+from agents.channels.voice.tts_stt import speech_to_text
 from agents.channels.voice.twilio_voice_client import end_twilio_call
 from app.core.config import settings
 
@@ -40,6 +46,15 @@ FAREWELL_DONE_MARK = "farewell_done"
 VOICE_STREAM_AGENT_FALLBACK = "Desculpe, não consegui processar agora."
 UTTERANCE_QUEUE_MAXSIZE = 32
 _STREAM_QUEUE_SENTINEL = object()
+
+
+@dataclass(frozen=True, slots=True)
+class StreamTtsResult:
+    """Coqui WAV @ 8 kHz plus encoded μ-law (raw + Twilio frames)."""
+
+    wav_bytes: bytes
+    mulaw: bytes
+    frames: list[bytes]
 
 
 @dataclass
@@ -329,9 +344,9 @@ async def _execute_agent_farewell_hangup(
     )
 
 
-async def _synthesize_stream_mulaw_frames(response_text: str) -> list[bytes]:
-    """Coqui @ 8 kHz WAV → PCM16 → μ-law frames (no backend downsample)."""
-    wav_bytes = await text_to_speech(
+async def _synthesize_stream_mulaw_frames(response_text: str) -> StreamTtsResult:
+    """Coqui @ 8 kHz WAV (phrase-aware, batch) → PCM16 → μ-law frames."""
+    wav_bytes = await synthesize_voice_stream_wav(
         response_text,
         sample_rate=STREAM_TTS_SAMPLE_RATE,
     )
@@ -340,7 +355,66 @@ async def _synthesize_stream_mulaw_frames(response_text: str) -> list[bytes]:
         expected_rate=STREAM_TTS_SAMPLE_RATE,
     )
     mulaw = pcm16_to_mulaw(pcm16)
-    return chunk_mulaw(mulaw)
+    return StreamTtsResult(
+        wav_bytes=wav_bytes,
+        mulaw=mulaw,
+        frames=chunk_mulaw(mulaw),
+    )
+
+
+async def _stream_response_tts_to_ws(
+    response_text: str,
+    *,
+    websocket: WebSocket,
+    stream_sid: str,
+    control: StreamCallControl,
+    barge_on: bool,
+    capture_on: bool,
+    stt_end_at: float | None = None,
+) -> StreamTtsPlaybackResult:
+    """Phrase-streamed TTS: synthesize and send frames concurrently (FIFO)."""
+    ttfa_from_stt_ms: float | None = None
+    first_frame_sent = False
+
+    async def on_frame(frame: bytes) -> bool:
+        nonlocal ttfa_from_stt_ms, first_frame_sent
+        if len(frame) != MULAW_FRAME_BYTES:
+            logger.error(
+                "Voice stream agent frame invalid size=%s (expected %s)",
+                len(frame),
+                MULAW_FRAME_BYTES,
+            )
+            frame = frame + bytes([MULAW_SILENCE_BYTE]) * (
+                MULAW_FRAME_BYTES - len(frame)
+            )
+        if barge_on and control.playback_interrupt.is_set():
+            return False
+        outbound: dict[str, Any] = {
+            "event": "media",
+            "streamSid": stream_sid,
+            "media": {"payload": base64.b64encode(frame).decode("ascii")},
+        }
+        await websocket.send_text(json.dumps(outbound))
+        if (
+            capture_on
+            and control.echo_capture is not None
+            and control.echo_capture.segment_active
+        ):
+            control.echo_capture.record_outbound(frame, ts=time.perf_counter())
+        if not first_frame_sent:
+            first_frame_sent = True
+            if stt_end_at is not None:
+                ttfa_from_stt_ms = (time.perf_counter() - stt_end_at) * 1000
+        return True
+
+    playback = await stream_phrase_tts_playback(
+        response_text,
+        sample_rate=STREAM_TTS_SAMPLE_RATE,
+        on_frame=on_frame,
+    )
+    if ttfa_from_stt_ms is not None:
+        playback.ttfa_ms = ttfa_from_stt_ms
+    return playback
 
 
 async def _process_utterance_turn(
@@ -387,6 +461,7 @@ async def _process_utterance_turn(
         return
 
     stt_ms = (time.perf_counter() - stt_started) * 1000
+    stt_end_at = time.perf_counter()
     logger.info(
         "Voice stream STT utterance #%s callSid=%s duration_ms=%s wav_bytes=%s "
         "stt_ms=%s transcript_len=%s transcript=%r",
@@ -465,22 +540,6 @@ async def _process_utterance_turn(
         response_text = VOICE_STREAM_AGENT_FALLBACK
 
     tts_started = time.perf_counter()
-    try:
-        frames = await _synthesize_stream_mulaw_frames(response_text)
-    except Exception as exc:
-        tts_ms = (time.perf_counter() - tts_started) * 1000
-        logger.error(
-            "Voice stream TTS failed utterance #%s callSid=%s agent_ms=%s tts_ms=%s: %s",
-            result.index,
-            sid,
-            agent_ms,
-            tts_ms,
-            exc,
-        )
-        return
-
-    tts_ms = (time.perf_counter() - tts_started) * 1000
-
     barge_on = bool(settings.voice_stream_barge_in_enabled)
     capture_on = bool(
         settings.voice_stream_echo_debug_capture and control.echo_capture is not None
@@ -498,6 +557,7 @@ async def _process_utterance_turn(
         control.playback_interrupt.clear()
         return
 
+    playback: StreamTtsPlaybackResult | None = None
     try:
         if capture_on:
             control.echo_capture.begin_segment(
@@ -505,29 +565,74 @@ async def _process_utterance_turn(
                 label=f"utterance_{result.index}",
             )
         control.begin_agent_playback()
-        completed = await _send_mulaw_frames(
-            websocket,
+        playback = await _stream_response_tts_to_ws(
+            response_text,
+            websocket=websocket,
             stream_sid=stream_sid,
-            frames=frames,
-            label="agent",
-            control=control if (barge_on or capture_on) else None,
-            barge_in_enabled=barge_on,
+            control=control,
+            barge_on=barge_on,
+            capture_on=capture_on,
+            stt_end_at=stt_end_at,
         )
-        if barge_on and (not completed or control.playback_interrupt.is_set()):
-            if capture_on and control.echo_capture is not None:
-                control.echo_capture.finalize_segment(reason="barge_in_interrupt")
-            logger.info(
-                "Voice stream response interrupted utterance #%s callSid=%s "
-                "agent_ms=%s tts_ms=%s response=%r",
-                result.index,
-                sid,
-                agent_ms,
-                tts_ms,
-                response_text,
-            )
-            control.end_agent_playback()
-            control.playback_interrupt.clear()
-            return
+    except Exception as exc:
+        tts_ms = (time.perf_counter() - tts_started) * 1000
+        control.end_agent_playback()
+        logger.error(
+            "Voice stream TTS failed utterance #%s callSid=%s agent_ms=%s tts_ms=%s: %s",
+            result.index,
+            sid,
+            agent_ms,
+            tts_ms,
+            exc,
+        )
+        return
+
+    tts_ms = (time.perf_counter() - tts_started) * 1000
+    frames = playback.frames
+    completed = playback.completed
+
+    try:
+        schedule_voice_stream_debug_capture(
+            call_sid=sid,
+            utterance_index=result.index,
+            transcript=transcript,
+            response_text=response_text,
+            coqui_wav_bytes=playback.wav_bytes,
+            mulaw_frames=frames,
+            extra={
+                "agent_ms": round(agent_ms, 1),
+                "tts_ms": round(tts_ms, 1),
+                "ttfa_ms": round(playback.ttfa_ms, 1) if playback.ttfa_ms else None,
+                "phrase_count": playback.phrase_count,
+                "stream_sid": stream_sid,
+            },
+        )
+    except Exception as exc:
+        logger.warning(
+            "Voice stream debug capture schedule failed utterance #%s callSid=%s (ignored): %s",
+            result.index,
+            sid,
+            exc,
+        )
+
+    if barge_on and (not completed or control.playback_interrupt.is_set()):
+        if capture_on and control.echo_capture is not None:
+            control.echo_capture.finalize_segment(reason="barge_in_interrupt")
+        logger.info(
+            "Voice stream response interrupted utterance #%s callSid=%s "
+            "agent_ms=%s tts_ms=%s ttfa_ms=%s response=%r",
+            result.index,
+            sid,
+            agent_ms,
+            tts_ms,
+            playback.ttfa_ms,
+            response_text,
+        )
+        control.end_agent_playback()
+        control.playback_interrupt.clear()
+        return
+
+    try:
         if should_hangup:
             await _execute_agent_farewell_hangup(
                 call_sid=sid,
@@ -554,11 +659,13 @@ async def _process_utterance_turn(
 
     logger.info(
         "Voice stream agent response callSid=%s utterance#%s agent_ms=%s tts_ms=%s "
-        "audio_frames=%s hangup=%s response=%r",
+        "ttfa_ms=%s phrases=%s audio_frames=%s hangup=%s response=%r",
         sid,
         result.index,
         agent_ms,
         tts_ms,
+        playback.ttfa_ms,
+        playback.phrase_count,
         len(frames),
         should_hangup,
         response_text,

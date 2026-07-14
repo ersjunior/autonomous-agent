@@ -16,12 +16,14 @@ from agents.channels.voice.audio_pipeline import (
 from agents.channels.voice.mulaw_codec import MULAW_FRAME_BYTES, chunk_mulaw, pcm16_to_mulaw
 from agents.channels.voice.stream_session import (
     StreamCallControl,
+    StreamTtsResult,
     StreamUtteranceWorker,
     _handle_barge_in,
     _process_utterance_turn,
     _send_clear,
     _send_mulaw_frames,
 )
+from agents.channels.voice.tts_stream_synth import StreamTtsPlaybackResult
 
 pytestmark = pytest.mark.unit
 
@@ -247,21 +249,21 @@ async def test_process_utterance_turn_aborts_on_interrupt_during_send() -> None:
             "agents.channels.voice.stream_session._run_voice_agent_for_stream",
             AsyncMock(return_value=("Resposta longa do agente.", False)),
         ),
-        patch(
-            "agents.channels.voice.stream_session._synthesize_stream_mulaw_frames",
-            AsyncMock(return_value=many_frames),
-        ),
         patch("agents.channels.voice.stream_session.settings") as mock_settings,
     ):
         mock_settings.voice_stream_barge_in_enabled = True
 
-        async def interrupt_mid_send(*args, **kwargs):
-            control.request_playback_interrupt()
-            return False
+        async def interrupt_mid_stream(*args, **kwargs):
+            kwargs["control"].request_playback_interrupt()
+            return StreamTtsPlaybackResult(
+                frames=[],
+                wav_bytes=tts_wav,
+                completed=False,
+            )
 
         with patch(
-            "agents.channels.voice.stream_session._send_mulaw_frames",
-            side_effect=interrupt_mid_send,
+            "agents.channels.voice.stream_session._stream_response_tts_to_ws",
+            side_effect=interrupt_mid_stream,
         ):
             await _process_utterance_turn(
                 result,
@@ -301,8 +303,16 @@ async def test_process_utterance_turn_no_abort_when_barge_in_disabled() -> None:
             AsyncMock(return_value=("Resposta.", False)),
         ),
         patch(
-            "agents.channels.voice.stream_session._synthesize_stream_mulaw_frames",
-            AsyncMock(return_value=[MULAW_SILENCE_FRAME]),
+            "agents.channels.voice.stream_session._stream_response_tts_to_ws",
+            AsyncMock(
+                return_value=StreamTtsPlaybackResult(
+                    frames=[MULAW_SILENCE_FRAME],
+                    wav_bytes=b"RIFF",
+                    mulaw=b"\xff" * MULAW_FRAME_BYTES,
+                    completed=True,
+                    phrase_count=1,
+                ),
+            ),
         ),
         patch("agents.channels.voice.stream_session.settings") as mock_settings,
     ):
@@ -423,6 +433,29 @@ async def test_process_utterance_clears_interrupt_before_playback_when_barge_ena
         begin_calls.append(self.playback_interrupt.is_set())
         original_begin(self)
 
+    async def stream_send(*args, **kwargs) -> StreamTtsPlaybackResult:
+        import base64
+
+        for frame in frames:
+            await kwargs["websocket"].send_text(
+                json.dumps(
+                    {
+                        "event": "media",
+                        "streamSid": kwargs["stream_sid"],
+                        "media": {
+                            "payload": base64.b64encode(frame).decode("ascii"),
+                        },
+                    }
+                )
+            )
+        return StreamTtsPlaybackResult(
+            frames=frames,
+            wav_bytes=b"RIFF",
+            mulaw=b"\xff" * len(frames) * MULAW_FRAME_BYTES,
+            completed=True,
+            phrase_count=1,
+        )
+
     with (
         patch(
             "agents.channels.voice.stream_session.speech_to_text",
@@ -438,8 +471,8 @@ async def test_process_utterance_clears_interrupt_before_playback_when_barge_ena
             AsyncMock(return_value=("Resposta.", False)),
         ),
         patch(
-            "agents.channels.voice.stream_session._synthesize_stream_mulaw_frames",
-            AsyncMock(return_value=frames),
+            "agents.channels.voice.stream_session._stream_response_tts_to_ws",
+            side_effect=stream_send,
         ),
         patch("agents.channels.voice.stream_session.settings") as mock_settings,
         patch.object(StreamCallControl, "begin_agent_playback", spy_begin),

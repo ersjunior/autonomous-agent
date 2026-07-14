@@ -720,7 +720,7 @@ async def test_utterance_worker_fifo_order_three_utterances() -> None:
             new=AsyncMock(side_effect=agent_side_effect),
         ),
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             side_effect=tts_side_effect,
         ),
     ):
@@ -792,7 +792,7 @@ async def test_utterance_worker_fifo_despite_slow_first_stt() -> None:
             new=AsyncMock(side_effect=agent_side_effect),
         ),
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             autospec=True,
             return_value=tts_wav,
         ),
@@ -877,7 +877,7 @@ async def test_process_utterance_turn_agent_tts_sends_mulaw_and_mark() -> None:
         patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
         patch(RUN_VOICE_AGENT_TURN, autospec=True) as agent_mock,
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             autospec=True,
         ) as tts_mock,
     ):
@@ -962,7 +962,7 @@ async def test_utterance_worker_stops_after_hangup() -> None:
             new=AsyncMock(side_effect=agent_side_effect),
         ),
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             autospec=True,
             return_value=tts_wav,
         ),
@@ -1035,7 +1035,7 @@ async def test_process_utterance_turn_serializes_two_utterances() -> None:
             new=AsyncMock(spec=run_voice_agent_turn, side_effect=agent_side_effect),
         ),
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             autospec=True,
         ) as tts_mock,
     ):
@@ -1085,7 +1085,7 @@ async def test_media_stream_ws_agent_response_outbound(
         patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
         patch(RUN_VOICE_AGENT_TURN, autospec=True) as agent_mock,
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             autospec=True,
         ) as tts_mock,
     ):
@@ -1225,7 +1225,7 @@ async def test_process_utterance_turn_farewell_hangup_after_mark(monkeypatch) ->
             new=AsyncMock(side_effect=_agent_farewell_side_effect({})),
         ),
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             autospec=True,
             return_value=tts_wav,
         ),
@@ -1283,7 +1283,7 @@ async def test_process_utterance_turn_farewell_hangup_on_mark_timeout(monkeypatc
             new=AsyncMock(side_effect=_agent_farewell_side_effect({})),
         ),
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             autospec=True,
             return_value=tts_wav,
         ),
@@ -1331,7 +1331,7 @@ async def test_process_utterance_turn_no_hangup_when_should_hangup_false() -> No
         patch(ASYNC_SESSION_LOCAL, return_value=mock_cm),
         patch(RUN_VOICE_AGENT_TURN, autospec=True) as agent_mock,
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             autospec=True,
             return_value=tts_wav,
         ),
@@ -1430,7 +1430,7 @@ async def test_process_utterance_turn_no_hangup_contamination_across_utterances(
             new=AsyncMock(side_effect=_agent_hangup_by_transcript_side_effect()),
         ),
         patch(
-            "agents.channels.voice.stream_session.text_to_speech",
+            "agents.channels.voice.tts_stream_synth.text_to_speech",
             autospec=True,
             return_value=tts_wav,
         ),

@@ -127,14 +127,86 @@ def test_resolve_max_tokens_whatsapp_unlimited_when_zero(monkeypatch) -> None:
     assert _resolve_max_tokens("telegram") is None
 
 
+def test_sanitize_truncated_list_fragment(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "voice_max_response_chars", 300)
+    text = "Oferecemos cursos de inteligência artificial e mais.\n2."
+    assert sanitize_voice_response_for_telephony(text) == (
+        "Oferecemos cursos de inteligência artificial e mais."
+    )
+
+
+def test_sanitize_default_cap_100_chars(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "voice_max_response_chars", 100)
+    text = (
+        "Primeira frase curta. Segunda frase também ok. "
+        "Terceira frase longa que empurra o texto além do limite de cem "
+        "caracteres e não deveria ser falada inteira numa ligação telefônica breve."
+    )
+    result = sanitize_voice_response_for_telephony(text)
+    assert len(result) <= 100
+    assert result.endswith(".")
+    assert "Terceira" not in result
+    assert result == "Primeira frase curta. Segunda frase também ok."
+
+
+def test_cap_100_cuts_at_sentence_boundary_not_mid_word() -> None:
+    text = (
+        "A ByteCell Academy oferece cursos em diversas áreas. "
+        "Posso detalhar Excel, BI ou Marketing se quiser saber mais sobre algum deles."
+    )
+    capped = cap_voice_response_at_sentence_boundary(text, max_chars=100)
+    assert capped.endswith(".")
+    assert len(capped) <= 100
+    assert "Excel" not in capped
+    assert capped == "A ByteCell Academy oferece cursos em diversas áreas."
+
+
+def test_cap_without_sentence_boundary_cuts_at_word_not_mid_word() -> None:
+    text = (
+        "Entendi sua pergunta sobre nossos cursos, estou aqui para ajudar "
+        "com mais informacoes sobre a ByteCell Academy e nossos programas."
+    )
+    capped = cap_voice_response_at_sentence_boundary(text, max_chars=100)
+    assert capped.endswith(".")
+    assert not capped.endswith("aju")
+    assert " " not in capped[-2:]  # ends with punctuation, not partial word
+
+
+def test_sanitize_list_offer_survives_cap(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "voice_max_response_chars", 100)
+    monkeypatch.setattr(settings, "voice_list_detail_offer", "Quer que eu detalhe alguma?")
+    text = (
+        "A ByteCell Academy oferece uma variedade de cursos em diversas areas, incluindo:\n"
+        " Excel\n Banco de Dados"
+    )
+    result = sanitize_voice_response_for_telephony(text)
+    assert "Quer que eu detalhe alguma?" in result
+    assert "incluindo" not in result.lower()
+    assert "Excel" not in result
+
+
+def test_sanitize_cleans_orphan_incluindo_without_list(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "voice_max_response_chars", 100)
+    text = "A ByteCell Academy oferece uma variedade de cursos em diversas areas, incluindo."
+    result = sanitize_voice_response_for_telephony(text)
+    assert "incluindo" not in result.lower()
+    assert result.endswith(".")
+
+
+def test_config_default_voice_max_response_chars_is_100() -> None:
+    from app.core.config import Settings
+
+    assert Settings().voice_max_response_chars == 100
+
+
 def test_voice_behavior_prompt_enforces_brevity() -> None:
     lowered = VOICE_BEHAVIOR_PROMPT.lower()
-    assert "breve" in lowered
-    assert "1 a 3 frases" in lowered
-    assert "nunca liste" in lowered
-    assert "detalhar" in lowered
-    assert "telegráfico" in lowered
-    assert "RAG" in VOICE_BEHAVIOR_PROMPT
+    assert "2 frases curtas" in lowered
+    assert "20 palavras" in lowered
+    assert "não repita" in lowered
+    assert "não se apresente" in lowered
+    assert "nunca use listas" in lowered
+    assert "RAG" not in VOICE_BEHAVIOR_PROMPT
 
 
 def test_text_behavior_prompt_allows_developed_replies() -> None:

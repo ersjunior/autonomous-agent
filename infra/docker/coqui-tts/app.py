@@ -99,6 +99,38 @@ def _write_inference_wav(out: dict[str, Any], out_path: str) -> None:
     sf.write(out_path, wav, sample_rate)
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    return float(raw)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+def _xtts_inference_kwargs() -> dict[str, Any]:
+    """
+    XTTS inference tuning (telephony).
+
+    ``enable_text_splitting=True`` (valor antigo) causava run-on ~2× a duração esperada;
+    o backend faz split frase-a-frase quando necessário.
+    """
+    return {
+        "enable_text_splitting": _env_bool("COQUI_XTTS_ENABLE_TEXT_SPLITTING", False),
+        "temperature": _env_float("COQUI_XTTS_TEMPERATURE", 0.65),
+        "repetition_penalty": _env_float("COQUI_XTTS_REPETITION_PENALTY", 10.0),
+        "length_penalty": _env_float("COQUI_XTTS_LENGTH_PENALTY", 1.0),
+        "top_k": int(os.getenv("COQUI_XTTS_TOP_K", "50")),
+        "top_p": _env_float("COQUI_XTTS_TOP_P", 0.85),
+        "speed": _env_float("COQUI_XTTS_SPEED", 1.08),
+    }
+
+
 def _synthesize_to_wav(
     tts: TTS,
     *,
@@ -127,7 +159,7 @@ def _synthesize_to_wav(
         language,
         gpt_cond_latent,
         speaker_embedding,
-        enable_text_splitting=True,
+        **_xtts_inference_kwargs(),
     )
     synth_ms = (time.perf_counter() - t0) * 1000
     _write_inference_wav(out, out_path)
